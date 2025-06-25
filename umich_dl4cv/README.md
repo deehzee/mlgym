@@ -31,6 +31,14 @@
 21. Reinforcement Learning
 22. Conclusion
 
+### Assignments
+1. PyTorch Warm-up, kNN Classifier
+2. Linear Classifiers, Two-layer Network
+3. Modular API, Convolutional Networks, Batch Normalization, Autograd
+4. RNNs, Attention, Visualization, Style Transfer
+5. Object Detection
+6. Variational Autoencoders, GANs
+
 ## Winter 2022
 
 ### Info
@@ -63,4 +71,12 @@
 23. 3D Vision _[new]_
 24. Videos _[new]_
 25. Conclusion
+
+### Assignments
+1. PyTorch Warm-up, kNN Classifier
+2. Linear Classifiers, Two-layer Network
+3. Modular API, Convolutional Networks, Batch Normalization, Autograd
+4. Object Detection
+5. RNNs, Image Captioning, Transformers
+6. Variational Autoencoders, GANs, Style Transfer, Feature Visualization
 
