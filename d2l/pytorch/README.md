@@ -24,7 +24,7 @@ pytorch/
 A typical chapter directory may contain:
 
 ```text
-pytorch/chapter-03/
+pytorch/ch03/
 ├── 3_1_linear_regression.ipynb
 ├── 3_2_linear_regression_scratch.ipynb
 ├── exercises.md
