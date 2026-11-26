@@ -1,0 +1,238 @@
+[project]
+name = "d2l"
+version = "1.0.3"
+description = "Dive into Deep Learning"
+license = "MIT-0"
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "D2L Developers", email = "d2l.devs@gmail.com" }]
+
+dependencies = [
+    "numpy",
+    # Pinned so committed illustrative figures (img/mdl-*.svg) regenerate
+    # byte-identically: matplotlib's SVG path/tessellation output shifts across
+    # minor versions, which otherwise makes a clean `make figures` dirty the tree.
+    # Bump deliberately, then re-run `make figures` and commit the SVG diff.
+    "matplotlib==3.11.2",
+    "matplotlib-inline",
+    "requests",
+    "tiktoken",
+    "pandas",
+    "scipy",
+    "pillow",
+    "ipython",
+]
+
+[project.optional-dependencies]
+# The four framework extras are GPU/CUDA builds with no macOS counterparts
+# (pytorch-cu128 index, tensorflow[and-cuda], jax[cuda12], a custom linux_x86_64
+# MXNet wheel), so every requirement in them is gated to linux-x86_64. This
+# keeps the *universal* lock resolvable on macOS too (see [tool.uv].environments
+# below): on a Mac these extras resolve to nothing, while the base deps + the
+# `build`/`run` extras — which is all the CPU-only render path needs — install
+# fine. Executing notebooks still happens on the linux-x86_64 GPU box.
+pytorch = [
+    # torch/torchvision are pinned to the version the committed outputs/ store
+    # was captured under (the freshness audit keys on the PEP 440 *public*
+    # version, so the linux cu128 build and the darwin arm64 build of the same
+    # 2.11.0 both match the store — see tools/capture_outputs.py:public_version).
+    # To move to 2.12: bump these pins AND re-capture the store under 2.12.
+    "torch==2.11.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision==0.26.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "gymnasium[toy-text,classic-control] ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "gpytorch ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "syne-tune[gpsearchers] ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Apple Silicon CPU/MPS: PyPI ships native arm64 wheels (CPU-only render
+    # host can now also *execute* the CPU-capable notebooks). torch source is
+    # gated to the cu128 index for linux only (see [tool.uv.sources]), so darwin
+    # resolves torch 2.11.0 from the default index.
+    "torch==2.11.0 ; sys_platform == 'darwin'",
+    "torchvision==0.26.0 ; sys_platform == 'darwin'",
+    "gymnasium[toy-text,classic-control] ; sys_platform == 'darwin'",
+]
+# Language Models part (chapter_lm-*): its own venv, .venv-lm, so the rest of
+# the book never carries Transformers/OpenAI. PyTorch only, on the SAME torch /
+# torchvision pins as the pytorch extra (tools/test_notebook_venvs.py asserts
+# they stay equal): freshness keys on the torch public version, and these
+# notebooks keep framework "pytorch" for stamps, manifests and provenance.
+# Notebooks under chapter_lm-* execute in .venv-lm (tools/runtime_env.py
+# NOTEBOOK_VENVS, make/notebooks.mk). A transformers/openai bump does NOT stale
+# the store (provenance records the transformers version, drift only warns):
+# re-run the chapter_lm notebooks by hand after such a bump.
+lm = [
+    "torch==2.11.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision==0.26.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # `serving` pulls the FastAPI/uvicorn stack behind `transformers serve`,
+    # the local OpenAI-compatible endpoint of the API section.
+    "transformers[serving]==5.22.2 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "huggingface-hub>=1.31,<3 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "accelerate>=1.1 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "openai==3.49.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "safetensors ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "scikit-learn ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Triton kernels for linear attention: Transformers binds fla's chunked
+    # and recurrent gated delta rule into Qwen3.5's Gated DeltaNet layers in
+    # place of its fp32 PyTorch reference code (section 18.1 measures the
+    # difference). Pure Triton, no compile. causal-conv1d (the short conv)
+    # has no torch 2.11 wheel and stays on its PyTorch path. No darwin pin:
+    # without Triton the reference code runs.
+    "flash-linear-attention==0.6.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "fla-core==0.6.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Chapter 19 (encoders, embeddings, retrieval): Faiss indexes (IVF, PQ,
+    # HNSW), and the oracles the library is checked against: bm25s (BM25),
+    # pytrec_eval (retrieval metrics), seqeval (span F1) and Sentence
+    # Transformers (embedder encode and the in-batch contrastive loss).
+    "faiss-cpu==1.15.1 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "bm25s==0.3.16 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "pytrec-eval-terrier==0.5.11 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "seqeval==1.2.2 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sentence-transformers==6.2.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Chapter 20 (data): WARC reading (warcio is the oracle for iter_warc),
+    # HTML extraction (trafilatura, resiliparse), language ID (fastText
+    # lid.176; the numpy-2 wheel is linux-only), MinHash oracle (datasketch),
+    # SentencePiece, registered domains (tldextract, bundled suffix list),
+    # and explicit pins of tokenizers/tiktoken (the reference tokenizer).
+    "warcio==1.8.2 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "trafilatura==2.1.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "resiliparse==1.1.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "datasketch==2.0.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sentencepiece==0.2.2 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "tldextract==5.4.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "fasttext-numpy2-wheel==0.9.2 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "tokenizers==0.23.3 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "tiktoken==0.13.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torch==2.11.0 ; sys_platform == 'darwin'",
+    "torchvision==0.26.0 ; sys_platform == 'darwin'",
+    "transformers[serving]==5.22.2 ; sys_platform == 'darwin'",
+    "huggingface-hub>=1.31,<3 ; sys_platform == 'darwin'",
+    "accelerate>=1.1 ; sys_platform == 'darwin'",
+    "openai==3.49.0 ; sys_platform == 'darwin'",
+    "safetensors ; sys_platform == 'darwin'",
+    "scikit-learn ; sys_platform == 'darwin'",
+    "faiss-cpu==1.15.1 ; sys_platform == 'darwin'",
+    "bm25s==0.3.16 ; sys_platform == 'darwin'",
+    "pytrec-eval-terrier==0.5.11 ; sys_platform == 'darwin'",
+    "seqeval==1.2.2 ; sys_platform == 'darwin'",
+    "sentence-transformers==6.2.0 ; sys_platform == 'darwin'",
+    "warcio==1.8.2 ; sys_platform == 'darwin'",
+    "trafilatura==2.1.0 ; sys_platform == 'darwin'",
+    "resiliparse==1.1.0 ; sys_platform == 'darwin'",
+    "datasketch==2.0.0 ; sys_platform == 'darwin'",
+    "sentencepiece==0.2.2 ; sys_platform == 'darwin'",
+    "tldextract==5.4.0 ; sys_platform == 'darwin'",
+    "tokenizers==0.23.3 ; sys_platform == 'darwin'",
+    "tiktoken==0.13.0 ; sys_platform == 'darwin'",
+]
+mxnet = [
+    # Custom MXNet 2.0 wheel built against CUDA 13 with Blackwell (sm_120) SASS.
+    # Upstream MXNet 1.9.1 / cu117 has no Blackwell kernels and no PTX fallback.
+    # The GPU wheel is cp312 + linux_x86_64 only; the marker constrains
+    # resolution so the universal lock still solves on other Python versions and
+    # on macOS (where this extra resolves to the CPU build below). Pinned to the
+    # published GitHub release (smolix/mxnet, tag mxnet-2.0.0.zombie.1).
+    "mxnet @ https://github.com/smolix/mxnet/releases/download/mxnet-2.0.0.zombie.1/mxnet-2.0.0%2Bcu133.bw.zombie.1-cp312-cp312-linux_x86_64.whl ; python_version == '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Apple Silicon CPU build — sibling release asset (smolix/mxnet, not
+    # apache/mxnet). Pulls opencv-python + numpy<2 as the wheel declares.
+    "mxnet @ https://github.com/smolix/mxnet/releases/download/mxnet-2.0.0.zombie.1/mxnet-2.0.0%2Bcpu.macos.zombie.1-cp312-cp312-macosx_26_0_arm64.whl ; python_version == '3.12' and sys_platform == 'darwin'",
+]
+tensorflow = [
+    # `[and-cuda]` is what pulls Blackwell-capable CUDA libs (nccl>=2.27.7,
+    # cudnn>=9.3, etc.). Without it, uv resolves nccl to 2.21.5, which has
+    # no sm_120 kernels — every collective aborts with "unhandled cuda error".
+    "tensorflow[and-cuda] ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "tensorflow-datasets ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "tensorflow-probability[tf] ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Apple Silicon: plain `tensorflow` (>=2.16 ships native arm64 macOS
+    # wheels, CPU). No `[and-cuda]` — that's a linux-only metapackage.
+    "tensorflow ; sys_platform == 'darwin'",
+    "tensorflow-datasets ; sys_platform == 'darwin'",
+    "tensorflow-probability[tf] ; sys_platform == 'darwin'",
+]
+jax = [
+    # Pin the complete NNX stack: notebook-output provenance records these
+    # versions, and an unbounded Flax upgrade can change graph/state semantics.
+    # JAX 0.12.0.1 (from 0.10.2): jaxlib 0.10.2 miscompiles c*(h@W+b) on GPU
+    # under jit/scan/fori_loop with runtime weights (the bias is left
+    # unscaled); 0.11.2+ is correct. Flax 0.12.7 does not import under
+    # JAX >= 0.11 (no hijax.HiPrimitive), so Flax moves to 0.12.12.
+    "jax[cuda12]==0.12.0.1 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "flax==0.12.12 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "optax==0.2.8 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "orbax-checkpoint==0.12.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Held at the version .venv-jax runs (2026-11-12): the lm extra needs
+    # huggingface-hub>=1.31 (Transformers 5.22) and would otherwise move this
+    # venv to the 2.x API as well.
+    "huggingface-hub==1.23.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "safetensors ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "tensorflow ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "tensorflow-datasets ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # RL chapters (14-15) carry jax tabs; gymnasium mirrors the pytorch extra.
+    "gymnasium[toy-text,classic-control] ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Apple Silicon: plain `jax` resolves the CPU jaxlib arm64 macOS wheel.
+    # tensorflow(+datasets) come along because d2l/jax.py imports tf for its
+    # data utilities (mirrors the linux jax extra).
+    "jax==0.12.0.1 ; sys_platform == 'darwin'",
+    "flax==0.12.12 ; sys_platform == 'darwin'",
+    "optax==0.2.8 ; sys_platform == 'darwin'",
+    "orbax-checkpoint==0.12.0 ; sys_platform == 'darwin'",
+    "huggingface-hub==1.23.0 ; sys_platform == 'darwin'",
+    "safetensors ; sys_platform == 'darwin'",
+    "tensorflow ; sys_platform == 'darwin'",
+    "tensorflow-datasets ; sys_platform == 'darwin'",
+    "gymnasium[toy-text,classic-control] ; sys_platform == 'darwin'",
+]
+run = [
+    "jupyter",
+    "nbconvert",
+    "ipykernel",
+    "safetensors",
+]
+# Build extra: tools needed to render HTML/PDF from .qmd sources.
+# `quarto-cli` installs the Quarto CLI into the venv's bin/.
+# `playwright` drives tools/check_slide_overflow.py (headless chromium
+# measures rendered slide heights against the 720px box). After `uv sync`,
+# run `.venv-build/bin/python -m playwright install chromium` once.
+build = [
+    "quarto-cli",
+    "playwright",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["d2l"]
+
+[tool.hatch.metadata]
+# Required so the mxnet extra can point at a custom-built wheel via direct URL.
+allow-direct-references = true
+
+[tool.uv]
+# linux-x86_64 is the GPU/execution box; darwin is the CPU-only render/author
+# host (slides, PDF, HTML from the committed outputs/ store — no framework, no
+# CUDA). The framework extras above are marker-gated to linux-x86_64, so they
+# resolve to nothing on darwin and the universal lock stays solvable on both.
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin'",
+]
+# Each framework venv installs exactly one of these extras. lm is the pytorch
+# stack plus Transformers: it conflicts with jax/tensorflow/mxnet for the same
+# CUDA reasons and never shares a venv with pytorch.
+conflicts = [[{ extra = "pytorch" }, { extra = "jax" }, { extra = "mxnet" }, { extra = "tensorflow" }, { extra = "lm" }]]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+# The CUDA index only has linux-x86_64 wheels. Gate it to that platform so
+# darwin resolves torch/torchvision from the default index (arm64 CPU/MPS).
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
+
+[dependency-groups]
+dev = [
+    "pyarrow>=23.0.1",
+]

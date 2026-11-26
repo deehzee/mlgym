@@ -1,0 +1,20403 @@
+DATA_HUB = dict()
+DATA_URL = 'http://d2l-data.s3-accelerate.amazonaws.com/'
+
+import numpy as np
+import torch
+import torchvision
+from PIL import Image
+from torch import nn
+from torch.nn import functional as F
+from torch.utils import data
+from torchvision import transforms
+
+nn_Module = nn.Module
+
+#################   WARNING   ################
+# The below part is generated automatically through:
+#    python tools/build_lib.py
+# Don't edit it directly
+
+import sys
+d2l = sys.modules[__name__]
+
+class HyperParameters:
+    """The base class of hyperparameters.
+
+    Defined in :numref:`sec_utils`"""
+
+    def save_hyperparameters(self, ignore=None):
+        """Save function arguments into instance attributes.
+
+        Defined in :numref:`sec_utils`"""
+        ignore = [] if ignore is None else ignore
+        frame = inspect.currentframe().f_back
+        _, _, _, local_vars = inspect.getargvalues(frame)
+        self.hparams = {k:v for k, v in local_vars.items()
+                        if k not in set(ignore+['self']) and not k.startswith('_')}
+        for k, v in self.hparams.items():
+            setattr(self, k, v)
+
+import inspect
+import collections
+from collections import defaultdict
+from dataclasses import asdict
+from IPython import display
+import json
+import math
+from matplotlib import pyplot as plt
+from matplotlib import ticker
+from matplotlib_inline import backend_inline
+import os
+import pandas as pd
+import random
+import re
+import shutil
+import sys
+import tarfile
+import time
+import requests
+import zipfile
+import gzip
+import hashlib
+d2l = sys.modules[__name__]
+
+import numpy as np
+import torch
+import torchvision
+from torch import nn
+from torch.nn import functional as F
+from torchvision import transforms
+from PIL import Image
+from scipy.spatial import distance_matrix
+
+def synthetic_data(w, b, noise, n):
+    """n examples with standard normal features and labels Xw + b + noise.
+
+    Defined in :numref:`sec_synthetic-regression-data`"""
+    X = d2l.randn(n, len(w))
+    eps = d2l.randn(n, 1) * noise
+    return X, d2l.matmul(X, d2l.reshape(w, (-1, 1))) + b + eps
+
+def add_to_class(Class):
+    """Register functions as methods in created class.
+
+    Defined in :numref:`sec_oo-design`"""
+    def wrapper(obj):
+        setattr(Class, obj.__name__, obj)
+        return obj
+    return wrapper
+
+class Module(nn.Module, d2l.HyperParameters):
+    """The base class of models.
+
+    Defined in :numref:`sec_oo-design`"""
+    def loss(self, y_hat, y):
+        raise NotImplementedError
+
+    def forward(self, X):
+        assert hasattr(self, 'net'), 'Neural network is not defined'
+        return self.net(X)
+
+    def training_step(self, batch):
+        """The mean loss on one minibatch, or a dict of batch-mean metrics
+        with key 'loss'."""
+        return self.loss(self(*batch[:-1]), batch[-1])
+
+    def validation_step(self, batch):
+        """The mean loss on one minibatch of validation data, or a dict of
+        batch-mean metrics with key 'loss'."""
+        return self.loss(self(*batch[:-1]), batch[-1])
+
+    def configure_optimizers(self):
+        return torch.optim.SGD(self.parameters(), lr=self.lr)
+
+    def apply_init(self, inputs, init=None):
+        """Run a dry pass to fix lazy shapes, then apply `init`.
+
+        Defined in :numref:`sec_lazy_init`"""
+        with torch.no_grad():
+            self(*inputs)
+        if init is not None:
+            self.apply(init)
+
+def as_metrics(out):
+    """A step returns a loss or a dict of metrics; return a dict.
+
+    Defined in :numref:`sec_oo-design`"""
+    return out if isinstance(out, dict) else {'loss': out}
+
+class LinearRegressionScratch(d2l.Module):
+    """The linear regression model implemented from scratch.
+
+    Defined in :numref:`sec_oo-design`"""
+    def __init__(self, num_inputs, lr, sigma=0.01):
+        super().__init__()
+        self.save_hyperparameters()
+        self.w = nn.Parameter(d2l.normal(0, sigma, (num_inputs, 1)))
+        self.b = nn.Parameter(d2l.zeros(1))
+
+    def forward(self, X):
+        return d2l.matmul(X, self.w) + self.b
+
+    def loss(self, y_hat, y):
+        l = (y_hat - d2l.reshape(y, (-1, 1))) ** 2 / 2
+        return d2l.reduce_mean(l)
+
+    def configure_optimizers(self):
+        return SGD([self.w, self.b], self.lr)
+
+class SGD(d2l.HyperParameters):
+    """Minibatch stochastic gradient descent.
+
+    Defined in :numref:`sec_oo-design`"""
+    def __init__(self, params, lr):
+        self.save_hyperparameters()
+
+    def step(self):
+        for param in self.params:
+            param -= self.lr * param.grad
+
+    def zero_grad(self):
+        for param in self.params:
+            if param.grad is not None:
+                param.grad.zero_()
+
+class DataModule(d2l.HyperParameters):
+    """The base class of data.
+
+    Defined in :numref:`sec_oo-design`"""
+    def __init__(self, root='../data', num_workers=4):
+        self.save_hyperparameters()
+
+    def get_dataloader(self, train):
+        raise NotImplementedError
+
+    def train_dataloader(self):
+        return self.get_dataloader(train=True)
+
+    def val_dataloader(self):
+        return self.get_dataloader(train=False)
+
+    def get_tensorloader(self, tensors, train, indices=slice(0, None)):
+        tensors = tuple(a[indices] for a in tensors)
+        dataset = torch.utils.data.TensorDataset(*tensors)
+        return torch.utils.data.DataLoader(dataset, self.batch_size,
+                                           shuffle=train)
+
+class SyntheticRegressionData(d2l.DataModule):
+    """Synthetic data for linear regression.
+
+    Defined in :numref:`sec_oo-design`"""
+    def __init__(self, w, b, noise=0.01, num_train=1000, num_val=1000,
+                 batch_size=32):
+        super().__init__()
+        self.save_hyperparameters()
+        self.X, self.y = d2l.synthetic_data(w, b, noise, num_train + num_val)
+
+    def get_dataloader(self, train):
+        i = slice(0, self.num_train) if train else slice(self.num_train, None)
+        return self.get_tensorloader((self.X, self.y), train, i)
+
+class Trainer(d2l.HyperParameters):
+    """Fit a Module to a DataModule, keeping a per-epoch history.
+
+    Defined in :numref:`sec_oo-design`"""
+
+    def prepare_data(self, data):
+        self.train_dataloader = data.train_dataloader()
+        self.val_dataloader = data.val_dataloader()
+
+    def prepare_optimizer(self, model):
+        """`configure_optimizers` may also return a learning-rate scheduler.
+
+        Defined in :numref:`sec_oo-design`"""
+        # PyTorch steps a schedule with a separate object (sec_scheduler)
+        optim = model.configure_optimizers()
+        self.optim, self.scheduler = (optim if isinstance(optim, tuple)
+                                      else (optim, None))
+
+    def fit(self, model, data):
+        self.prepare_data(data)
+        self.prepare_model(model)
+        self.prepare_optimizer(model)
+        self.history = collections.defaultdict(list)
+        self.board.clear()
+        self.board.xlim = [0, self.max_epochs]
+        for self.epoch in range(self.max_epochs):
+            # The training mean averages over the epoch, so it sits mid-epoch
+            self.record('train', self.fit_epoch(), x=self.epoch + 0.5)
+            if self.val_dataloader is not None:
+                self.record('val', self.validate(), x=self.epoch + 1)
+            self.board.show(final=False)
+        self.board.show()
+
+    def record(self, split, metrics, x):
+        for name in sorted(metrics, key=lambda name: (name != 'loss', name)):
+            self.history[f'{split}_{name}'].append(metrics[name])
+            self.board.draw(x, metrics[name], f'{split}_{name}')
+
+    def fit_epoch(self):
+        self.model.train()
+        metrics = d2l.Averager()
+        for batch in map(self.prepare_batch, self.train_dataloader):
+            out = d2l.as_metrics(self.model.training_step(batch))
+            self.optim.zero_grad()
+            out['loss'].backward()
+            if self.gradient_clip_val > 0:  # To be discussed later
+                self.clip_gradients(self.gradient_clip_val, self.model)
+            with torch.no_grad():
+                self.optim.step()
+            if self.scheduler is not None:
+                self.scheduler.step()
+            metrics.add({k: v.detach() for k, v in out.items()}, len(batch[-1]))
+        return metrics.mean()
+
+    def validate(self):
+        self.model.eval()
+        metrics = d2l.Averager()
+        with torch.no_grad():
+            for batch in map(self.prepare_batch, self.val_dataloader):
+                metrics.add(d2l.as_metrics(self.model.validation_step(batch)),
+                            len(batch[-1]))
+        return metrics.mean()
+
+    def evaluate(self, model, data, train=False):
+        """Metrics of `model` on the validation data of `data` (on its training
+        data if `train`), averaged over examples.
+
+        Defined in :numref:`sec_softmax_scratch`"""
+        self.train_dataloader = None
+        self.val_dataloader = (data.train_dataloader() if train
+                               else data.val_dataloader())
+        self.prepare_model(model)
+        return self.validate()
+
+    def __init__(self, max_epochs, num_gpus=0, gradient_clip_val=0):
+        self.save_hyperparameters()
+        self.gpus = [d2l.gpu(i) for i in range(min(num_gpus, d2l.num_gpus()))]
+        self.board = d2l.ProgressBoard(xlabel='epoch', ylabel='loss')
+
+    def prepare_batch(self, batch):
+        if self.gpus:
+            batch = [d2l.to(a, self.gpus[0]) for a in batch]
+        return batch
+
+    def prepare_model(self, model):
+        self.model = model
+        if self.gpus:
+            model.to(self.gpus[0])
+            # Pick convolution algorithms by timing, unless determinism is wanted
+            torch.backends.cudnn.benchmark = not (
+                torch.are_deterministic_algorithms_enabled()
+                or torch.backends.cudnn.deterministic)
+        # Lazy parameters get their shapes from a dry pass on the device, then
+        # the model's weight_init, if it has one, before the optimizer exists
+        if any(isinstance(p, nn.parameter.UninitializedParameter)
+               for p in model.parameters()):
+            loader = (self.train_dataloader if self.train_dataloader is not None
+                      else self.val_dataloader)  # `evaluate` has no training data
+            batch = self.prepare_batch(next(iter(loader)))
+            model.apply_init(batch[:-1], getattr(model, 'weight_init', None))
+
+    def clip_gradients(self, grad_clip_val, model):
+        params = [p for p in model.parameters() if p.requires_grad]
+        norm = torch.sqrt(sum(torch.sum(p.grad ** 2) for p in params))
+        scale = torch.clamp(grad_clip_val / norm, max=1.0)  # no `if` on the host
+        for param in params:
+            param.grad.mul_(scale)
+
+class Averager:
+    """Example-weighted means of batch metrics, summed on the device.
+
+    Defined in :numref:`sec_oo-design`"""
+    def __init__(self):
+        self.sums, self.n = {}, 0
+
+    def add(self, metrics, n):
+        for name, value in metrics.items():
+            self.sums[name] = self.sums.get(name, 0) + value * n
+        self.n += n
+
+    def mean(self):
+        """One host synchronization per metric; the loss comes first."""
+        names = sorted(self.sums, key=lambda name: (name != 'loss', name))
+        return {name: float(self.sums[name]) / self.n for name in names}
+
+class ProgressBoard(d2l.HyperParameters):
+    """Curves that grow during training; `show` redraws them.
+
+    Defined in :numref:`sec_oo-design`"""
+    def __init__(self, xlabel=None, ylabel=None, xlim=None, ylim=None,
+                 xscale='linear', yscale='linear', figsize=(3.5, 2.5),
+                 display=True):
+        self.save_hyperparameters()
+        self.clear()
+
+    def clear(self):
+        """Forget all curves; the next `show` starts a new figure."""
+        self.data, self.handle = {}, None
+
+    def draw(self, x, y, label):
+        """Append the point (x, y) to the curve called `label`."""
+        xs, ys = self.data.setdefault(label, ([], []))
+        xs.append(x)
+        ys.append(y)
+
+    def show(self, final=True):
+        """Redraw all curves; the book build renders only the final call.
+
+        Defined in :numref:`sec_utils`"""
+        if not self.display or (
+                not final and os.environ.get('D2L_NB_CAPTURE') == '1'):
+            return
+        d2l.use_svg_display()
+        fig = Figure(figsize=self.figsize)
+        self._plot(fig.add_subplot())
+        if self.handle is None:
+            self.handle = display.display(fig, display_id=True)
+        else:
+            self.handle.update(fig)
+
+    def _plot(self, ax):
+        """Losses on the left axis, accuracies on a right one.
+
+        Defined in :numref:`sec_utils`"""
+        acc_ax = None
+        for i, (label, (xs, ys)) in enumerate(self.data.items()):
+            target = ax
+            if label.endswith('acc'):
+                acc_ax = acc_ax or ax.twinx()
+                target = acc_ax
+            # Mark validation points, and any curve that has a single point
+            marked = label.startswith('val') or len(xs) == 1
+            target.plot(xs, ys, ('-', '--', '-.', ':')[i % 4], color=f'C{i % 10}',
+                        marker='o' if marked else None, markersize=3,
+                        clip_on=not marked, label=label)
+        ax.set_xlabel(self.xlabel), ax.set_ylabel(self.ylabel)
+        ax.set_xscale(self.xscale), ax.set_yscale(self.yscale)
+        if self.xlim: ax.set_xlim(self.xlim)
+        if self.ylim: ax.set_ylim(self.ylim)
+        if self.yscale == 'log': d2l.set_log_ticks(ax.yaxis)
+        if acc_ax is not None: acc_ax.set_ylabel('accuracy')
+        lines = list(ax.get_lines()) + list(acc_ax.get_lines() if acc_ax else [])
+        labels = [line.get_label() for line in lines]
+        if acc_ax is not None:  # Above the axes: no curve of either axis is hidden
+            ax.legend(lines, labels, loc='lower center', ncol=len(lines),
+                      bbox_to_anchor=(0.5, 1), frameon=False)
+        elif lines:
+            ax.legend(lines, labels)
+        ax.grid()
+
+class LinearRegression(d2l.Module):
+    """Linear regression built from framework components.
+
+    Defined in :numref:`sec_linear_concise`"""
+    def __init__(self, lr):
+        super().__init__()
+        self.save_hyperparameters()
+        self.net = nn.LazyLinear(1)
+
+    def weight_init(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, std=0.01)
+            nn.init.zeros_(module.bias)
+
+    def loss(self, y_hat, y):
+        fn = nn.MSELoss()
+        return fn(y_hat, y)
+
+    def configure_optimizers(self):
+        return torch.optim.SGD(self.parameters(), self.lr)
+
+    def get_w_b(self):
+        return self.net.weight.detach(), self.net.bias.detach()
+
+class FashionMNIST(d2l.DataModule):
+    """The Fashion-MNIST dataset.
+
+    Defined in :numref:`sec_fashion_mnist`"""
+    def __init__(self, batch_size=64, resize=(28, 28)):
+        super().__init__()
+        self.save_hyperparameters()
+        trans = transforms.Compose([transforms.Resize(resize),
+                                    transforms.ToTensor()])
+        self.train = torchvision.datasets.FashionMNIST(
+            root=self.root, train=True, transform=trans, download=True)
+        self.val = torchvision.datasets.FashionMNIST(
+            root=self.root, train=False, transform=trans, download=True)
+
+    def text_labels(self, indices):
+        """Return text labels.
+
+        Defined in :numref:`sec_fashion_mnist`"""
+        labels = ['T-shirt', 'trouser', 'pullover', 'dress', 'coat',
+                  'sandal', 'shirt', 'sneaker', 'bag', 'ankle boot']
+        return [labels[int(i)] for i in indices]
+
+    def get_dataloader(self, train):
+        data = self.train if train else self.val
+        # Serve the 8-bit image tensor directly, not one PIL image at a time
+        X = data.data.unsqueeze(1)  # Add the channel axis
+        return torch.utils.data.DataLoader(
+            torch.utils.data.TensorDataset(X, data.targets), self.batch_size,
+            shuffle=train, collate_fn=self.batchify)
+
+    def batchify(self, examples):
+        """Stack examples into a minibatch, scale to [0, 1], resize if asked.
+
+        Defined in :numref:`sec_fashion_mnist`"""
+        X, y = torch.utils.data.default_collate(examples)
+        X = X.float() / 255
+        if X.shape[2:] != tuple(self.resize):
+            X = F.interpolate(X, size=self.resize, mode='bilinear', antialias=True)
+        return X, y
+
+    def visualize(self, batch, nrows=1, ncols=8, labels=None):
+        """Show the images of a batch in grayscale, titled by their labels.
+
+        Defined in :numref:`sec_fashion_mnist`"""
+        X, y = batch
+        if labels is None:
+            labels = self.text_labels(y)
+        X = d2l.reshape(X, (-1, *self.resize))  # Drop the channel axis
+        d2l.show_images(X, nrows, ncols, titles=labels, cmap='gray')
+
+class Classifier(d2l.Module):
+    """The base class of classification models.
+
+    Defined in :numref:`sec_softmax_scratch`"""
+    def validation_step(self, batch):
+        Y_hat = self(*batch[:-1])
+        return {'loss': self.loss(Y_hat, batch[-1]),
+                'acc': self.accuracy(Y_hat, batch[-1])}
+
+    def accuracy(self, Y_hat, Y, averaged=True):
+        """Compute the fraction of correct predictions.
+
+        Defined in :numref:`sec_softmax_scratch`"""
+        Y_hat = d2l.reshape(Y_hat, (-1, Y_hat.shape[-1]))
+        preds = d2l.astype(d2l.argmax(Y_hat, axis=1), Y.dtype)
+        compare = d2l.astype(preds == d2l.reshape(Y, (-1,)), d2l.float32)
+        return d2l.reduce_mean(compare) if averaged else compare
+
+    def loss(self, Y_hat, Y, averaged=True):
+        Y_hat = d2l.reshape(Y_hat, (-1, Y_hat.shape[-1]))
+        Y = d2l.reshape(Y, (-1,))
+        return F.cross_entropy(
+            Y_hat, Y, reduction='mean' if averaged else 'none')
+
+    def layer_summary(self, X_shape):
+        X = d2l.randn(*X_shape)
+        for layer in self.net:
+            X = layer(X)
+            name = getattr(layer, '__name__', type(layer).__name__)
+            print(f'{name:<22} {tuple(X.shape)}')
+
+def cross_entropy(y_hat, y):
+    # Tiny clip to keep log finite when softmax outputs underflow to 0.
+    p = y_hat[list(range(len(y_hat))), y].clamp(min=1e-12)
+    return -d2l.reduce_mean(d2l.log(p))
+
+class SoftmaxRegression(d2l.Classifier):
+    """The softmax regression model.
+
+    Defined in :numref:`sec_softmax_concise`"""
+    def __init__(self, num_outputs, lr):
+        super().__init__()
+        self.save_hyperparameters()
+        self.net = nn.Sequential(nn.Flatten(),
+                                 nn.LazyLinear(num_outputs))
+
+    def weight_init(self, module):
+        # The Trainer calls this after the lazy layer has learned its shape
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, std=0.01)
+            nn.init.zeros_(module.bias)
+
+    def forward(self, X):
+        return self.net(X)
+
+class ArrayData(d2l.DataModule):
+    """Minibatches of the arrays X and y; training batches are shuffled.
+
+    Defined in :numref:`sec_generalization_deep`"""
+    def __init__(self, X, y, batch_size=64):
+        super().__init__()
+        self.save_hyperparameters()
+
+    def get_dataloader(self, train):
+        return self.get_tensorloader(
+            (d2l.tensor(self.X), d2l.tensor(self.y)), train)
+
+class Tracker(d2l.Trainer):
+    """A Trainer that records the accuracy on named datasets every epoch.
+
+    Defined in :numref:`sec_generalization_deep`"""
+    def __init__(self, max_epochs, datasets):
+        super().__init__(max_epochs, num_gpus=1)
+        self.datasets = datasets
+        self.accuracy = {name: [] for name in datasets}
+        self.board.display = False  # We plot the accuracies ourselves
+
+    def validate(self):
+        for name, dataset in self.datasets.items():
+            self.val_dataloader = dataset.val_dataloader()
+            self.accuracy[name].append(super().validate()['acc'])
+        return {}
+
+def corrupt(y, fraction, rng):
+    """Replace each label, with probability fraction, by a random class.
+
+    Defined in :numref:`sec_generalization_deep`"""
+    redraw = rng.random(len(y)) < fraction
+    y = y.copy()
+    y[redraw] = rng.integers(0, 10, redraw.sum())
+    return y
+
+def save_checkpoint(path, model, optimizer, step, cfg=None, rng=None):
+    """Atomically write a resumable training checkpoint.
+
+    Defined in :numref:`sec_read_write`"""
+    ckpt = {'model': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'step': step,
+            'cpu_rng': torch.get_rng_state()}
+    if cfg is not None:
+        ckpt['cfg'] = asdict(cfg)
+    if rng is not None:                        # a torch.Generator
+        ckpt['rng'] = rng.get_state()
+    if torch.cuda.is_available():
+        ckpt['cuda_rng'] = torch.cuda.get_rng_state_all()
+    tmp = path + '.tmp'
+    torch.save(ckpt, tmp)
+    os.replace(tmp, path)
+
+def load_checkpoint(path, model, optimizer=None, rng=None):
+    """Restore the state written by save_checkpoint; return the raw dict.
+
+    Defined in :numref:`sec_read_write`"""
+    ckpt = torch.load(path, weights_only=True)
+    model.load_state_dict(ckpt['model'])
+    if optimizer is not None:
+        optimizer.load_state_dict(ckpt['optimizer'])
+    if rng is not None:
+        rng.set_state(ckpt['rng'])
+    torch.set_rng_state(ckpt['cpu_rng'])
+    if torch.cuda.is_available() and 'cuda_rng' in ckpt:
+        torch.cuda.set_rng_state_all(ckpt['cuda_rng'])
+    return ckpt
+
+def cpu():
+    """Get the CPU device.
+
+    Defined in :numref:`sec_use_gpu`"""
+    return torch.device('cpu')
+
+def gpu(i=0):
+    """Get a GPU device.
+
+    Defined in :numref:`sec_use_gpu`"""
+    return torch.device(f'cuda:{i}')
+
+def num_gpus():
+    """Get the number of available GPUs.
+
+    Defined in :numref:`sec_use_gpu`"""
+    return torch.cuda.device_count()
+
+def try_gpu(i=0):
+    """Return gpu(i) if exists, otherwise return cpu().
+
+    Defined in :numref:`sec_use_gpu`"""
+    if num_gpus() >= i + 1:
+        return gpu(i)
+    return cpu()
+
+def try_all_gpus():
+    """Return all available GPUs, or [cpu(),] if no GPU exists.
+
+    Defined in :numref:`sec_use_gpu`"""
+    devices = [gpu(i) for i in range(num_gpus())]
+    return devices if devices else [cpu()]
+
+class Benchmark:
+    """Time a callable: warmup, then device-synchronized average seconds.
+    `devices` lists the GPUs to wait for, by default the current one.
+
+    Defined in :numref:`sec_use_gpu`"""
+    def __init__(self, f, warmup=3, repeats=10, desc='time', devices=None):
+        def wait():  # CUDA runs asynchronously; the CPU does not
+            if torch.cuda.is_available():
+                for device in devices or [None]:
+                    torch.cuda.synchronize(device)
+        self.desc = desc
+        for _ in range(warmup):
+            f()
+        wait()
+        t0 = time.perf_counter()
+        for _ in range(repeats):
+            f()
+        wait()
+        self.time = (time.perf_counter() - t0) / repeats
+
+    def __repr__(self):
+        return f'{self.desc}: {1000 * self.time:.2f} ms/call'
+
+def peak_memory(f, *args):
+    """Extra peak GPU memory allocated by f(*args), in bytes.
+
+    Defined in :numref:`sec_use_gpu`"""
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
+    base = torch.cuda.memory_allocated()
+    f(*args)
+    torch.cuda.synchronize()
+    return torch.cuda.max_memory_allocated() - base
+
+def corr2d(X, K):
+    """Compute 2D cross-correlation.
+
+    Defined in :numref:`sec_conv_layer`"""
+    h, w = K.shape
+    Y = d2l.zeros((X.shape[0] - h + 1, X.shape[1] - w + 1))
+    for i in range(Y.shape[0]):
+        for j in range(Y.shape[1]):
+            Y[i, j] = d2l.reduce_sum((X[i: i + h, j: j + w] * K))
+    return Y
+
+def init_cnn(module):
+    """Initialize weights for CNNs.
+
+    Defined in :numref:`sec_lenet`"""
+    if type(module) == nn.Linear or type(module) == nn.Conv2d:
+        nn.init.xavier_uniform_(module.weight)
+
+class LeNet(d2l.Classifier):
+    """The layout of LeNet-5, with sigmoid activations and average pooling.
+
+    Defined in :numref:`sec_lenet`"""
+    def __init__(self, lr=0.1, num_classes=10):
+        super().__init__()
+        self.save_hyperparameters()
+        self.net = nn.Sequential(
+            nn.LazyConv2d(6, kernel_size=5, padding=2), nn.Sigmoid(),
+            nn.AvgPool2d(kernel_size=2, stride=2),
+            nn.LazyConv2d(16, kernel_size=5), nn.Sigmoid(),
+            nn.AvgPool2d(kernel_size=2, stride=2),
+            nn.Flatten(),
+            nn.LazyLinear(120), nn.Sigmoid(),
+            nn.LazyLinear(84), nn.Sigmoid(),
+            nn.LazyLinear(num_classes))
+
+    def weight_init(self, module):
+        # The Trainer calls this after the first minibatch fixed the shapes
+        init_cnn(module)  # Xavier-uniform weights
+        if type(module) in (nn.Linear, nn.Conv2d) and module.bias is not None:
+            nn.init.zeros_(module.bias)
+
+def cosine_warmup(t, num_steps, warmup_steps):
+    """Learning-rate factor: linear warmup from 0, then a half-cosine to 0.
+
+    Defined in :numref:`sec_alexnet`"""
+    if t < warmup_steps:
+        return t / warmup_steps
+    progress = min((t - warmup_steps) / (num_steps - warmup_steps), 1)
+    return 0.5 * (1 + math.cos(math.pi * progress))
+
+class Residual(nn.Module):
+    """The Residual block of ResNet models.
+
+    Defined in :numref:`sec_resnet`"""
+    def __init__(self, num_channels, use_1x1conv=False, strides=1):
+        super().__init__()
+        # No conv biases: the batch normalization after each conv removes them
+        self.conv1 = nn.LazyConv2d(num_channels, kernel_size=3, padding=1,
+                                   stride=strides, bias=False)
+        self.conv2 = nn.LazyConv2d(num_channels, kernel_size=3, padding=1,
+                                   bias=False)
+        # Auto-enable 1x1 conv when downsampling so the residual shape matches.
+        if use_1x1conv or strides != 1:
+            self.conv3 = nn.LazyConv2d(num_channels, kernel_size=1,
+                                       stride=strides, bias=False)
+            self.bn3 = nn.LazyBatchNorm2d()
+        else:
+            self.conv3 = None
+        self.bn1 = nn.LazyBatchNorm2d()
+        self.bn2 = nn.LazyBatchNorm2d()
+
+    def forward(self, X):
+        Y = F.relu(self.bn1(self.conv1(X)))
+        Y = self.bn2(self.conv2(Y))
+        if self.conv3:
+            X = self.bn3(self.conv3(X))
+        Y += X
+        return F.relu(Y)
+
+class ResNeXtBlock(nn.Module):
+    """The ResNeXt block.
+
+    Defined in :numref:`sec_resnet`"""
+    def __init__(self, num_channels, groups, bot_mul, use_1x1conv=False,
+                 strides=1):
+        super().__init__()
+        bot_channels = int(round(num_channels * bot_mul))
+        # No conv biases: the batch normalization after each conv removes them
+        self.conv1 = nn.LazyConv2d(bot_channels, kernel_size=1, stride=1,
+                                   bias=False)
+        self.conv2 = nn.LazyConv2d(bot_channels, kernel_size=3,
+                                   stride=strides, padding=1,
+                                   groups=groups, bias=False)
+        self.conv3 = nn.LazyConv2d(num_channels, kernel_size=1, stride=1,
+                                   bias=False)
+        self.bn1 = nn.LazyBatchNorm2d()
+        self.bn2 = nn.LazyBatchNorm2d()
+        self.bn3 = nn.LazyBatchNorm2d()
+        # Auto-enable 1x1 conv when downsampling so the residual shape matches.
+        if use_1x1conv or strides != 1:
+            self.conv4 = nn.LazyConv2d(num_channels, kernel_size=1,
+                                       stride=strides, bias=False)
+            self.bn4 = nn.LazyBatchNorm2d()
+        else:
+            self.conv4 = None
+
+    def forward(self, X):
+        Y = F.relu(self.bn1(self.conv1(X)))
+        Y = F.relu(self.bn2(self.conv2(Y)))
+        Y = self.bn3(self.conv3(Y))
+        if self.conv4:
+            X = self.bn4(self.conv4(X))
+        return F.relu(Y + X)
+
+def num_params(model):
+    """The number of trainable parameters.
+
+    Defined in :numref:`sec_depthwise_separable`"""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+def mixup(X, y, alpha):
+    """Mix a minibatch with a shuffled copy; return both label sets.
+
+    Defined in :numref:`sec_training_recipes`"""
+    lam = random.betavariate(alpha, alpha)
+    perm = torch.randperm(X.shape[0], device=X.device)
+    return lam * X + (1 - lam) * X[perm], y, y[perm], lam
+
+def drop_path(Y, p, training):
+    """Zero each example of Y with probability p, rescale the rest.
+
+    Defined in :numref:`sec_training_recipes`"""
+    if not training or p == 0:
+        return Y
+    shape = (Y.shape[0],) + (1,) * (Y.ndim - 1)  # One draw per example
+    keep = torch.rand(shape, device=Y.device) > p
+    return Y * keep / (1 - p)
+
+class TimeMachine(d2l.DataModule):
+    """The Time Machine dataset.
+
+    Defined in :numref:`sec_text-sequence`"""
+    def _download(self):
+        fname = d2l.download(d2l.DATA_URL + 'timemachine.txt', self.root,
+                             '090b5e7e70c295757f55df93cb0a180b9691891a')
+        with open(fname) as f:
+            return f.read()
+
+    def _preprocess(self, text):
+        return re.sub('[^A-Za-z]+', ' ', text).lower()
+
+    def _tokenize(self, text):
+        return list(text)
+
+    def build(self, raw_text, vocab=None):
+        tokens = self._tokenize(self._preprocess(raw_text))
+        if vocab is None: vocab = Vocab(tokens)
+        corpus = [vocab[token] for token in tokens]
+        return corpus, vocab
+
+    def __init__(self, batch_size, num_steps, num_train=50000, num_val=5000,
+                 tokenization='bpe', vocab_size=1024):
+        super(d2l.TimeMachine, self).__init__()
+        self.save_hyperparameters()
+        raw_text = self._download()
+        if tokenization == 'bpe':
+            self.tokenizer = d2l.BPETokenizer(
+                vocab_size, pattern=d2l.BPETokenizer.GPT2_PATTERN)
+            self.tokenizer.train(raw_text)
+            corpus, self.vocab = self.tokenizer.encode(raw_text), self.tokenizer
+        else:  # tokenization='char': characters, via TimeMachine.build
+            corpus, self.vocab = self.build(raw_text)
+        windows = [corpus[i:i+num_steps+1] for i in range(len(corpus)-num_steps)]
+        # Drop the windows that straddle the split, so that no validation token
+        # is a training target
+        windows = windows[:num_train] + windows[num_train+num_steps:]
+        array = d2l.tensor(windows)
+        self.X, self.Y = array[:,:-1], array[:,1:]
+
+    def get_dataloader(self, train):
+        idx = slice(0, self.num_train) if train else slice(
+            self.num_train, self.num_train + self.num_val)
+        return self.get_tensorloader([self.X, self.Y], train, idx)
+
+class Vocab:
+    """Vocabulary for text.
+
+    Defined in :numref:`sec_text-sequence`"""
+    def __init__(self, tokens=(), min_freq=0, reserved_tokens=()):
+        # Flatten a 2D list if needed
+        if tokens and isinstance(tokens[0], list):
+            tokens = [token for line in tokens for token in line]
+        # Count token frequencies
+        counter = collections.Counter(tokens)
+        self.token_freqs = sorted(counter.items(), key=lambda x: x[1],
+                                  reverse=True)
+        # The list of unique tokens, ordered by descending frequency.
+        # Reserve <unk> at index 0 so vocab[0] is the unknown token.
+        self.idx_to_token = ['<unk>'] + list(reserved_tokens) + [
+            token for token, freq in self.token_freqs
+            if freq >= min_freq and token not in reserved_tokens]
+        self.token_to_idx = {token: idx
+                             for idx, token in enumerate(self.idx_to_token)}
+
+    def __len__(self):
+        return len(self.idx_to_token)
+
+    def __getitem__(self, tokens):
+        if not isinstance(tokens, (list, tuple)):
+            return self.token_to_idx.get(tokens, self.unk)
+        return [self.__getitem__(token) for token in tokens]
+
+    def to_tokens(self, indices):
+        if isinstance(indices, (list, tuple)) or getattr(indices, 'ndim', 0):
+            return [self.idx_to_token[int(index)] for index in indices]
+        return self.idx_to_token[int(indices)]
+
+    @property
+    def unk(self):  # Index for the unknown token
+        return self.token_to_idx['<unk>']
+
+import regex
+
+class BPETokenizer:
+    """Byte-level BPE tokenizer trained by iterated most-frequent-pair
+    merges.
+
+    Token ids 0..255 are raw bytes; learned merges get ids
+    256..vocab_size-1; special tokens sit above those and are never
+    produced by BPE itself. `pattern` is an optional pre-tokenization
+    regex: text is split into chunks and merges never cross chunk
+    boundaries.
+
+    Defined in :numref:`sec_text-sequence`"""
+
+    GPT2_PATTERN = (r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+"
+                    r"| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+")
+
+    def __init__(self, vocab_size=1024, pattern=None,
+                 specials=('<pad>', '<bos>', '<eos>')):
+        self.vocab_size, self.pattern = vocab_size, pattern
+        self.merges = {}                                  # (id, id) -> new id
+        self.vocab = {i: bytes([i]) for i in range(256)}  # id -> bytes
+        self.byte_ids = list(range(256))                  # byte value -> id
+        self.specials = {s: vocab_size + i for i, s in enumerate(specials)}
+
+    def __len__(self):
+        return self.vocab_size + len(self.specials)
+
+    @property
+    def pad(self):
+        return self.specials['<pad>']
+
+    @property
+    def bos(self):
+        return self.specials['<bos>']
+
+    @property
+    def eos(self):
+        return self.specials['<eos>']
+
+    def _chunks(self, text):
+        return [text] if self.pattern is None else regex.findall(
+            self.pattern, text)
+
+    def _merge(self, ids, pair, new_id):
+        """Replace every occurrence of pair in ids by new_id.
+
+        Defined in :numref:`sec_text-sequence`"""
+        out, i = [], 0
+        while i < len(ids):
+            if i + 1 < len(ids) and (ids[i], ids[i + 1]) == pair:
+                out.append(new_id)  # Merge the pair and skip past it
+                i += 2
+            else:
+                out.append(ids[i])
+                i += 1
+        return out
+
+    def train(self, text):
+        """Learn vocab_size - 256 merges, most frequent pair first.
+
+        Defined in :numref:`sec_text-sequence`"""
+        chunk_freq = collections.Counter(self._chunks(text))
+        seqs = [list(chunk.encode('utf-8')) for chunk in chunk_freq]
+        for new_id in range(256, self.vocab_size):
+            pairs = collections.Counter()
+            for seq, w in zip(seqs, chunk_freq.values()):
+                for pair in zip(seq, seq[1:]):
+                    pairs[pair] += w  # A chunk that occurs w times counts w times
+            if not pairs:
+                break  # nothing left to merge
+            pair = max(pairs, key=pairs.get)
+            self.merges[pair] = new_id
+            self.vocab[new_id] = self.vocab[pair[0]] + self.vocab[pair[1]]
+            seqs = [self._merge(seq, pair, new_id) for seq in seqs]
+
+    def _encode_chunk(self, text_bytes):
+        ids = [self.byte_ids[b] for b in text_bytes]
+        while len(ids) > 1:
+            # The lowest-rank merge applicable anywhere in this chunk
+            pair = min(zip(ids, ids[1:]),
+                       key=lambda p: self.merges.get(p, float('inf')))
+            if pair not in self.merges:
+                break
+            ids = self._merge(ids, pair, self.merges[pair])
+        return ids
+
+    def encode(self, text, allow_special=False):
+        if allow_special and self.specials:
+            pat = '(' + '|'.join(regex.escape(s) for s in self.specials) + ')'
+            ids = []
+            for part in regex.split(pat, text):
+                if part in self.specials:
+                    ids.append(self.specials[part])
+                elif part:
+                    ids.extend(self.encode(part))
+            return ids
+        return [i for chunk in self._chunks(text)
+                for i in self._encode_chunk(chunk.encode('utf-8'))]
+
+    def decode(self, ids):
+        specials = {i: s.encode('utf-8') for s, i in self.specials.items()}
+        data = b''.join(self.vocab[i] if i in self.vocab else specials[i]
+                        for i in ids)
+        return data.decode('utf-8', errors='replace')
+
+    @classmethod
+    def from_tiktoken(cls, name):
+        """Load a published bytes->rank table (e.g. 'gpt2') into our encoder.
+
+        Defined in :numref:`sec_text-sequence`"""
+        import tiktoken  # lazy: d2l itself does not require tiktoken
+        enc = tiktoken.get_encoding(name)
+        ranks = enc._mergeable_ranks
+        tok = cls(vocab_size=len(ranks), pattern=enc._pat_str, specials=())
+        tok.specials = dict(enc._special_tokens)
+        tok.vocab = {rank: b for b, rank in ranks.items()}
+        tok.byte_ids = [ranks[bytes([b])] for b in range(256)]
+        for token, rank in ranks.items():
+            if len(token) > 1:  # recover which pair merged into this token
+                parts = [bytes([b]) for b in token]
+                while len(parts) > 2:
+                    a, b = min(zip(parts, parts[1:]),
+                               key=lambda p: ranks.get(p[0] + p[1],
+                                                       float('inf')))
+                    i = list(zip(parts, parts[1:])).index((a, b))
+                    parts[i:i + 2] = [a + b]
+                tok.merges[ranks[parts[0]], ranks[parts[1]]] = rank
+        return tok
+
+    def __getitem__(self, token):
+        return self.specials[token]
+
+    def to_tokens(self, ids):
+        return [self.decode([int(i)]) for i in ids]
+
+import textwrap
+
+def print_wrapped(*args, width=76):
+    """Print like `print`, folding each line to the width of a page.
+
+    Defined in :numref:`sec_text-sequence`"""
+    for line in ' '.join(str(a) for a in args).split('\n'):
+        print(textwrap.fill(line, width, subsequent_indent='    '))
+
+def kneser_ney(train, tokens, vocab_size, n=3):
+    """Interpolated Kneser-Ney log-probabilities (nats) of each of tokens.
+
+    Defined in :numref:`sec_language-model`"""
+    counts = {n: collections.Counter(zip(*(train[i:] for i in range(n))))}
+    for k in range(n - 1, 0, -1):  # Lower orders: continuation counts
+        counts[k] = collections.Counter(g[1:] for g in counts[k + 1])
+    stats = {}
+    for k, c in counts.items():
+        c1, c2 = (sum(x == r for x in c.values()) for r in (1, 2))
+        N, S = collections.Counter(), collections.Counter()
+        for g, x in c.items():
+            N[g[:-1]] += x
+            S[g[:-1]] += 1
+        stats[k] = c, N, S, c1 / max(c1 + 2 * c2, 1)
+    logp = []
+    for i in range(len(tokens)):
+        p = 1 / vocab_size  # Below the unigram: uniform
+        for k in range(1, min(n, i + 1) + 1):
+            c, N, S, D = stats[k]
+            g = tuple(tokens[i - k + 1:i + 1])
+            if N[g[:-1]]:  # An unseen context passes p down unchanged
+                p = (max(c[g] - D, 0) + D * S[g[:-1]] * p) / N[g[:-1]]
+        logp.append(math.log(p))
+    return logp
+
+class RNNScratch(d2l.Module):
+    """The RNN model implemented from scratch.
+
+    Defined in :numref:`sec_rnn-scratch`"""
+    def __init__(self, num_inputs, num_hiddens, sigma=0.01):
+        super().__init__()
+        self.save_hyperparameters()
+        self.W_xh = nn.Parameter(
+            d2l.randn(num_inputs, num_hiddens) * sigma)
+        self.W_hh = nn.Parameter(
+            d2l.randn(num_hiddens, num_hiddens) * sigma)
+        self.b_h = nn.Parameter(d2l.zeros(num_hiddens))
+
+    def forward(self, inputs, state=None):
+        if state is None:
+            # Initial state with shape: (batch_size, num_hiddens)
+            state = d2l.zeros((inputs.shape[1], self.num_hiddens),
+                              device=inputs.device)
+        outputs = []
+        for X in inputs:  # Shape of inputs: (num_steps, batch_size, num_inputs)
+            state = d2l.tanh(d2l.matmul(X, self.W_xh) +
+                             d2l.matmul(state, self.W_hh) + self.b_h)
+            outputs.append(state)
+        return outputs, state
+
+def check_shape(a, shape):
+    """Check the shape of a tensor.
+
+    Defined in :numref:`sec_rnn-scratch`"""
+    assert a.shape == shape, \
+            f'tensor\'s shape {a.shape} != expected shape {shape}'
+
+class RNNLMScratch(d2l.Classifier):
+    """The RNN-based language model implemented from scratch.
+
+    Defined in :numref:`sec_rnn-scratch`"""
+    def __init__(self, rnn, vocab_size, lr=0.01, dropout=0, emb_dropout=0):
+        super().__init__()
+        self.save_hyperparameters()
+        self.sigma = getattr(rnn, 'sigma', 0.01)  # Scale of the output weights
+        self.init_params()
+
+    def init_params(self):
+        self.E = nn.Parameter(
+            d2l.randn(self.vocab_size, self.rnn.num_inputs))
+        self.W_hq = nn.Parameter(
+            d2l.randn(self.rnn.num_hiddens, self.vocab_size) * self.sigma)
+        self.b_q = nn.Parameter(d2l.zeros(self.vocab_size))
+
+    def validation_step(self, batch):
+        return self.loss(self(*batch[:-1]), batch[-1])
+
+    def embedding(self, X):
+        # Output shape: (num_steps, batch_size, num_inputs)
+        return self.E[X.T]
+
+    def output_layer(self, rnn_outputs):
+        # A list of per-step states, or a tensor whose first axis is time
+        H = d2l.stack(list(rnn_outputs), 1)  # (batch_size, num_steps, num_hiddens)
+        return d2l.matmul(H, self.W_hq) + self.b_q
+
+    def forward(self, X, state=None):
+        embs = F.dropout(self.embedding(X), self.emb_dropout, self.training)
+        rnn_outputs, _ = self.rnn(embs, state)
+        H = d2l.stack(list(rnn_outputs), 0)  # (num_steps, batch_size, num_hiddens)
+        return self.output_layer(F.dropout(H, self.dropout, self.training))
+
+    @torch.inference_mode()  # Generation needs no autograd graph
+    def predict(self, prefix, num_tokens, tok, device=None, temperature=0.0):
+        outputs, state = tok.encode(prefix), None
+        for i in range(len(outputs) - 1):  # Warm up on the prefix
+            X = d2l.tensor([[outputs[i]]], device=device)
+            _, state = self.rnn(self.embedding(X), state)
+        for _ in range(num_tokens):  # Generate num_tokens continuation tokens
+            X = d2l.tensor([[outputs[-1]]], device=device)
+            rnn_outputs, state = self.rnn(self.embedding(X), state)
+            logits = self.output_layer(rnn_outputs)[0, 0]
+            if temperature == 0:  # Greedy: the highest-scoring token
+                token = logits.argmax()
+            else:  # Sample from the softmax of logits / temperature
+                token = torch.distributions.Categorical(
+                    logits=logits / temperature).sample()
+            outputs.append(int(token))
+        return tok.decode(outputs)
+
+class RNN(d2l.Module):
+    """The RNN model implemented with high-level APIs.
+
+    Defined in :numref:`sec_rnn-concise`"""
+    def __init__(self, num_inputs, num_hiddens, sigma=0.01):
+        super().__init__()
+        self.save_hyperparameters()
+        self.rnn = nn.RNN(num_inputs, num_hiddens)
+        for name, param in self.rnn.named_parameters():
+            if name.startswith('weight'):
+                nn.init.normal_(param, std=sigma)
+            else:  # Both bias vectors start at zero
+                nn.init.zeros_(param)
+
+    def forward(self, inputs, H=None):
+        return self.rnn(inputs, H)
+
+class RNNLM(d2l.RNNLMScratch):
+    """The RNN-based language model implemented with high-level APIs.
+
+    Defined in :numref:`sec_rnn-concise`"""
+    def init_params(self):
+        self.emb = nn.Embedding(self.vocab_size, self.rnn.num_inputs)
+        self.linear = nn.Linear(self.rnn.num_hiddens, self.vocab_size)
+        nn.init.normal_(self.linear.weight, std=self.sigma)
+        nn.init.zeros_(self.linear.bias)
+
+    def embedding(self, X):
+        return self.emb(X.T)
+
+    def output_layer(self, hiddens):
+        return d2l.swapaxes(self.linear(hiddens), 0, 1)
+
+def beam_search(step_fn, prefix, num_tokens, beam_size=4,
+                alpha=0.75, eos_id=None):
+    """Length-normalized beam search (score = log P / len^alpha).
+    Returns candidates sorted best-first; [0][1] is the argmax sequence.
+
+    Defined in :numref:`sec_beam-search`"""
+    def log_softmax(logits):
+        logits = [float(l) for l in logits]
+        m = max(logits)
+        lse = m + math.log(sum(math.exp(l - m) for l in logits))
+        return [l - lse for l in logits]
+    score = lambda logp, ids: logp / max(1, len(ids) - len(prefix))**alpha
+    beams = [(0.0, list(prefix), False)]  # (log-prob, sequence, finished)
+    for _ in range(num_tokens):
+        if all(done for _, _, done in beams):
+            break
+        candidates = [b for b in beams if b[2]]  # Finished pass through
+        for logp, ids, _ in (b for b in beams if not b[2]):
+            logprobs = log_softmax(step_fn(ids))
+            best = sorted(range(len(logprobs)),
+                          key=lambda i: -logprobs[i])[:beam_size]
+            candidates += [(logp + logprobs[i], ids + [i], i == eos_id)
+                           for i in best]
+        beams = sorted(candidates, key=lambda b: score(b[0], b[1]),
+                       reverse=True)[:beam_size]
+    return sorted([(score(logp, ids), ids) for logp, ids, _ in beams],
+                  reverse=True)
+
+VALLEY_CURVATURES = (0.2, 4.0)
+
+def f_valley(x1, x2):
+    """The ill-conditioned quadratic valley h1/2 x1^2 + h2/2 x2^2, with
+    (h1, h2) = VALLEY_CURVATURES.
+
+    Defined in :numref:`sec_gd`"""
+    h1, h2 = VALLEY_CURVATURES
+    return h1 / 2 * x1 ** 2 + h2 / 2 * x2 ** 2
+
+def valley_grad(x1, x2):
+    """Gradient of f_valley.
+
+    Defined in :numref:`sec_gd`"""
+    h1, h2 = VALLEY_CURVATURES
+    return h1 * x1, h2 * x2
+
+def train_2d(trainer, f_grad, steps=20, **hparams):
+    """Run a 2D update rule from (-5, -2) and return the iterates.
+
+    Defined in :numref:`sec_gd`"""
+    x1, x2, s1, s2 = -5, -2, 0, 0  # s1, s2: state of stateful optimizers
+    results = [(x1, x2)]
+    for _ in range(steps):
+        x1, x2, s1, s2 = trainer(x1, x2, s1, s2, f_grad, **hparams)
+        results.append((x1, x2))
+    print(f'step {steps}, x1: {float(x1):f}, x2: {float(x2):f}')
+    return results
+
+def gd_2d(x1, x2, s1, s2, f_grad, eta):
+    """One step of gradient descent in 2D; the state stays zero.
+
+    Defined in :numref:`sec_gd`"""
+    g1, g2 = f_grad(x1, x2)
+    return x1 - eta * g1, x2 - eta * g2, 0, 0
+
+d2l.DATA_HUB['airfoil'] = (d2l.DATA_URL + 'airfoil_self_noise.dat',
+                           '76e5be1548fd8222e5074cf0faae75edff8cf93f')
+
+def get_airfoil(batch_size=10, n=1500):
+    """Load the standardized airfoil self-noise data as minibatches.
+
+    Defined in :numref:`sec_minibatch_sgd`"""
+    data = np.genfromtxt(d2l.download('airfoil'),
+                         dtype=np.float32, delimiter='\t')
+    data = torch.from_numpy((data - data.mean(axis=0)) / data.std(axis=0))
+    dataset = torch.utils.data.TensorDataset(
+        *(t.to(d2l.try_gpu()) for t in (data[:n, :-1], data[:n, -1])))
+    sampler = torch.utils.data.BatchSampler(  # Whole minibatches of indices
+        torch.utils.data.RandomSampler(dataset), batch_size, drop_last=False)
+    data_iter = torch.utils.data.DataLoader(dataset, sampler=sampler,
+                                            batch_size=None)
+    return data_iter, data.shape[1]-1
+
+class WikiText103(d2l.DataModule):
+    """WikiText-103 as UTF-8 bytes, cut into windows of num_steps bytes.
+
+    Defined in :numref:`sec_adam`"""
+    def __init__(self, batch_size, num_steps, num_train=None, num_val=None):
+        super().__init__()
+        self.save_hyperparameters()
+        self.vocab = d2l.BPETokenizer(vocab_size=256, specials=())  # Bytes
+        self.train = self._read('train-00000-of-00002',
+                                '3cbc792dfc0eeedf8d7333acdc15a9f536032d9a')
+        self.val = self._read('validation-00000-of-00001',
+                              '49d15019b0476afc752bd5f010b5a2aab2de89ca')
+        self.train, self.val = self.train[:num_train], self.val[:num_val]
+
+    def _read(self, split, sha1):
+        url = ('https://huggingface.co/datasets/Salesforce/wikitext/resolve/'
+               f'main/wikitext-103-raw-v1/{split}.parquet')
+        fname = d2l.download(url, os.path.join(self.root, 'wikitext-103'),
+                             sha1)
+        lines = pd.read_parquet(fname)['text']  # Each line ends with '\n'
+        return np.frombuffer(b''.join(s.encode() for s in lines), np.uint8)
+
+    def windows(self, corpus, starts):
+        """Inputs and next-byte targets of the windows at `starts`."""
+        idx = np.asarray(starts)[:, None] + np.arange(self.num_steps + 1)
+        array = torch.from_numpy(corpus[idx].astype(np.int64))
+        return array[:, :-1], array[:, 1:]
+
+    def train_dataloader(self):  # A pass of minibatches at random offsets
+        n = len(self.train) - self.num_steps
+        for _ in range(n // (self.batch_size * self.num_steps)):
+            yield self.windows(self.train,
+                               torch.randint(n, (self.batch_size,)).numpy())
+
+    def val_dataloader(self):  # Consecutive, non-overlapping windows
+        starts = np.arange(0, len(self.val) - self.num_steps, self.num_steps)
+        for i in range(0, len(starts), self.batch_size):
+            yield self.windows(self.val, starts[i:i + self.batch_size])
+
+class TinyLM(nn.Module):
+    """A small decoder-only transformer language model.
+
+    Defined in :numref:`sec_adam`"""
+    def __init__(self, vocab_size, d_model=128, num_heads=2, num_blks=2,
+                 max_len=64):
+        super().__init__()
+        self.num_heads = num_heads
+        self.token_emb = nn.Embedding(vocab_size, d_model)
+        self.pos_emb = nn.Embedding(max_len, d_model)
+        self.blks = nn.ModuleList([nn.ModuleDict(dict(
+            norm1=nn.LayerNorm(d_model),
+            qkv=nn.Linear(d_model, 3 * d_model),
+            proj=nn.Linear(d_model, d_model),
+            norm2=nn.LayerNorm(d_model),
+            mlp=nn.Sequential(nn.Linear(d_model, 4 * d_model), nn.GELU(),
+                              nn.Linear(4 * d_model, d_model))))
+            for _ in range(num_blks)])
+        self.norm = nn.LayerNorm(d_model)
+        self.head = nn.Linear(d_model, vocab_size)
+
+    def attention(self, blk, X):
+        B, T, D = X.shape
+        q, k, v = blk['qkv'](X).chunk(3, dim=-1)
+        q, k, v = (u.reshape(B, T, self.num_heads, -1).transpose(1, 2)
+                   for u in (q, k, v))
+        Y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        return blk['proj'](Y.transpose(1, 2).reshape(B, T, D))
+
+    def forward(self, X):
+        H = self.token_emb(X) + self.pos_emb(torch.arange(X.shape[1],
+                                                          device=X.device))
+        for blk in self.blks:
+            H = H + self.attention(blk, blk['norm1'](H))
+            H = H + blk['mlp'](blk['norm2'](H))
+        return self.head(self.norm(H))
+
+class FashionCNN(nn.Module):
+    """A compact CNN for Fashion-MNIST: two conv-pool stages, two linear.
+
+    Defined in :numref:`sec_adam`"""
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.fc1 = nn.Linear(64 * 7 * 7, 128)
+        self.fc2 = nn.Linear(128, 10)
+
+    def forward(self, X):
+        X = F.max_pool2d(F.relu(self.conv1(X)), 2)
+        X = F.max_pool2d(F.relu(self.conv2(X)), 2)
+        return self.fc2(F.relu(self.fc1(X.flatten(1))))
+
+def evaluate_accuracy(model, batches):
+    """Fraction of the examples in batches that model classifies correctly.
+
+    Defined in :numref:`sec_adam`"""
+    device = next(model.parameters()).device
+    training, correct, total = model.training, 0, 0
+    model.eval()  # Dropout off, batch norm on running statistics
+    with torch.inference_mode():
+        for X, y in batches:
+            y_hat = model(X.to(device)).argmax(dim=1)
+            correct += (y_hat == y.to(device)).sum()
+            total += len(y)
+    model.train(training)
+    return float(correct) / total
+
+def train_steps(model, data, optimizer, num_steps, *, stop=None):
+    """Minimize the mean cross-entropy of the logits model(X) for the labels
+    Y over the minibatches (X, Y) of data, leaving out the labels -100, for
+    num_steps steps or until stop(step) is true; return every step's loss.
+
+    Defined in :numref:`sec_adam`"""
+    device = d2l.try_gpu()
+    model.to(device)
+    losses, step = [], 0
+    while step < num_steps:
+        for X, Y in data.train_dataloader():
+            X, Y = X.to(device), Y.to(device)
+            logits = model(X)
+            loss = F.cross_entropy(logits.reshape(-1, logits.shape[-1]),
+                                   Y.reshape(-1), ignore_index=-100)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            losses.append(loss.detach())
+            step += 1
+            if step >= num_steps or (stop is not None and stop(step)):
+                return torch.stack(losses).tolist()
+
+def lm_perplexity(model, batches):
+    """Perplexity of a language model on the minibatches (X, Y) of batches.
+
+    Defined in :numref:`sec_adam`"""
+    device = next(model.parameters()).device
+    modes = {m: m.training for m in model.modules()}  # Restored at the end
+    model.eval()  # Dropout off while we measure
+    total, count = 0, 0
+    with torch.inference_mode():
+        for X, Y in batches:
+            logits = model(X.to(device))
+            total += F.cross_entropy(logits.flatten(0, 1),
+                                     Y.to(device).flatten(), reduction='sum')
+            count += Y.numel()
+    for m, training in modes.items():
+        m.training = training
+    return math.exp(float(total) / count)
+
+def final_loss(losses, k=100):
+    """Mean of the last k losses; infinity if the run diverged.
+
+    Defined in :numref:`sec_adam`"""
+    v = sum(losses[-k:]) / k
+    return v if math.isfinite(v) else float('inf')
+
+def smooth(losses, k=25):
+    """Means over consecutive blocks of k losses, for plotting.
+
+    Defined in :numref:`sec_adam`"""
+    return [sum(losses[i:i + k]) / k
+            for i in range(0, len(losses) - k + 1, k)]
+
+def steps_to_reach(losses, target, k=25):
+    """First step at which the smoothed losses reach target; None if they
+    never do.
+
+    Defined in :numref:`sec_adam`"""
+    for i, v in enumerate(smooth(losses, k)):
+        if v <= target:
+            return k * (i + 1)
+    return None
+
+def lr_sweep(make_model, make_optimizer, data, lrs, seed,
+             num_steps=2000, *, evaluate=None, metric='score', every=None,
+             verbose=True):
+    """Train make_model() with make_optimizer(model, lr) for each lr, from
+    one initialization; return the loss curves and the evaluations.
+
+    Defined in :numref:`sec_adam`"""
+    every = every or num_steps
+    curves, scores = {}, {}
+    for lr in lrs:
+        torch.manual_seed(seed)  # The same initialization for every lr
+        model = make_model()
+        optimizer = make_optimizer(model, lr)
+        curves[lr], scores[lr] = [], []
+        for _ in range(num_steps // every):
+            curves[lr] += train_steps(model, data, optimizer, every)
+            if evaluate is not None:
+                scores[lr].append(evaluate(model))
+        line = f'lr {lr:g}: final loss {final_loss(curves[lr]):.3f}'
+        if scores[lr]:
+            line += f', {metric} {scores[lr][-1]:.3f}'
+        if verbose:
+            print(line)
+    return curves, scores
+
+def ce_loss(model, X, Y):
+    """Mean cross-entropy of the logits model(X) for the labels Y.
+
+    Defined in :numref:`sec_batch_size`"""
+    logits = model(X)
+    return F.cross_entropy(logits.reshape(-1, logits.shape[-1]),
+                           Y.reshape(-1))
+
+def grad_sq_norm(model, X, Y):
+    """Squared norm of the gradient of ce_loss over all parameters.
+
+    Defined in :numref:`sec_batch_size`"""
+    grads = torch.autograd.grad(ce_loss(model, X, Y),
+                                list(model.parameters()))
+    return sum((g ** 2).sum() for g in grads)
+
+def noise_scale(model, sample, b_small=16, b_big=2048, m=400):
+    """Gradient-noise scale from the mean squared gradient norms of m
+    minibatches of size b_small and m // 8 of size b_big from sample(b).
+
+    Defined in :numref:`sec_batch_size`"""
+    def mean_sq_norm(b, m):  # N_b, averaged over m random minibatches
+        return torch.stack([grad_sq_norm(model, *sample(b))
+                            for _ in range(m)]).mean()
+    n_small, n_big = mean_sq_norm(b_small, m), mean_sq_norm(b_big, m // 8)
+    tr_sigma = (n_small - n_big) / (1 / b_small - 1 / b_big)
+    sq_norm = (b_big * n_big - b_small * n_small) / (b_big - b_small)
+    return (tr_sigma / sq_norm).item()
+
+def masked_softmax(X, mask=None):
+    """Softmax over the last axis with zero weight where mask is False.
+
+    Defined in :numref:`sec_attention-scoring-functions`"""
+    if mask is None:
+        return F.softmax(X, dim=-1)
+    # Most negative finite value: zero weight at any precision, no NaN
+    X = X.masked_fill(~mask, torch.finfo(X.dtype).min)
+    weights = F.softmax(X, dim=-1)
+    # A query without any valid key gets zero weights, not a uniform row
+    return torch.where(mask.any(-1, keepdim=True), weights, 0.0)
+
+def padding_mask(valid_lens, num_keys):
+    """Boolean mask that is True for the first valid_lens keys.
+
+    Defined in :numref:`sec_attention-scoring-functions`"""
+    # valid_lens of shape (batch,) gives (batch, 1, keys); per-query
+    # lengths of shape (batch, queries) give (batch, queries, keys)
+    if valid_lens.dim() == 1:
+        valid_lens = valid_lens[:, None]
+    keys = torch.arange(num_keys, device=valid_lens.device)
+    return keys < valid_lens[..., None]
+
+def causal_mask(num_queries, num_keys=None, device=None):
+    """Boolean (queries, keys) mask, True where a query may see a key.
+
+    Defined in :numref:`sec_attention-scoring-functions`"""
+    # Queries are the last positions, as when new tokens attend to a
+    # cache: query i sees key j if j <= i + num_keys - num_queries
+    num_keys = num_queries if num_keys is None else num_keys
+    i = torch.arange(num_queries, device=device)[:, None]
+    j = torch.arange(num_keys, device=device)[None, :]
+    return j <= i + (num_keys - num_queries)
+
+class DotProductAttention(nn.Module):
+    """Scaled dot-product attention over the last two axes.
+
+    Defined in :numref:`sec_attention-scoring-functions`"""
+    def __init__(self, dropout=0.0):
+        super().__init__()
+        self.dropout = nn.Dropout(dropout)
+        self.attention_weights = None
+
+    # Leading axes (batch, and heads if present) are carried along.
+    # Shape of queries: (..., no. of queries, d)
+    # Shape of keys: (..., no. of key-value pairs, d)
+    # Shape of values: (..., no. of key-value pairs, value dimension)
+    # mask: boolean, broadcastable to (..., no. of queries, no. of keys),
+    # True where a query may attend to a key
+    def forward(self, queries, keys, values, mask=None):
+        d = queries.shape[-1]
+        scores = queries @ keys.transpose(-2, -1) / math.sqrt(d)
+        self.attention_weights = masked_softmax(scores, mask)
+        return self.dropout(self.attention_weights) @ values
+
+class MultiHeadAttention(nn.Module):
+    """Multi-head attention with heads as an explicit axis; num_kv_heads <
+    num_heads shares each key-value head across a group of query heads.
+
+    Defined in :numref:`sec_multihead-attention`"""
+    def __init__(self, num_hiddens, num_heads, dropout=0.0, bias=False,
+                 num_kv_heads=None):
+        super().__init__()
+        assert num_hiddens % num_heads == 0, 'heads must divide num_hiddens'
+        self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads or num_heads
+        assert num_heads % self.num_kv_heads == 0
+        kv_hiddens = self.num_kv_heads * (num_hiddens // num_heads)
+        self.attention = d2l.DotProductAttention(dropout)
+        self.W_q = nn.Linear(num_hiddens, num_hiddens, bias=bias)
+        self.W_k = nn.Linear(num_hiddens, kv_hiddens, bias=bias)
+        self.W_v = nn.Linear(num_hiddens, kv_hiddens, bias=bias)
+        self.W_o = nn.Linear(num_hiddens, num_hiddens, bias=bias)
+
+    def forward(self, queries, keys, values, mask=None):
+        # queries: (batch, no. of queries, num_hiddens); keys and values:
+        # (batch, no. of key-value pairs, num_hiddens). mask: boolean,
+        # broadcastable to (batch, no. of queries, no. of keys), shared by
+        # all heads, or to (batch, num_heads, no. of queries, no. of keys)
+        q = self.split_heads(self.W_q(queries), self.num_heads)
+        k = self.split_heads(self.W_k(keys), self.num_kv_heads)
+        v = self.split_heads(self.W_v(values), self.num_kv_heads)
+        group = self.num_heads // self.num_kv_heads
+        k, v = k.repeat_interleave(group, 1), v.repeat_interleave(group, 1)
+        if mask is not None and mask.dim() == 3:
+            mask = mask[:, None]           # The same mask for every head
+        # Shape of Y: (batch, num_heads, no. of queries, head width)
+        Y = self.attention(q, k, v, mask)
+        return self.W_o(self.merge_heads(Y))
+
+    @property
+    def attention_weights(self):
+        """Weights of the last call: (batch, num_heads, queries, keys)."""
+        return self.attention.attention_weights
+
+    def split_heads(self, X, num_heads):
+        """(batch, length, num_heads * width) -> (batch, num_heads, length,
+        width).
+
+        Defined in :numref:`sec_multihead-attention`"""
+        return X.reshape(X.shape[0], X.shape[1], num_heads, -1).transpose(1, 2)
+
+    def merge_heads(self, X):
+        """Reverse split_heads: (batch, num_heads, length, width) -> (batch,
+        length, num_heads * width).
+
+        Defined in :numref:`sec_multihead-attention`"""
+        return X.transpose(1, 2).reshape(X.shape[0], X.shape[2], -1)
+
+def sinusoidal_encoding(max_len, num_hiddens):
+    """The (max_len, num_hiddens) table of sinusoidal position codes.
+
+    Defined in :numref:`sec_positional-information`"""
+    theta = torch.arange(max_len)[:, None] / 10000 ** (
+        torch.arange(0, num_hiddens, 2) / num_hiddens)
+    return torch.stack([torch.sin(theta), torch.cos(theta)],
+                       -1).reshape(max_len, num_hiddens)
+
+def rope_tables(n, d, offset=0, base=10000.0, scale=None,
+                device=None):
+    """Cosines and sines, each (n, d/2), of the angles of the positions
+    offset, ..., offset + n - 1.
+
+    Defined in :numref:`sec_positional-information`"""
+    pos = torch.arange(n, dtype=torch.float32, device=device) + offset
+    omega = base ** (-torch.arange(0, d, 2, device=device) / d)
+    if scale is not None:  # One angle factor per pair, shape (d/2,)
+        omega = omega * scale
+    theta = pos[:, None] * omega[None, :]
+    return torch.cos(theta), torch.sin(theta)
+
+def rope(x, offset=0, base=10000.0, scale=None, tables=None):
+    """Rotate feature pairs of x (..., num_steps, d) by position angles;
+    tables from rope_tables take the place of offset, base, and scale.
+
+    Defined in :numref:`sec_positional-information`"""
+    if tables is None:
+        tables = rope_tables(*x.shape[-2:], offset, base, scale, x.device)
+    # Angles in fp32, tables in the dtype of x: bf16 queries stay bf16
+    cos, sin = (u.to(x.dtype) for u in tables)
+    x1, x2 = x[..., 0::2], x[..., 1::2]
+    return torch.stack([x1 * cos - x2 * sin,
+                        x1 * sin + x2 * cos], -1).flatten(-2)
+
+class TinyCharLM(nn.Module):
+    """Attention-only language model.
+
+    Defined in :numref:`sec_positional-information`"""
+    def __init__(self, vocab_size, num_hiddens=128, num_heads=4, num_blks=2,
+                 pos='rope', max_len=512, bias=False):
+        super().__init__()
+        assert pos in ('learned', 'sinusoidal', 'rope', 'alibi', 'none')
+        self.num_heads, self.pos = num_heads, pos
+        self.token_emb = nn.Embedding(vocab_size, num_hiddens)
+        nn.init.normal_(self.token_emb.weight, std=0.02)
+        if pos == 'learned':
+            self.pos_emb = nn.Embedding(max_len, num_hiddens)
+            nn.init.normal_(self.pos_emb.weight, std=0.02)
+        if pos == 'sinusoidal':
+            self.register_buffer('P', sinusoidal_encoding(max_len,
+                                                          num_hiddens))
+        if pos == 'rope':  # Base and per-pair angle factors of the rotation
+            self.rope_base = 10000.0
+            self.register_buffer('rope_scale',
+                                 torch.ones(num_hiddens // num_heads // 2))
+        self.blks = nn.ModuleList([nn.ModuleDict(dict(
+            qkv=nn.Linear(num_hiddens, 3 * num_hiddens, bias=bias),
+            proj=nn.Linear(num_hiddens, num_hiddens, bias=bias)))
+            for _ in range(num_blks)])
+
+    def stream(self, X, num_blks=None):
+        """Residual stream after the first num_blks blocks (default: all),
+        and the attention weights of those blocks."""
+        H, maps = self.embed(X), []
+        for blk in self.blks[:num_blks]:
+            out, weights = self.attend(blk, H)
+            H, maps = H + out, maps + [weights]
+        return H, maps
+
+    def forward(self, X):
+        return F.linear(self.stream(X)[0], self.token_emb.weight)  # Tied
+
+    def attention_weights(self, X):
+        """Per-block attention maps, each (batch, num_heads, T, T)."""
+        return self.stream(X)[1]
+
+    def embed(self, X):
+        """Token embeddings plus the absolute position code, if any.
+
+        Defined in :numref:`sec_positional-information`"""
+        H = self.token_emb(X)
+        if self.pos == 'learned':
+            H = H + self.pos_emb(torch.arange(X.shape[1], device=X.device))
+        if self.pos == 'sinusoidal':  # Table scaled to the token embeddings
+            H = H + self.P[:X.shape[1]] / math.sqrt(H.shape[-1])
+        return H
+
+    def alibi(self, T, device):
+        """ALiBi bias -m_h (i - j) of every head, (num_heads, T, T).
+
+        Defined in :numref:`sec_positional-information`"""
+        h = torch.arange(1, self.num_heads + 1, device=device)
+        slopes = 2.0 ** (-8.0 * h / self.num_heads)
+        pos = torch.arange(T, device=device, dtype=torch.float32)
+        return slopes[:, None, None] * (pos[None, :] - pos[:, None])
+
+    def attend(self, blk, H):
+        """Output of attention block blk on the stream H, and its weights.
+
+        Defined in :numref:`sec_positional-information`"""
+        B, T, D = H.shape
+        q, k, v = blk['qkv'](H).chunk(3, -1)
+        q, k, v = (u.reshape(B, T, self.num_heads, -1).transpose(1, 2)
+                   for u in (q, k, v))
+        if self.pos == 'rope':
+            q = rope(q, base=self.rope_base, scale=self.rope_scale)
+            k = rope(k, base=self.rope_base, scale=self.rope_scale)
+        scores = q @ k.transpose(-2, -1) / math.sqrt(q.shape[-1])
+        if self.pos == 'alibi':
+            scores = scores + self.alibi(T, H.device)
+        weights = d2l.masked_softmax(scores, d2l.causal_mask(T, device=H.device))
+        out = (weights @ v).transpose(1, 2).reshape(B, T, D)
+        return blk['proj'](out), weights
+
+class FeedForward(nn.Module):
+    """Position-wise FFN: GELU MLP or SwiGLU at matched parameter count.
+
+    Defined in :numref:`sec_transformer-block`"""
+    def __init__(self, num_hiddens, act='swiglu', bias=False):
+        super().__init__()
+        assert act in ('swiglu', 'gelu'), f'unknown act: {act!r}'
+        self.act = act
+        if act == 'gelu':
+            width = 4 * num_hiddens
+        else:  # 'swiglu': three matrices; width 8d/3 matches the MLP budget
+            width = round(8 * num_hiddens / 3)
+            self.W_g = nn.Linear(num_hiddens, width, bias=bias)
+        self.W_1 = nn.Linear(num_hiddens, width, bias=bias)
+        self.W_2 = nn.Linear(width, num_hiddens, bias=bias)
+
+    def forward(self, X):
+        if self.act == 'gelu':  # The tanh approximation, as in GPT-2
+            return self.W_2(F.gelu(self.W_1(X), approximate='tanh'))
+        return self.W_2(F.silu(self.W_g(X)) * self.W_1(X))
+
+class TransformerBlock(nn.Module):
+    """Configurable transformer block: attention + FFN on a residual
+    stream.
+
+    Defined in :numref:`sec_transformer-block`"""
+    def __init__(self, num_hiddens, num_heads, *, dropout=0, norm='rms',
+                 act='swiglu', pre_norm=True, bias=False, attn_factory=None,
+                 ffn_factory=None):
+        super().__init__()
+        assert norm in ('rms', 'layer'), f'unknown norm: {norm!r}'
+        assert num_hiddens % num_heads == 0
+        self.pre_norm = pre_norm
+        make_norm = nn.RMSNorm if norm == 'rms' else nn.LayerNorm
+        self.norm1 = make_norm(num_hiddens, eps=1e-5)
+        self.norm2 = make_norm(num_hiddens, eps=1e-5)
+        self.attention = (d2l.MultiHeadAttention(num_hiddens, num_heads,
+                                                 dropout, bias=bias)
+                          if attn_factory is None else attn_factory())
+        self.ffn = (FeedForward(num_hiddens, act, bias=bias)
+                    if ffn_factory is None else ffn_factory())
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, X, mask=None, **attn_args):
+        # attn_args go on to the attention, e.g. the RoPE tables of d2l.GPT
+        if self.pre_norm:
+            Y = self.norm1(X)
+            X = X + self.dropout(self.attention(Y, Y, Y, mask, **attn_args))
+            return X + self.dropout(self.ffn(self.norm2(X)))
+        X = self.norm1(X + self.dropout(self.attention(X, X, X, mask,
+                                                       **attn_args)))
+        return self.norm2(X + self.dropout(self.ffn(X)))
+
+class CausalAttention(nn.Module):
+    """Fused causal self-attention, optionally rotary; num_kv_heads <
+    num_heads shares each key-value head across a group of queries.
+
+    Defined in :numref:`sec_gpt`"""
+    def __init__(self, num_hiddens, num_heads, *, bias=False, rope=False,
+                 num_kv_heads=None):
+        super().__init__()
+        self.num_heads, self.rope = num_heads, rope
+        self.num_kv_heads = num_kv_heads or num_heads
+        self.kv_hiddens = self.num_kv_heads * (num_hiddens // num_heads)
+        self.W_qkv = nn.Linear(num_hiddens, num_hiddens + 2 * self.kv_hiddens,
+                               bias=bias)
+        self.W_o = nn.Linear(num_hiddens, num_hiddens, bias=bias)
+
+    def qkv(self, X, offset=0, tables=None):
+        """Queries, keys, and values of X, each (batch, heads, length, head
+        width), at positions offset, offset + 1, ...; tables, if given, are
+        the d2l.rope_tables of these positions."""
+        B, T, D = X.shape
+        q, k, v = self.W_qkv(X).split([D, self.kv_hiddens, self.kv_hiddens],
+                                      -1)
+        q = q.reshape(B, T, self.num_heads, -1).transpose(1, 2)
+        k, v = (u.reshape(B, T, self.num_kv_heads, -1).transpose(1, 2)
+                for u in (k, v))
+        if self.rope:
+            q, k = (d2l.rope(u, offset, tables=tables) for u in (q, k))
+        return q, k, v
+
+    def forward(self, X, keys=None, values=None, mask=None, tables=None):
+        # Self-attention: X also serves as the keys and the values, and the
+        # mask is causal, so a block's mask argument must stay None
+        if mask is not None:
+            raise ValueError('CausalAttention applies its own mask')
+        q, k, v = self.qkv(X, tables=tables)
+        Y = F.scaled_dot_product_attention(
+            q, k, v, is_causal=True,
+            enable_gqa=self.num_kv_heads < self.num_heads)
+        return self.W_o(Y.transpose(1, 2).flatten(2))  # (batch, length, d)
+
+class GPT(nn.Module):
+    """Decoder-only transformer language model built from configurable
+    blocks.
+
+    Defined in :numref:`sec_gpt`"""
+    CausalAttention = CausalAttention  # A subclass may replace it
+
+    def __init__(self, vocab_size, *, num_hiddens=256, num_heads=8,
+                 num_blks=6, max_len=1024, pos='rope', norm='rms',
+                 act='swiglu', pre_norm=True, bias=False, dropout=0,
+                 num_kv_heads=None, ffn_factory=None):
+        super().__init__()
+        assert pos in ('rope', 'learned'), f'unknown pos: {pos!r}'
+        self.pos, self.max_len, self.num_hiddens = pos, max_len, num_hiddens
+        self.head_width = num_hiddens // num_heads
+        self.token_emb = nn.Embedding(vocab_size, num_hiddens)
+        nn.init.normal_(self.token_emb.weight, std=0.02)
+        if pos == 'learned':
+            self.pos_emb = nn.Embedding(max_len, num_hiddens)
+            nn.init.normal_(self.pos_emb.weight, std=0.02)
+        attn = lambda: self.CausalAttention(
+            num_hiddens, num_heads, bias=bias, rope=pos == 'rope',
+            num_kv_heads=num_kv_heads)
+        self.blks = nn.ModuleList([
+            d2l.TransformerBlock(num_hiddens, num_heads, dropout=dropout,
+                                 norm=norm, act=act, pre_norm=pre_norm,
+                                 bias=bias, attn_factory=attn,
+                                 ffn_factory=ffn_factory)
+            for _ in range(num_blks)])
+        self.norm = (nn.RMSNorm if norm == 'rms'
+                     else nn.LayerNorm)(num_hiddens, eps=1e-5)
+        self.init_weights()
+
+    def forward(self, X):                     # X: (batch, T) token ids
+        H, tables = self.token_emb(X), None   # (batch, T, d)
+        if self.pos == 'learned':
+            H = H + self.pos_emb(torch.arange(X.shape[1], device=X.device))
+        else:  # RoPE angles of positions 0, ..., T - 1, for every block
+            tables = d2l.rope_tables(X.shape[1], self.head_width,
+                                     device=X.device)
+        for blk in self.blks:                 # L blocks, causal attention
+            H = blk(H, tables=tables)
+        return F.linear(self.norm(H), self.token_emb.weight)  # (batch, T, V)
+
+    def init_weights(self):
+        """GPT-2's initialization of the linear layers: N(0, 0.02^2) weights and
+        zero biases; W_o and W_2, which write to the stream, get std
+        0.02 / sqrt(2L).
+
+        Defined in :numref:`sec_gpt`"""
+        L = len(self.blks)
+        for name, m in self.named_modules():
+            if isinstance(m, nn.Linear):
+                std = 0.02 / (2 * L) ** 0.5 if name.endswith(
+                    ('W_o', 'W_2')) else 0.02
+                nn.init.normal_(m.weight, std=std)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    @torch.inference_mode()
+    def generate(self, prefix, num_tokens, temperature=1.0, top_k=None):
+        """Sample a continuation of the token-id list prefix.
+
+        Defined in :numref:`sec_gpt`"""
+        ids = torch.tensor(prefix, device=next(self.parameters()).device)
+        for _ in range(num_tokens):  # The tokens stay on the device
+            logits = self(ids[None, -self.max_len:])[0, -1] / temperature
+            if top_k is not None:
+                cutoff = torch.topk(logits, top_k).values[-1]
+                logits[logits < cutoff] = -torch.inf
+            ids = torch.cat((ids, torch.multinomial(F.softmax(logits, -1), 1)))
+        return ids.tolist()
+
+class LMOptimizer:
+    """AdamW with weight decay on the weight matrices only, a linear warmup
+    and a cosine decay of the learning rate, and gradient-norm clipping.
+
+    Defined in :numref:`sec_gpt`"""
+    def __init__(self, model, lr, num_steps, warmup, weight_decay=0.1,
+                 max_norm=1.0):
+        named = list(model.named_parameters())
+        # Embedding tables are named *emb* (token_emb, pos_emb) by convention
+        decay = [p for n, p in named if p.ndim == 2 and 'emb' not in n]
+        rest = [p for n, p in named if p.ndim != 2 or 'emb' in n]
+        self.optimizer = torch.optim.AdamW(
+            [{'params': decay, 'weight_decay': weight_decay},
+             {'params': rest, 'weight_decay': 0.0}], lr=lr)
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+            self.optimizer, lambda t: d2l.cosine_warmup(t, num_steps, warmup))
+        self.params, self.max_norm = decay + rest, max_norm
+
+    def zero_grad(self):
+        self.optimizer.zero_grad()
+
+    def step(self):
+        nn.utils.clip_grad_norm_(self.params, self.max_norm)
+        self.optimizer.step()
+        self.scheduler.step()
+
+GPT2_URL = 'https://huggingface.co/openai-community/gpt2/resolve/main/'
+d2l.DATA_HUB['gpt2-weights'] = (
+    GPT2_URL + 'model.safetensors',
+    '89a76996d7c6ee89b86618a265483aab73e61d50')
+d2l.DATA_HUB['gpt2-merges'] = (
+    GPT2_URL + 'merges.txt', '396d4d8ec90cb02f4d56e049e0e4add868bcd943')
+d2l.DATA_HUB['gpt2-encoder'] = (
+    GPT2_URL + 'vocab.json', 'f0223209235343bc067d7da838328bced8085ae1')
+
+def gpt2_tokenizer():
+    """GPT-2's byte-level BPE tokenizer, assembled by tiktoken.
+
+    Defined in :numref:`sec_gpt`"""
+    import tiktoken  # lazy: d2l itself does not require tiktoken
+    from tiktoken.load import data_gym_to_mergeable_bpe_ranks
+    return tiktoken.Encoding(
+        'gpt2', explicit_n_vocab=50257,
+        pat_str=d2l.BPETokenizer.GPT2_PATTERN,
+        mergeable_ranks=data_gym_to_mergeable_bpe_ranks(
+            d2l.download('gpt2-merges', '../data/gpt2'),
+            d2l.download('gpt2-encoder', '../data/gpt2')),
+        special_tokens={'<|endoftext|>': 50256})
+
+def load_gpt2():
+    """GPT-2 small (124M) as a GPT with the released weights, in eval
+    mode.
+
+    Defined in :numref:`sec_gpt`"""
+    from safetensors.torch import load_file  # lazy, like tiktoken above
+    gpt2 = GPT(vocab_size=50257, num_hiddens=768, num_heads=12, num_blks=12,
+               max_len=1024, pos='learned', norm='layer', act='gelu',
+               pre_norm=True, bias=True)
+    weights = load_file(d2l.download('gpt2-weights', '../data/gpt2'))
+    with torch.no_grad():
+        gpt2.token_emb.weight.copy_(weights['wte.weight'])
+        gpt2.pos_emb.weight.copy_(weights['wpe.weight'])
+        gpt2.norm.weight.copy_(weights['ln_f.weight'])
+        gpt2.norm.bias.copy_(weights['ln_f.bias'])
+        for i, blk in enumerate(gpt2.blks):
+            modules = {f'h.{i}.ln_1': blk.norm1, f'h.{i}.ln_2': blk.norm2,
+                       f'h.{i}.attn.c_attn': blk.attention.W_qkv,
+                       f'h.{i}.attn.c_proj': blk.attention.W_o,
+                       f'h.{i}.mlp.c_fc': blk.ffn.W_1,
+                       f'h.{i}.mlp.c_proj': blk.ffn.W_2}
+            for key, module in modules.items():
+                W = weights[key + '.weight']  # Conv1D: (in, out)
+                module.weight.copy_(W.T if W.ndim == 2 else W)
+                module.bias.copy_(weights[key + '.bias'])
+    return gpt2.eval()
+
+def kv_cache_bytes(model, num_tokens, batch_size=1, bytes_per_elem=4):
+    """Bytes of the keys and values of num_tokens positions in every block
+    of a GPT, for batch_size sequences.
+
+    Defined in :numref:`sec_kv-cache`"""
+    attn = model.blks[0].attention
+    return (2 * len(model.blks) * attn.kv_hiddens * num_tokens * batch_size
+            * bytes_per_elem)
+
+class PatchEmbedding(nn.Module):
+    """Image-to-sequence stem of the vision transformer.
+
+    Defined in :numref:`sec_vision-transformer`"""
+    def __init__(self, img_size=96, patch_size=16, num_hiddens=512,
+                 num_channels=3):
+        super().__init__()
+        # A partial trailing patch would silently shrink the token grid
+        assert img_size % patch_size == 0, 'patches must tile the image'
+        self.num_patches = (img_size // patch_size) ** 2
+        self.conv = nn.Conv2d(num_channels, num_hiddens,
+                              kernel_size=patch_size, stride=patch_size)
+
+    def forward(self, X):  # (batch, c, h, w) -> (batch, patches, d)
+        return self.conv(X).flatten(2).transpose(1, 2)
+
+class ViTBlock(d2l.TransformerBlock):
+    """Pre-norm block with LayerNorm and an exact-GELU MLP.
+
+    Defined in :numref:`sec_vision-transformer`"""
+    def __init__(self, num_hiddens, mlp_num_hiddens, num_heads, dropout,
+                 use_bias=False):
+        super().__init__(
+            num_hiddens, num_heads, dropout=dropout, norm='layer',
+            bias=use_bias, ffn_factory=lambda: nn.Sequential(
+                nn.Linear(num_hiddens, mlp_num_hiddens),
+                nn.GELU(),  # Exact GELU
+                nn.Dropout(dropout),
+                nn.Linear(mlp_num_hiddens, num_hiddens)))
+
+class ViT(d2l.Classifier):
+    """Vision transformer.
+
+    Defined in :numref:`sec_vision-transformer`"""
+    def __init__(self, *, img_size, patch_size, num_hiddens, mlp_num_hiddens,
+                 num_heads, num_blks, num_steps, emb_dropout=0.0,
+                 blk_dropout=0.0, lr=1e-3, use_bias=False, num_classes=10,
+                 num_channels=1):
+        super().__init__()
+        self.save_hyperparameters()
+        self.patch_embedding = PatchEmbedding(
+            img_size, patch_size, num_hiddens, num_channels)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, num_hiddens))
+        num_tokens = self.patch_embedding.num_patches + 1  # Add the cls token
+        # Positional embeddings are learnable, initialized to small noise
+        self.pos_embedding = nn.Parameter(
+            torch.randn(1, num_tokens, num_hiddens) * 0.02)
+        self.dropout = nn.Dropout(emb_dropout)
+        self.blks = nn.ModuleList([
+            ViTBlock(num_hiddens, mlp_num_hiddens, num_heads, blk_dropout,
+                     use_bias=use_bias) for _ in range(num_blks)])
+        self.head = nn.Sequential(nn.LayerNorm(num_hiddens, eps=1e-5),
+                                  nn.Linear(num_hiddens, num_classes))
+
+    def forward(self, X):
+        X = self.patch_embedding(X)  # (batch, patches, d)
+        cls = self.cls_token.expand(X.shape[0], -1, -1)
+        X = self.dropout(torch.cat((cls, X), 1) + self.pos_embedding)
+        for blk in self.blks:
+            X = blk(X)
+        return self.head(X[:, 0])
+
+    def configure_optimizers(self):
+        # AdamW decays weight matrices and kernels; it exempts biases, norm
+        # parameters, the class token, and the position embeddings
+        named = list(self.named_parameters())
+        decay = lambda n, p: p.ndim >= 2 and n not in ('cls_token',
+                                                        'pos_embedding')
+        optim = torch.optim.AdamW(
+            [{'params': [p for n, p in named if decay(n, p)]},
+             {'params': [p for n, p in named if not decay(n, p)],
+              'weight_decay': 0.0}], lr=self.lr, weight_decay=0.05)
+        # Linear warmup over the first tenth of the steps, then cosine
+        return optim, torch.optim.lr_scheduler.LambdaLR(optim, lambda t: (
+            d2l.cosine_warmup(t, self.num_steps, self.num_steps // 10)))
+
+def delayed_recall(rng, batch_size, num_steps, num_symbols=8,
+                   blank_fillers=False):
+    """A symbol, then num_steps - 1 fillers; the target is the symbol.
+
+    Defined in :numref:`sec_gated-training`"""
+    Y = rng.integers(0, num_symbols, (batch_size, 1))  # One query, at the end
+    X = rng.integers(num_symbols, 2 * num_symbols, (batch_size, num_steps))
+    if blank_fillers:  # The same filler token at every step
+        X[:] = num_symbols
+    X[:, :1] = Y
+    return X, Y
+
+def init_lecun(module):
+    """LeCun normal weights and zero biases for all linear, convolutional,
+    and recurrent layers.
+
+    Defined in :numref:`sec_gated-training`"""
+    for layer in module.modules():
+        if isinstance(layer, (nn.Linear, nn.Conv1d)):
+            fan_in = layer.weight[0].numel()  # Inputs of one output unit
+            nn.init.normal_(layer.weight, std=fan_in ** -0.5)
+            if layer.bias is not None:
+                nn.init.zeros_(layer.bias)
+        elif isinstance(layer, nn.RNNBase):  # Input and recurrent matrices
+            for name, param in layer.named_parameters():
+                if name.startswith('weight'):
+                    nn.init.normal_(param, std=param.shape[1] ** -0.5)
+                else:
+                    nn.init.zeros_(param)
+    return module
+
+class Recurrent(nn.Module):
+    """A batch-first recurrent layer that returns only its outputs.
+
+    Defined in :numref:`sec_gated-training`"""
+    def __init__(self, rnn):
+        super().__init__()
+        self.rnn = rnn
+
+    def forward(self, X):
+        return self.rnn(X)[0]
+
+class RecallModel(nn.Module):
+    """Embedding, a sequence layer, and a classifier at every position.
+
+    Defined in :numref:`sec_gated-training`"""
+    def __init__(self, layer, num_hiddens, vocab_size=16, num_inputs=32,
+                 num_outputs=8):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, num_inputs)
+        nn.init.normal_(self.embedding.weight, std=num_inputs ** -0.5)
+        self.layer = layer
+        self.head = init_lecun(nn.Linear(num_hiddens, num_outputs))
+
+    def forward(self, X):  # Logits, (batch_size, num_steps, num_outputs)
+        return self.head(self.layer(self.embedding(X)))
+
+def train_queries(model, batch, num_steps, optimizer,
+                  scheduler=None):
+    """Train on fresh batches; the queries are the last Y.shape[1] steps.
+
+    Defined in :numref:`sec_gated-training`"""
+    device = next(model.parameters()).device
+    for step in range(num_steps):
+        X, Y = (torch.as_tensor(A, device=device) for A in batch(step))
+        logits = model(X)[:, -Y.shape[1]:]  # Predictions at the queries
+        loss = F.cross_entropy(logits.flatten(0, 1), Y.flatten())
+        optimizer.zero_grad()
+        loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
+
+def query_accuracy(model, X, Y):
+    """Fraction of queries answered correctly.
+
+    Defined in :numref:`sec_gated-training`"""
+    device = next(model.parameters()).device
+    X, Y = (torch.as_tensor(A, device=device) for A in (X, Y))
+    with torch.inference_mode():
+        return (model(X)[:, -Y.shape[1]:].argmax(-1) == Y).float().mean()
+
+def train_delayed_recall(model, num_steps, blank_fillers=False):
+    """Train with Adam at rate 0.003 on 1,500 fresh batches of 128 sequences
+    of delayed recall; return the accuracy on 2,048 new sequences.
+
+    Defined in :numref:`sec_gated-training`"""
+    task = lambda rng, n: delayed_recall(rng, n, num_steps,
+                                         blank_fillers=blank_fillers)
+    rng = np.random.default_rng(0)
+    model.to(d2l.try_gpu())
+    train_queries(model, lambda step: task(rng, 128), 1500,
+                  torch.optim.Adam(model.parameters(), lr=3e-3))
+    return float(query_accuracy(model, *task(np.random.default_rng(1), 2048)))
+
+class SeqLM(nn.Module):
+    """A language model of residual blocks: a sequence mixer, then an MLP.
+
+    Defined in :numref:`sec_gated-training`"""
+    def __init__(self, vocab_size, num_hiddens, mixers):
+        super().__init__()
+        d = num_hiddens
+        self.embedding = nn.Embedding(vocab_size, d)
+        nn.init.normal_(self.embedding.weight, std=d ** -0.5)  # Unit length
+        self.mixers = nn.ModuleList(mixers)
+        self.norms = nn.ModuleList([nn.LayerNorm(d) for _ in mixers])
+        self.mlps = nn.ModuleList([nn.Sequential(
+            nn.LayerNorm(d), nn.Linear(d, 4 * d), nn.GELU(),
+            nn.Linear(4 * d, d)) for _ in mixers])
+        self.norm = nn.LayerNorm(d)
+        self.head = nn.Linear(d, vocab_size)
+        for module in (self.mlps, self.head):  # Mixers initialize themselves
+            init_lecun(module)
+
+    def forward(self, X):
+        H = self.embedding(X)  # (batch_size, num_steps, num_hiddens)
+        for norm, mixer, mlp in zip(self.norms, self.mixers, self.mlps):
+            H = H + mixer(norm(H))
+            H = H + mlp(H)
+        return self.head(self.norm(H))  # (batch_size, num_steps, vocab_size)
+
+    def first_mixer_input(self, X):
+        """What the first mixer reads: the normalized token embeddings.
+
+        Defined in :numref:`sec_linear-recurrence`"""
+        return self.norms[0](self.embedding(X))
+
+class AttentionMixer(d2l.CausalAttention):
+    """Causal multi-head attention, with rotary positions unless rope is
+    False, as a sequence mixer; with conv_width, a causal convolution per
+    channel first mixes each query, key, and value with those of the
+    previous steps.
+
+    Defined in :numref:`sec_gated-training`"""
+    def __init__(self, num_hiddens, num_heads, conv_width=None, rope=True):
+        super().__init__(num_hiddens, num_heads, rope=rope)
+        d = 3 * num_hiddens  # Channels of q, k, and v; one filter each
+        self.conv = None if conv_width is None else nn.Conv1d(
+            d, d, conv_width, groups=d, padding=conv_width - 1)
+        init_lecun(self)  # Like every mixer of the chapter
+
+    def qkv(self, X, offset=0, tables=None):
+        B, T, _ = X.shape
+        QKV = self.W_qkv(X)
+        if self.conv is not None:  # Causal: drop the last conv_width - 1 steps
+            QKV = self.conv(QKV.mT)[..., :T].mT
+        q, k, v = (u.reshape(B, T, self.num_heads, -1).transpose(1, 2)
+                   for u in QKV.chunk(3, -1))
+        if self.rope:
+            q, k = (d2l.rope(u, offset, tables=tables) for u in (q, k))
+        return q, k, v  # Each (batch_size, num_heads, num_steps, head width)
+
+@torch.inference_mode()
+def loss_by_position(model, data):
+    """Mean validation loss in nats at each position of the window.
+
+    Defined in :numref:`sec_gated-training`"""
+    device = next(model.parameters()).device
+    total, count = 0, 0
+    for X, Y in data.val_dataloader():
+        logits = model(X.to(device))  # (batch, T, V)
+        total += F.cross_entropy(logits.transpose(1, 2), Y.to(device),
+                                 reduction='none').sum(0)
+        count += len(X)
+    return (total / count).tolist()
+
+def train_text(model, data, lr=2e-3, num_steps=1000):
+    """Train a language model with LMOptimizer; return its validation loss
+    in nats at each position and its milliseconds per training step.
+
+    Defined in :numref:`sec_gated-training`"""
+    optimizer = d2l.LMOptimizer(model, lr=lr, num_steps=num_steps, warmup=100)
+    # One untimed call of 50 steps warms up (JAX compiles), the rest is timed
+    bench = d2l.Benchmark(lambda: d2l.train_steps(model, data, optimizer, 50),
+                          warmup=1, repeats=num_steps // 50 - 1)
+    return loss_by_position(model, data), 1000 * bench.time / 50
+
+def text_table(make_model, arms, data, num_runs=2, num_steps=1000):
+    """Train num_runs fresh models make_model(*args) for each arm (a name
+    and its args) for num_steps steps; print the parameters, the validation loss of every run,
+    its losses at early, middle, and late positions of the window, and the
+    milliseconds per step. Return the trained models of each arm.
+
+    Defined in :numref:`sec_gated-training`"""
+    T = data.num_steps
+    bands = [(0, T // 8), (T // 8, T // 2), (T // 2, T)]
+    width = max(len(name) for name in arms)
+    header = ['validation'] + [f'{a}-{b - 1}' for a, b in bands]
+    print(' ' * (width + 12), *(f'{h:>11}' for h in header), '  ms/step')
+    trained = {}
+    for name, args in arms.items():
+        models = [make_model(*args) for _ in range(num_runs)]
+        runs = [train_text(model, data, num_steps=num_steps)  # (losses, ms)
+                for model in models]
+        columns = [[np.mean(loss) for loss, _ in runs]] + [
+            [np.mean(loss[a:b]) for loss, _ in runs] for a, b in bands]
+        print(f'{name:{width}s} {d2l.num_params(models[0]):11,d}',
+              *('/'.join(f'{v:.3f}' for v in column) for column in columns),
+              '/'.join(f'{ms:.0f}' for _, ms in runs))
+        trained[name] = models
+    return trained
+
+def chrf(pred, label, n=6, beta=2):
+    """chrF (Popovic, 2015): character n-gram F-score.
+
+    Defined in :numref:`sec_translation-scoring`"""
+    def ngrams(s, k):
+        s = s.replace(' ', '')
+        return collections.Counter(s[i:i + k] for i in range(len(s) - k + 1))
+    prec = rec = 0.0
+    for k in range(1, n + 1):
+        p, r = ngrams(pred, k), ngrams(label, k)
+        overlap = sum((p & r).values())
+        if sum(p.values()) and sum(r.values()):
+            prec += overlap / sum(p.values())
+            rec += overlap / sum(r.values())
+    prec, rec = prec / n, rec / n
+    if prec + rec == 0:
+        return 0.0
+    return (1 + beta**2) * prec * rec / (beta**2 * prec + rec)
+
+def bleu(pred_seq, label_seq, k):
+    """Compute the BLEU.
+
+    Defined in :numref:`sec_translation-scoring`"""
+    pred_tokens, label_tokens = pred_seq.split(' '), label_seq.split(' ')
+    len_pred, len_label = len(pred_tokens), len(label_tokens)
+    score = math.exp(min(0, 1 - len_label / len_pred))
+    for n in range(1, min(k, len_pred) + 1):
+        num_matches, label_subs = 0, collections.defaultdict(int)
+        for i in range(len_label - n + 1):
+            label_subs[' '.join(label_tokens[i: i + n])] += 1
+        for i in range(len_pred - n + 1):
+            if label_subs[' '.join(pred_tokens[i: i + n])] > 0:
+                num_matches += 1
+                label_subs[' '.join(pred_tokens[i: i + n])] -= 1
+        score *= math.pow(num_matches / (len_pred - n + 1), math.pow(0.5, n))
+    return score
+
+def associative_scan(combine, elems):
+    """All prefixes of elems under an associative combine; time is axis 1.
+
+    Defined in :numref:`sec_linear-recurrence`"""
+    s = 1
+    # Autograd keeps the tensors of every round for the backward pass
+    while s < elems[0].shape[1]:  # Combine every position with the one s back
+        earlier = tuple(x[:, :-s] for x in elems)
+        later = tuple(x[:, s:] for x in elems)
+        elems = tuple(torch.cat([x[:, :s], y], 1)
+                      for x, y in zip(elems, combine(earlier, later)))
+        s *= 2
+    return elems
+
+def linear_scan(a, b, h0=None):
+    """All states of h_t = a_t * h_{t-1} + b_t; time is the second axis.
+
+    Defined in :numref:`sec_linear-recurrence`"""
+    a = a.expand_as(b)  # Decays may omit axes on which they do not vary
+    if h0 is not None:  # Fold the initial state into the first step
+        b = torch.cat([a[:, :1] * h0.unsqueeze(1) + b[:, :1], b[:, 1:]], 1)
+    def combine(earlier, later):
+        (a1, b1), (a2, b2) = earlier, later
+        return a1 * a2, a2 * b1 + b2
+    return associative_scan(combine, (a, b))[1]
+
+class MinGRU(nn.Module):
+    """The minimal GRU: its gate and candidate read only the input.
+
+    Defined in :numref:`sec_linear-recurrence`"""
+    def __init__(self, num_inputs, num_hiddens):
+        super().__init__()
+        self.W_z = nn.Linear(num_inputs, num_hiddens)  # Update gate (decay)
+        self.W_h = nn.Linear(num_inputs, num_hiddens)  # Candidate state
+        d2l.init_lecun(self)
+
+    def coefficients(self, X):
+        """Decays a_t and writes b_t of the linear recurrence."""
+        Z = torch.sigmoid(self.W_z(X))
+        return Z, (1 - Z) * torch.tanh(self.W_h(X))
+
+    def forward(self, X):  # X: (batch_size, num_steps, num_inputs)
+        return linear_scan(*self.coefficients(X))
+
+class S4D(nn.Module):
+    """A diagonal state space layer: N states per channel, fixed dynamics.
+
+    Defined in :numref:`sec_ssm`"""
+    def __init__(self, num_hiddens, num_states=16, dt_min=1e-3, dt_max=1e-1):
+        super().__init__()
+        d, N = num_hiddens, num_states
+        # lambda_n = -n for n = 1..N, stored as log(-lambda) to stay negative
+        self.log_neg_rate = nn.Parameter(
+            torch.log(torch.arange(1., N + 1)).repeat(d, 1))
+        self.log_dt = nn.Parameter(  # Log-uniform in [dt_min, dt_max]
+            torch.rand(d, 1) * math.log(dt_max / dt_min) + math.log(dt_min))
+        self.C = nn.Parameter(torch.randn(d, N) / math.sqrt(N))
+        self.D = nn.Parameter(torch.ones(d))
+
+    def discretize(self):
+        """Zero-order hold with B = 1: decays a_bar and input weights b_bar."""
+        rate = -torch.exp(self.log_neg_rate)  # (d, N)
+        dt_rate = torch.exp(self.log_dt) * rate
+        return torch.exp(dt_rate), torch.expm1(dt_rate) / rate
+
+    def forward(self, X):  # X: (batch_size, num_steps, d)
+        T = X.shape[1]
+        a_bar, b_bar = self.discretize()
+        # All powers a_bar^k for k < T: d * N * T numbers held in memory
+        powers = a_bar.unsqueeze(-1) ** torch.arange(T, device=X.device)
+        K = ((self.C * b_bar).unsqueeze(-1) * powers).sum(1)  # Kernel, (d, T)
+        Y = torch.fft.irfft(torch.fft.rfft(X, n=2 * T, dim=1) *
+                            torch.fft.rfft(K.T, n=2 * T, dim=0), n=2 * T, dim=1)
+        return Y[:, :T] + self.D * X
+
+    def step(self, x, h):
+        """One step: x is (batch_size, d); the state h is (batch_size, d, N).
+
+        Defined in :numref:`sec_ssm`"""
+        a_bar, b_bar = self.discretize()
+        h = a_bar * h + b_bar * x.unsqueeze(-1)
+        return (h * self.C).sum(-1) + self.D * x, h
+
+def init_timescales(layer, dt_min=1e-3, dt_max=1e-1):
+    """Start a minGRU's gates at the decays exp(-dt) of S4D.
+
+    Defined in :numref:`sec_ssm`"""
+    dt = dt_min * (dt_max / dt_min) ** torch.rand(layer.W_z.bias.shape)
+    with torch.no_grad():  # sigmoid(b) = exp(-dt)
+        layer.W_z.bias.copy_(-torch.log(torch.expm1(dt)))
+    return layer
+
+class AdjointScan(torch.autograd.Function):
+    """linear_scan whose backward pass is a second scan, run backward.
+
+    Defined in :numref:`sec_mamba`"""
+    @staticmethod
+    def forward(ctx, a, b):
+        h = d2l.linear_scan(a, b)
+        ctx.save_for_backward(a, h)
+        return h
+
+    @staticmethod
+    def backward(ctx, grad_h):
+        a, h = ctx.saved_tensors
+        # g_t = grad_h_t + a_{t+1} g_{t+1}: a linear recurrence from the end
+        a_next = torch.cat([a[:, 1:], torch.ones_like(a[:, :1])], 1)
+        g = d2l.linear_scan(a_next.flip(1), grad_h.flip(1)).flip(1)
+        h_prev = torch.cat([torch.zeros_like(h[:, :1]), h[:, :-1]], 1)
+        return g * h_prev, g
+
+def adjoint_scan(a, b):
+    """All states of h_t = a_t * h_{t-1} + b_t, differentiated by a scan.
+
+    Defined in :numref:`sec_mamba`"""
+    return AdjointScan.apply(a.expand_as(b), b)
+
+class SelectiveSSM(nn.Module):
+    """A diagonal SSM with N states for each of num_channels channels. Its
+    step sizes and write and read vectors depend on the input, or, with
+    selective=False, are learned constants of each channel.
+
+    Defined in :numref:`sec_mamba`"""
+    def __init__(self, num_channels, dt_rank, num_states=16, dt_min=1e-3,
+                 dt_max=1e-1, selective=True):
+        super().__init__()
+        H, N, R = num_channels, num_states, dt_rank
+        self.selective = selective
+        self.log_neg_rate = nn.Parameter(  # Rates -1, ..., -N in every channel
+            torch.log(torch.arange(1., N + 1)).repeat(H, 1))
+        dt = dt_min * (dt_max / dt_min) ** torch.rand(H)
+        dt_bias = dt + torch.log(-torch.expm1(-dt))  # softplus(dt_bias) = dt
+        if selective:
+            self.W_dt = nn.Sequential(  # Step size per channel, rank R
+                nn.Linear(H, R, bias=False), nn.Linear(R, H))
+            self.W_B = nn.Linear(H, N, bias=False)  # Write vector
+            self.W_C = nn.Linear(H, N, bias=False)  # Read vector
+            d2l.init_lecun(self)
+            with torch.no_grad():  # Small up-projection, step sizes dt
+                nn.init.uniform_(self.W_dt[1].weight, -R ** -0.5, R ** -0.5)
+                self.W_dt[1].bias.copy_(dt_bias)
+        else:  # Fixed dynamics: S4D with a learned write vector
+            self.dt_bias = nn.Parameter(dt_bias)
+            self.B = nn.Parameter(torch.ones(H, N))
+            self.C = nn.Parameter(torch.randn(H, N) / math.sqrt(N))
+        self.D = nn.Parameter(torch.ones(H))
+
+    def log_coefficients(self, U):
+        """Log-decays and writes, each of shape (batch_size, T, H, N).
+
+        Defined in :numref:`sec_mamba`"""
+        if self.selective:  # Step sizes (batch_size, T, H), write vectors
+            dt, B = F.softplus(self.W_dt(U)), self.W_B(U).unsqueeze(-2)
+        else:  # One step size and one write vector per channel
+            dt, B = F.softplus(self.dt_bias), self.B
+        b = (dt * U).unsqueeze(-1) * B
+        log_a = dt.unsqueeze(-1) * -torch.exp(self.log_neg_rate)
+        return log_a.expand_as(b), b
+
+    def forward(self, U):  # U: (batch_size, num_steps, num_channels)
+        log_a, b = self.log_coefficients(U)
+        H = adjoint_scan(torch.exp(log_a), b)  # States, (batch_size, T, H, N)
+        C = self.W_C(U).unsqueeze(-2) if self.selective else self.C  # Read
+        return torch.einsum('...n,...n->...', H, C) + self.D * U  # Sum over n
+
+class Mamba(nn.Module):
+    """The Mamba layer: a gated selective SSM between two projections.
+
+    Defined in :numref:`sec_mamba`"""
+    def __init__(self, num_hiddens, num_states=16, expand=2, conv_width=4,
+                 **ssm_args):
+        super().__init__()
+        H = expand * num_hiddens
+        self.W_in = nn.Linear(num_hiddens, 2 * H, bias=False)
+        self.conv = nn.Conv1d(H, H, conv_width, groups=H,  # One per channel
+                              padding=conv_width - 1)
+        self.W_out = nn.Linear(H, num_hiddens, bias=False)
+        d2l.init_lecun(self)  # The SSM, built next, has its own init
+        self.ssm = SelectiveSSM(H, math.ceil(num_hiddens / 16), num_states,
+                                **ssm_args)
+
+    def ssm_input(self, X):
+        """The input of the SSM and the gate branch."""
+        U, Z = self.W_in(X).chunk(2, -1)
+        U = self.conv(U.transpose(1, 2))[..., :X.shape[1]]  # Keep it causal
+        return F.silu(U.transpose(1, 2)), Z
+
+    def forward(self, X):  # X: (batch_size, num_steps, num_hiddens)
+        U, Z = self.ssm_input(X)
+        return self.W_out(self.ssm(U) * F.silu(Z))
+
+def decay_mask(log_a):
+    """L[t, s] = a_{s+1} * ... * a_t for s <= t, and 0 for s > t.
+
+    Defined in :numref:`sec_matrix-state`"""
+    cum = log_a.cumsum(-1)
+    log_L = cum[..., :, None] - cum[..., None, :]  # Sum of log a over (s, t]
+    causal = torch.ones(log_L.shape[-2:], dtype=torch.bool,
+                        device=log_a.device).tril()
+    return torch.exp(log_L.masked_fill(~causal, -torch.inf))
+
+def chunked_linear_attention(Q, K, V, log_a, chunk_size):
+    """y_t = S_t q_t with S_t = a_t S_{t-1} + v_t k_t^T, computed in chunks.
+
+    Q, K: (batch_size, T, d_k); V: (batch_size, T, d_v); log_a: (batch_size, T)
+
+    Defined in :numref:`sec_matrix-state`"""
+    B, T, m = Q.shape[0], Q.shape[1], chunk_size
+    Q, K, V = (X.reshape(B, T // m, m, -1) for X in (Q, K, V))
+    log_a = log_a.reshape(B, T // m, m)
+    # 1. Within chunks: the dual form, one m x m mask per chunk
+    Y = (decay_mask(log_a) * (Q @ K.mT)) @ V
+    # 2. Across chunks: S^(c) = gamma^(c) S^(c-1) + sum_t L_mt v_t k_t^T
+    cum = log_a.cumsum(-1).unsqueeze(-1)  # Log decay from the chunk's start
+    writes = V.mT @ (K * torch.exp(cum[:, :, -1:] - cum))
+    S = d2l.linear_scan(torch.exp(cum[:, :, -1:]), writes)  # At chunk ends
+    S = torch.cat([torch.zeros_like(S[:, :1]), S[:, :-1]], 1)  # At the starts
+    # 3. Every step reads the state at its chunk's start, decayed to it
+    return (Y + (Q * torch.exp(cum)) @ S.mT).reshape(B, T, -1)
+
+class GatedLinearAttention(nn.Module):
+    """Multi-head linear attention with one input-dependent decay per head.
+
+    Defined in :numref:`sec_matrix-state`"""
+    def __init__(self, num_hiddens, num_heads, chunk_size=16, conv_width=4,
+                 timescales=(4, 256)):
+        super().__init__()
+        d = num_hiddens
+        self.num_heads, self.chunk_size = num_heads, chunk_size
+        self.W_qkv = nn.Linear(d, 3 * d, bias=False)
+        self.conv = nn.Conv1d(3 * d, 3 * d, conv_width, groups=3 * d,
+                              padding=conv_width - 1)  # One filter per channel
+        self.W_a = nn.Linear(d, num_heads)  # Decay gate, one per head
+        self.W_g = nn.Linear(d, d)  # Output gate
+        self.W_o = nn.Linear(d, d, bias=False)
+        d2l.init_lecun(self)
+        self.init_decays(*timescales)  # Memories of 4 to 256 steps by default
+
+    def init_decays(self, tau_min, tau_max):
+        """Start the decays at exp(-1/tau), tau log-uniform in range."""
+        b = self.W_a.bias
+        tau = torch.logspace(math.log10(tau_min), math.log10(tau_max), len(b))
+        with torch.no_grad():  # log sigmoid(b) = -1 / tau
+            b.copy_(-torch.log(torch.expm1(1 / tau)))
+
+    def decays(self, X):
+        """Log decays, (batch_size * num_heads, T).
+
+        Defined in :numref:`sec_matrix-state`"""
+        return heads_to_batch(F.logsigmoid(self.W_a(X)), self.num_heads)[..., 0]
+
+    def memory(self, X, Q, K, V, log_a):
+        """Outputs of the decayed matrix memory of every head. X is unused here;
+        the delta rule of the next section reads its write strengths from it.
+
+        Defined in :numref:`sec_matrix-state`"""
+        return chunked_linear_attention(Q, K, V, log_a, self.chunk_size)
+
+    def forward(self, X):  # X: (batch_size, num_steps, num_hiddens)
+        B, T = X.shape[:2]
+        QKV = self.conv(self.W_qkv(X).mT)[..., :T].mT  # Causal: drop the tail
+        Q, K, V = (heads_to_batch(Z, self.num_heads)
+                   for Z in F.silu(QKV).chunk(3, -1))
+        Q, K = F.normalize(Q, dim=-1), F.normalize(K, dim=-1)  # Unit length
+        Y = self.memory(X, Q, K, V, self.decays(X))  # (B * num_heads, T, d / h)
+        Y = F.rms_norm(Y, Y.shape[-1:], eps=1e-6)  # Unit RMS per head
+        return self.W_o(batch_to_heads(Y, B) * F.silu(self.W_g(X)))
+
+def heads_to_batch(Z, num_heads):
+    """(batch_size, T, num_heads * e) -> (batch_size * num_heads, T, e).
+
+    Defined in :numref:`sec_matrix-state`"""
+    B, T, _ = Z.shape
+    return Z.reshape(B, T, num_heads, -1).transpose(1, 2).flatten(0, 1)
+
+def batch_to_heads(Y, batch_size):
+    """(batch_size * num_heads, T, e) -> (batch_size, T, num_heads * e).
+
+    Defined in :numref:`sec_matrix-state`"""
+    _, T, e = Y.shape
+    return Y.reshape(batch_size, -1, T, e).transpose(1, 2).flatten(2)
+
+def associative_recall(rng, batch_size, num_pairs, num_keys=512,
+                       num_values=4, num_steps=256, num_rebound=0, gap=None):
+    """Key-value pairs, filler, then every key again as a query. The first
+    num_rebound keys are written twice, the second time with a new value,
+    at any later write or, given gap, gap writes after the first one.
+    Returns the tokens (values, then keys, then the filler), the latest
+    value of each query's key, and a mask of the queries for rebound keys.
+
+    Defined in :numref:`sec_matrix-state`"""
+    n, r = num_pairs, num_rebound
+    keys = np.argsort(rng.random((batch_size, num_keys)), 1)[:, :n]
+    values = rng.integers(0, num_values, (batch_size, n + r))
+    values[:, n:] = (values[:, :r] + rng.integers(  # A new value
+        1, num_values, (batch_size, r))) % num_values
+    if gap is None:  # Random write order, each second write after the first
+        slots = np.argsort(rng.random((batch_size, n + r)), 1)
+        slots[:, :r], slots[:, n:] = (np.minimum(slots[:, :r], slots[:, n:]),
+                                      np.maximum(slots[:, :r], slots[:, n:]))
+    else:  # First writes in random order, second ones gap first writes later
+        first = np.argsort(rng.random((batch_size, n)), 1)
+        times = np.concatenate([first, first[:, :r] + gap - 0.5], 1)
+        slots = np.argsort(np.argsort(times, 1), 1)
+    X = np.full((batch_size, num_steps), num_values + num_keys)  # Filler
+    rows = np.arange(batch_size)[:, None]
+    X[rows, 2 * slots] = num_values + np.concatenate([keys, keys[:, :r]], 1)
+    X[rows, 2 * slots + 1] = values
+    order = np.argsort(rng.random((batch_size, n)), 1)  # Queries
+    X[:, -n:] = num_values + np.take_along_axis(keys, order, 1)
+    latest = np.concatenate([values[:, n:], values[:, r:n]], 1)
+    return X, np.take_along_axis(latest, order, 1), order < r
+
+def train_recall(model, pairs=(4, 8, 16, 32, 64), num_updates=2000,
+                 **task):
+    """Train on associative recall (task: options of associative_recall)
+    with a cycling number of pairs, 256 sequences per update, AdamW at peak
+    rate 0.01; return the accuracy per number of pairs.
+
+    Defined in :numref:`sec_matrix-state`"""
+    rng = np.random.default_rng()
+    length = lambda n: 32 * math.ceil(
+        (3 * n + 2 * task.get('num_rebound', 0)) / 32)
+    data = lambda n, size: associative_recall(
+        rng, size, n, num_steps=length(n), **task)[:2]
+    model.to(d2l.try_gpu())
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2,
+                                  weight_decay=0.01)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda t: (
+        d2l.cosine_warmup(t, num_updates, num_updates // 10)))
+    d2l.train_queries(model, lambda step: data(pairs[step % len(pairs)],
+                      256), num_updates, optimizer, scheduler)
+    return {n: float(d2l.query_accuracy(model, *data(n, 1024)))
+            for n in pairs}
+
+def delta_rule_writes(K, V, beta, log_a):
+    """W and Z with corrected values U = W - Z S_0^T, for every chunk.
+
+    K: (..., m, d_k); V: (..., m, d_v); beta, log_a: (..., m)
+
+    Defined in :numref:`sec_deltanet`"""
+    L = d2l.decay_mask(log_a)  # Products of decays within the chunk
+    gamma = torch.exp(log_a.cumsum(-1)).unsqueeze(-1)  # Decay since start
+    beta = beta.unsqueeze(-1)
+    M = torch.eye(K.shape[-2], device=K.device) + (
+        beta * L.tril(-1) * (K @ K.mT))  # Lower triangular
+    W = torch.linalg.solve_triangular(M, beta * V, upper=False)
+    Z = torch.linalg.solve_triangular(M, beta * gamma * K, upper=False)
+    return W, Z
+
+def chunked_delta_rule(Q, K, V, beta, log_a, chunk_size):
+    """Outputs y_t = S_t q_t of the gated delta rule, computed in chunks.
+
+    Q, K: (batch_size, T, d_k); V: (batch_size, T, d_v);
+    beta, log_a: (batch_size, T)
+
+    Defined in :numref:`sec_deltanet`"""
+    B, T, m = Q.shape[0], Q.shape[1], chunk_size
+    Q, K, V = (X.reshape(B, T // m, m, -1) for X in (Q, K, V))
+    beta, log_a = beta.reshape(B, T // m, m), log_a.reshape(B, T // m, m)
+    W, Z = delta_rule_writes(K, V, beta, log_a)
+    L, cum = d2l.decay_mask(log_a), log_a.cumsum(-1)
+    # Each chunk maps the memory S at its start to S A + W^T D K at its end
+    to_end = torch.exp(cum[..., -1:] - cum).unsqueeze(-1)
+    I = torch.eye(K.shape[-1], device=K.device)
+    A = torch.exp(cum[..., -1, None, None]) * I - (Z * to_end).mT @ K
+    def combine(earlier, later):  # A scan over chunks, with matrix products
+        (A1, W1), (A2, W2) = earlier, later
+        return A1 @ A2, W1 @ A2 + W2
+    W_end = d2l.associative_scan(combine, (A, (W * to_end).mT @ K))[1]
+    S = torch.cat([torch.zeros_like(W_end[:, :1]), W_end[:, :-1]], 1)
+    U = W - Z @ S.mT  # Corrected values, with the memory at each start
+    Y = torch.exp(cum).unsqueeze(-1) * (Q @ S.mT) + (L * (Q @ K.mT)) @ U
+    return Y.reshape(B, T, -1)
+
+class GatedDeltaNet(d2l.GatedLinearAttention):
+    """Gated linear attention whose memory is written by the delta rule.
+
+    Defined in :numref:`sec_deltanet`"""
+    def __init__(self, num_hiddens, num_heads, chunk_size=32, conv_width=4,
+                 timescales=(4, 256)):
+        super().__init__(num_hiddens, num_heads, chunk_size, conv_width,
+                         timescales)
+        self.W_beta = nn.Linear(num_hiddens, num_heads)  # Write strength
+        d2l.init_lecun(self.W_beta)
+
+    def memory(self, X, Q, K, V, log_a):
+        beta = d2l.heads_to_batch(torch.sigmoid(self.W_beta(X)),
+                                  self.num_heads).squeeze(-1)
+        return chunked_delta_rule(Q, K, V, beta, log_a, self.chunk_size)
+
+def gelu_ish(x):
+    """The tanh approximation of GELU with rounded constants: a chain of
+    eight elementwise operations.
+
+    Defined in :numref:`sec_perf_model`"""
+    return 0.5 * x * (1 + torch.tanh(0.8 * (x + 0.04 * x**3)))
+
+def kernel_times(f, steps=10):
+    """Device milliseconds per call of f, for every kernel that f runs.
+
+    Defined in :numref:`sec_perf_model`"""
+    with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CUDA],
+            acc_events=True) as prof:
+        for _ in range(steps):
+            f()
+        torch.cuda.synchronize()
+    return {e.key: e.device_time_total / 1e3 / steps
+            for e in prof.key_averages()
+            if e.device_type == torch.autograd.DeviceType.CUDA}
+
+PRODUCT_KERNELS = 'gemm|xmma|cutlass|matmul|sdpa'
+
+def show_profile(kernels, step_ms, rows=6):
+    """Busy device time against the wall-clock time step_ms of a step, the
+    share of the matrix products, and the kernels with the most time.
+
+    Defined in :numref:`sec_perf_model`"""
+    busy = sum(kernels.values())
+    products = sum(ms for name, ms in kernels.items()
+                   if re.search(PRODUCT_KERNELS, name, re.I))
+    print(f'wall clock {step_ms:.2f} ms per step, device busy {busy:.2f} ms '
+          f'({busy / step_ms:.0%}), matrix products {products / busy:.0%}')
+    for name, ms in sorted(kernels.items(), key=lambda kv: -kv[1])[:rows]:
+        name = re.sub(r'^void |\(anonymous namespace\)::|\w+::|\(.*', '', name)
+        print(f'{ms:6.2f} ms {ms / busy:4.0%}  {name[:52]}')
+
+import glob
+import subprocess
+import tempfile
+
+def torchrun(script, nproc, *args, env=None):
+    """Run Python source in nproc processes; return their JSON lines.
+
+    Defined in :numref:`sec_multi_gpu_concise`"""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, 'script.py')
+        with open(path, 'w') as f:
+            f.write(script)
+        launcher = os.path.join(os.path.dirname(sys.executable), 'torchrun')
+        # Each process prints to a file of its own (--redirects 1), so that
+        # the lines of different processes cannot interleave
+        run = subprocess.run(
+            [launcher, '--standalone', f'--nproc-per-node={nproc}',
+             '--log-dir', tmp, '--redirects', '1', path, *map(str, args)],
+            capture_output=True, text=True, env={**os.environ, **(env or {})})
+        if run.returncode != 0:
+            raise RuntimeError(run.stderr[-3000:])
+        logs = sorted(glob.glob(f'{tmp}/*/attempt_0/*/stdout.log'),
+                      key=lambda log: int(log.split(os.sep)[-2]))  # By rank
+        return [json.loads(line) for log in logs for line in open(log)
+                if line.startswith('{')]
+
+def init_distributed():
+    """Join the process group of torchrun; return the rank, the number of
+    processes, and the GPU of this process.
+
+    Defined in :numref:`sec_multi_gpu_concise`"""
+    device = torch.device('cuda', int(os.environ['LOCAL_RANK']))
+    torch.cuda.set_device(device)
+    torch.distributed.init_process_group('nccl', device_id=device)
+    return (torch.distributed.get_rank(), torch.distributed.get_world_size(),
+            device)
+
+def resnet18(num_classes, in_channels=1):
+    """ResNet-18 for small images: a 3x3 stem without max-pooling, He
+    initialization.
+
+    Defined in :numref:`sec_multi_gpu_concise`"""
+    def stage(num_channels, first=False):
+        return [d2l.Residual(num_channels, use_1x1conv=not first,
+                             strides=1 if first else 2),
+                d2l.Residual(num_channels)]
+    net = nn.Sequential(
+        # No stem bias: the batch normalization after the conv removes it
+        nn.Conv2d(in_channels, 64, kernel_size=3, padding=1, bias=False),
+        nn.BatchNorm2d(64), nn.ReLU(),
+        *stage(64, first=True), *stage(128), *stage(256), *stage(512),
+        nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(512, num_classes))
+    with torch.no_grad():  # Create the lazy parameters of the blocks
+        net.eval()(torch.zeros(1, in_channels, 32, 32))
+    for m in net.modules():  # He initialization, zero biases
+        if isinstance(m, (nn.Conv2d, nn.Linear)):
+            nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+    return net.train()
+
+def windows(corpus, batch_size, num_steps=128):
+    """Endless minibatches of windows at random offsets, each position with
+    the next byte as its target.
+
+    Defined in :numref:`sec_fast_transformer`"""
+    offsets = torch.arange(num_steps + 1, device=corpus.device)
+    while True:
+        starts = torch.randint(len(corpus) - num_steps, (batch_size, 1),
+                               device=corpus.device)
+        W = corpus[starts + offsets].long()
+        yield W[:, :-1], W[:, 1:]
+
+def make_step(model, forward=None, bf16=False, warmup=0):
+    """An AdamW training step of `model` on a minibatch (X, Y); `forward`
+    replaces the model's forward pass, `bf16` turns on autocast, and a
+    `warmup` > 0 raises the learning rate linearly to 1e-3 over as many
+    steps.
+
+    Defined in :numref:`sec_fast_transformer`"""
+    forward = model if forward is None else forward
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3,
+                                  weight_decay=0.01, fused=True)
+    if warmup:
+        schedule = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lambda i: min(1, (i + 1) / warmup))
+    def step(X, Y):
+        with torch.autocast('cuda', torch.bfloat16, enabled=bf16):
+            loss = F.cross_entropy(forward(X).flatten(0, 1), Y.flatten())
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        if warmup:
+            schedule.step()
+        return loss
+    return step
+
+class TabularMDP:
+    """A finite MDP as dense arrays: P[s, a, s'] and r[s, a].
+
+    Defined in :numref:`sec_mdp`"""
+    def __init__(self, P, r, gamma):
+        self.P, self.r, self.gamma = P, r, gamma
+        self.num_states, self.num_actions = r.shape
+
+    @classmethod
+    def from_gym(cls, env, gamma):
+        """Read the transition table Gymnasium exposes as env.unwrapped.P."""
+        n_s, n_a = env.observation_space.n, env.action_space.n
+        P, r = np.zeros((n_s, n_a, n_s)), np.zeros((n_s, n_a))
+        for s, actions in env.unwrapped.P.items():
+            for a, outcomes in actions.items():
+                for p, s_next, reward, _ in outcomes:
+                    P[s, a, s_next] += p      # several outcomes may share s'
+                    r[s, a] += p * reward     # r(s,a) is the expected reward
+        return cls(P, r, gamma)
+
+    def backup(self, V):
+        """Q(s, a) = r(s, a) + gamma * sum_{s'} P(s'|s, a) V(s') for every
+        state-action pair: the bracket of the Bellman equations.
+
+        Defined in :numref:`sec_valueiter`"""
+        return self.r + self.gamma * self.P @ V
+
+    def policy_value(self, pi):
+        """V^pi = (I - gamma P_pi)^{-1} r_pi exactly, for pi[s, a] the
+        probability of action a at state s (one-hot rows: deterministic).
+        Needs gamma < 1 here: from_gym's terminal states loop on themselves.
+
+        Defined in :numref:`sec_valueiter`"""
+        P_pi = np.einsum('sa,sat->st', pi, self.P)
+        r_pi = (pi * self.r).sum(axis=1)
+        return np.linalg.solve(np.eye(self.num_states) - self.gamma * P_pi,
+                               r_pi)
+
+class VerifierTask:
+    """Four prompts, nine candidate responses shared by all of them, an
+    exact-match verifier, and a reference policy that rarely hedges.
+
+    Defined in :numref:`sec_mdp`"""
+    prompts = ['2+2', '3*4', '8*8', '9*9']
+    answers = ['4', '12', '64', '81']
+    resp = ['1', '3', '4', '7', '12', '19', '23', '35',
+            'one of 4, 12, 64 or 81']          # the last one is the hedge
+
+    def __init__(self):
+        self.theta_ref = np.zeros((len(self.prompts), len(self.resp)))
+        self.theta_ref[:, -1] = -4.0           # the reference rarely hedges
+        self.pi_ref = self.policy(self.theta_ref)
+        self.R = self.reward_table(self.verify)   # R[x, y] = r(x, y)
+
+    def verify(self, x, y):
+        """The verifier: reward 1 iff response y is prompt x's answer."""
+        return float(self.resp[y] == self.answers[x])
+
+    def reward_table(self, reward):
+        """reward(x, y) for every prompt x (rows) and response y (columns)."""
+        return np.array([[reward(x, y) for y in range(len(self.resp))]
+                         for x in range(len(self.prompts))])
+
+    @staticmethod
+    def policy(theta):
+        """pi(y | x): a softmax over each prompt's row of preferences."""
+        z = np.exp(theta - theta.max(1, keepdims=True))
+        return z / z.sum(1, keepdims=True)
+
+    def success(self, pi, reward=None):
+        """E r(x, y), y ~ pi(. | x), averaged over the prompts; r = verify
+        unless another reward function is given."""
+        R = self.R if reward is None else self.reward_table(reward)
+        return (pi * R).sum(1).mean()
+
+def value_iteration(mdp, num_iters):
+    """Sweep V <- max_a backup(V); return the whole history of iterates.
+
+    Defined in :numref:`sec_valueiter`"""
+    V, history = np.zeros(mdp.num_states), []
+    for _ in range(num_iters):
+        V = mdp.backup(V).max(axis=1)
+        history.append(V)
+    return np.array(history)
+
+def policy_evaluation(mdp, pi, num_iters):
+    """Same sweep with the max replaced by an average under pi(a|s).
+
+    Defined in :numref:`sec_valueiter`"""
+    V, history = np.zeros(mdp.num_states), []
+    for _ in range(num_iters):
+        V = (pi * mdp.backup(V)).sum(axis=1)
+        history.append(V)
+    return np.array(history)
+
+def evaluate(env, policy, num_episodes, gamma=1.0, rng=None):
+    """Mean discounted return of an acting policy over Monte Carlo episodes.
+
+    A policy is any function `policy(obs, rng) -> action`; a deterministic
+    policy ignores `rng`, a stochastic one draws from it.
+
+    Defined in :numref:`sec_valueiter`"""
+    total = 0.0
+    for _ in range(num_episodes):
+        obs, done, discount = env.reset()[0], False, 1.0
+        while not done:
+            obs, reward, terminated, truncated, _ = env.step(policy(obs, rng))
+            done = terminated or truncated
+            total, discount = total + discount * reward, discount * gamma
+    return total / num_episodes
+
+def epsilon_greedy(q, epsilon, rng):
+    """Explore with probability epsilon, else act greedily on the values q.
+
+    Defined in :numref:`sec_qlearning`"""
+    if rng.random() < epsilon:
+        return int(rng.integers(len(q)))
+    # Ties are coin flips: np.argmax would always pick action 0 on a zero
+    # table, and an agent that only ever moves left never finds the goal.
+    return int(rng.choice(np.flatnonzero(q == q.max())))
+
+def linear_schedule(start, end, num_steps):
+    """step -> value, interpolated from start to end, then held at end.
+
+    Defined in :numref:`sec_qlearning`"""
+    return lambda step: end + (start - end) * max(0.0, 1.0 - step / num_steps)
+
+def q_learning(seed, Q, visits, env, num_episodes, gamma,
+               alpha=lambda n: 1 / (1 + 0.1 * n), epsilon=None):
+    """Tabular Q-learning; updates Q in place, yields each episode's return.
+    `alpha(n)` is the step size at the n-th visit of a pair; `epsilon(k)` is
+    the exploration rate in episode k (default: 1 to 0.05 over the first
+    half of the episodes, then held).
+
+    Defined in :numref:`sec_qlearning`"""
+    rng = np.random.default_rng(seed)
+    if epsilon is None:
+        epsilon = linear_schedule(1.0, 0.05, num_episodes // 2)
+    env.reset(seed=seed)
+    for episode in range(num_episodes):
+        s, done, ret = env.reset()[0], False, 0.0
+        while not done:
+            a = epsilon_greedy(Q[s], epsilon(episode), rng)
+            s_next, r, terminated, truncated, _ = env.step(a)
+            visits[s, a] += 1
+            delta = r + gamma * (1 - terminated) * Q[s_next].max() - Q[s, a]
+            Q[s, a] += alpha(visits[s, a]) * delta
+            s, done, ret = s_next, terminated or truncated, ret + r
+        yield ret
+
+class seeded:
+    """In a `with seeded(seed):` block, PyTorch's CPU generator starts from
+    seed; on exit it resumes its previous state, so the seed affects only
+    the draws inside the block. seed=None draws from the global stream.
+
+    Defined in :numref:`sec_imitation`"""
+    def __init__(self, seed):
+        self.seed = seed
+
+    def __enter__(self):
+        if self.seed is not None:
+            self.state = torch.get_rng_state()
+            torch.default_generator.manual_seed(self.seed)
+
+    def __exit__(self, *exc):
+        if self.seed is not None:
+            torch.set_rng_state(self.state)
+
+class Policy(nn.Module):
+    """A policy network and its optimizer; pi(.|s) is the softmax of the
+    network's outputs at s.
+
+    Defined in :numref:`sec_imitation`"""
+    def __init__(self, policy, lr=1e-2):
+        super().__init__()
+        self.policy = policy
+        self.opt_pi = torch.optim.Adam(policy.parameters(), lr=lr)
+
+    def log_prob(self, obs, act):
+        """log pi(a|s) for a batch of states and the actions taken there."""
+        return torch.log_softmax(self.policy(obs), dim=-1) \
+                    .gather(-1, act[:, None]).squeeze(-1)
+
+    @classmethod
+    def tabular(cls, num_states, num_actions, lr=0.1, seed=None):
+        """One preference theta_{s,a} per state-action pair: an embedding."""
+        with seeded(seed):
+            policy = nn.Embedding(num_states, num_actions)
+        nn.init.zeros_(policy.weight)
+        return cls(policy, lr)
+
+    def act(self, obs, rng):
+        """Sample an action; numpy in, int out, the acting protocol of evaluate.
+
+        Defined in :numref:`sec_imitation`"""
+        with torch.inference_mode():
+            probs = torch.softmax(self.policy(torch.as_tensor(obs)), -1).numpy()
+        return int(rng.choice(len(probs), p=probs))
+
+    def act_greedy(self, obs, rng=None):
+        """The most probable action; the same protocol as act.
+
+        Defined in :numref:`sec_imitation`"""
+        with torch.inference_mode():
+            return int(self.policy(torch.as_tensor(obs)).argmax())
+
+    def log_prob_np(self, obs, act):
+        """log pi(a|s) for numpy batches of states and actions, as numpy.
+
+        Defined in :numref:`sec_imitation`"""
+        with torch.inference_mode():
+            return self.log_prob(torch.as_tensor(obs),
+                                 torch.as_tensor(act)).numpy()
+
+    def probs(self, num_states, num_actions):
+        """pi(a|s) for every pair, as a (num_states, num_actions) numpy array.
+
+        Defined in :numref:`sec_imitation`"""
+        s, a = np.divmod(np.arange(num_states * num_actions), num_actions)
+        return np.exp(self.log_prob_np(s, a)).reshape(num_states, num_actions)
+
+def policy_step(ac, obs, act, weight):
+    """One ascent step on (1/n) sum_t w_t log pi(a_t|s_t) over a batch of
+    n states and actions; the weights w arrive as numpy, that is, as data.
+
+    Defined in :numref:`sec_imitation`"""
+    w = torch.as_tensor(weight)
+    loss = -(w * ac.log_prob(torch.as_tensor(obs),
+                             torch.as_tensor(act))).mean()
+    ac.opt_pi.zero_grad()
+    loss.backward()
+    ac.opt_pi.step()
+    return loss.item()
+
+def verifier_step(task, theta, K, reward, rng, weighting, lr=2.0):
+    """One REINFORCE step on a VerifierTask: K responses per prompt, each
+    score e_y - pi(.|x) (eq_softmax_score) weighted by weighting(rewards of
+    the prompt's K responses), averaged over the K, one ascent step.
+
+    Defined in :numref:`sec_policygradient`"""
+    pi, g = task.policy(theta), np.zeros_like(theta)
+    eye = np.eye(len(task.resp))
+    for x in range(len(task.prompts)):         # one group of K per prompt
+        ys = rng.choice(len(task.resp), K, p=pi[x])
+        w = weighting(np.array([reward(x, y) for y in ys]))
+        g[x] = (eye[ys] - pi[x]).T @ w / K
+    return theta + lr * g
+
+class Batch:
+    """A flat batch of transitions, plus the episode boundaries.
+
+    Defined in :numref:`sec_policygradient`"""
+    def __init__(self, obs, act, rew, next_obs, term, ep_ends):
+        self.obs, self.act, self.rew = obs, act, rew
+        self.next_obs, self.term = next_obs, term
+        self.ep_ends = ep_ends    # one past the last step of each episode
+
+    def __len__(self):
+        return len(self.rew)
+
+    def episodes(self):
+        """Yield one slice per episode."""
+        start = 0
+        for end in self.ep_ends:
+            yield slice(start, end)
+            start = end
+
+    def episode_returns(self, gamma=1.0):
+        """R(tau), the discounted return, one number per episode."""
+        return np.array([(gamma ** np.arange(ep.stop - ep.start)
+                          * self.rew[ep]).sum() for ep in self.episodes()])
+
+    def per_step(self, values):
+        """Repeat one value per episode over that episode's steps."""
+        return np.repeat(values, np.diff(self.ep_ends, prepend=0))
+
+    def backward_scan(self, x, factor):
+        """y_t = x_t + factor * y_{t+1}, restarted at every episode boundary.
+
+        Defined in :numref:`sec_baselines`"""
+        y = np.zeros_like(x)
+        for ep in self.episodes():
+            running = 0.0
+            for t in reversed(range(ep.start, ep.stop)):
+                running = x[t] + factor * running
+                y[t] = running
+        return y
+
+    def reward_to_go(self, gamma):
+        """G_t: the discounted return of the rest of its episode, by one scan.
+
+        Defined in :numref:`sec_baselines`"""
+        return self.backward_scan(self.rew, gamma)
+
+    def truncation_bootstrap(self, gamma, V):
+        """gamma^(T-t) (1 - term_T) V(s_T) for every step t of each episode:
+        the discounted value of the future that a time-limit cut did not see.
+        V maps a batch of numpy states to numpy values.
+
+        Defined in :numref:`sec_deeprl`"""
+        tail = np.zeros_like(self.rew)
+        last = self.ep_ends - 1
+        tail[last] = gamma * (1 - self.term[last]) * V(self.next_obs[last])
+        return self.backward_scan(tail, gamma)
+
+    def td_target(self, bootstrap, gamma):
+        """r_t + gamma (1 - terminated) V(s'), by a numpy bootstrap.
+
+        Defined in :numref:`sec_actorcritic`"""
+        return self.rew + gamma * (1 - self.term) * bootstrap(self.next_obs)
+
+    def gae(self, value_fn, gamma, lam):
+        """GAE(gamma, lam): the reward-to-go scan, run on the TD errors.
+
+        Defined in :numref:`sec_actorcritic`"""
+        delta = self.td_target(value_fn, gamma) - value_fn(self.obs)
+        return self.backward_scan(delta, gamma * lam)
+
+    def lambda_return(self, value_fn, gamma, lam):
+        """The critic's target for GAE: the advantage plus the value it is
+        measured from.
+
+        Defined in :numref:`sec_actorcritic`"""
+        return self.gae(value_fn, gamma, lam) + value_fn(self.obs)
+
+def rollout(env, policy, num_episodes, rng):
+    """Collect complete episodes from `policy(obs, rng) -> action` as a
+    Batch. `term` records `terminated`, never `truncated`: a time-limit cut
+    is not a terminal state. All sampling runs through the numpy `rng`.
+
+    Defined in :numref:`sec_policygradient`"""
+    cols, ep_ends = [[] for _ in range(5)], []
+    for _ in range(num_episodes):
+        obs, done = env.reset()[0], False
+        while not done:
+            act = policy(obs, rng)
+            next_obs, reward, terminated, truncated, _ = env.step(act)
+            done = terminated or truncated
+            for col, val in zip(cols, (obs, act, reward, next_obs,
+                                       float(terminated))):
+                col.append(val)
+            obs = next_obs
+        ep_ends.append(len(cols[0]))
+    obs, act, rew, next_obs, term = (np.asarray(c) for c in cols)
+    return Batch(obs, act, rew.astype(np.float32), next_obs,
+                 term.astype(np.float32), np.asarray(ep_ends))
+
+def train_reinforce_tabular(ac, env, gamma, seed, num_updates=256,
+                            batch_episodes=16):
+    """REINFORCE: a fresh batch from the current policy, every step of a
+    trajectory weighted by that trajectory's return, one ascent step.
+    Yields the batch's mean return and its number of steps.
+
+    Defined in :numref:`sec_policygradient`"""
+    rng = np.random.default_rng(seed)      # one stream for all sampling
+    env.reset(seed=seed)
+    for _ in range(num_updates):
+        batch = rollout(env, ac.act, batch_episodes, rng)
+        R = batch.episode_returns(gamma)
+        d2l.policy_step(ac, batch.obs, batch.act, batch.per_step(R))
+        yield float(R.mean()), len(batch)
+
+def policy_objective(theta, P, r, gamma):
+    """J(theta) = V(s0) of the softmax policy, a differentiable linear solve.
+
+    Defined in :numref:`sec_policygradient`"""
+    pi = torch.softmax(theta, -1)
+    P_pi = torch.einsum('sa,sat->st', pi, P)
+    return torch.linalg.solve(torch.eye(len(P)) - gamma * P_pi,
+                              (pi * r).sum(-1))[0]
+
+def tabular_score(obs, act, w, pi):
+    """sum_t w_t (e_{a_t} - pi(.|s_t)), each term added into row s_t: the
+    weighted softmax score (eq_softmax_score) of a batch, the shape of pi.
+
+    Defined in :numref:`sec_policygradient`"""
+    u = np.zeros(pi.shape)
+    np.add.at(u, obs, w[:, None] * (np.eye(pi.shape[1])[act] - pi[obs]))
+    return u
+
+def standardize(x, eps=1e-8):
+    """Center a NumPy batch of weights and divide by its standard deviation
+    (NumPy's std, which divides by the batch size).
+
+    Defined in :numref:`sec_baselines`"""
+    return (x - x.mean()) / (x.std() + eps)
+
+def group_step(task, theta, K, reward, rng, lr=2.0):
+    """verifier_step with the group-normalized weight (GRPO): the rewards
+    of each prompt's K responses, standardized within the group.
+
+    Defined in :numref:`sec_baselines`"""
+    return d2l.verifier_step(task, theta, K, reward, rng, standardize, lr)
+
+class ActorCritic(d2l.Policy):
+    """A policy and a value function, each with its own optimizer.
+
+    Defined in :numref:`sec_deeprl`"""
+    def __init__(self, policy, value, lr=1e-2):
+        super().__init__(policy, lr)
+        self.value = value
+        self.opt_v = torch.optim.Adam(value.parameters(), lr=lr)
+
+    def V(self, obs):
+        """V(s) for a batch of states, as a tensor."""
+        return self.value(obs).squeeze(-1)
+
+    def value_np(self, obs):
+        """V(s) for a numpy batch of states, as numpy."""
+        with torch.inference_mode():
+            return self.V(torch.as_tensor(obs)).numpy()
+
+    @classmethod
+    def tabular(cls, num_states, num_actions, lr=0.1, seed=None):
+        """Preference and value tables: two zero-initialized embeddings."""
+        with d2l.seeded(seed):
+            policy, value = (nn.Embedding(num_states, num_actions),
+                             nn.Embedding(num_states, 1))
+        nn.init.zeros_(policy.weight), nn.init.zeros_(value.weight)
+        return cls(policy, value, lr)
+
+    @classmethod
+    def mlp(cls, obs_dim, num_actions, hidden=64, lr=1e-2, seed=None):
+        """The same container with the tables replaced by one-hidden-layer nets.
+
+        Defined in :numref:`sec_deeprl`"""
+        with d2l.seeded(seed):
+            policy, value = (tanh_mlp(obs_dim, hidden, num_actions),
+                             tanh_mlp(obs_dim, hidden, 1))
+        return cls(policy, value, lr)
+
+def tanh_mlp(in_dim, hidden, out_dim):
+    """A network with one tanh hidden layer.
+
+    Defined in :numref:`sec_deeprl`"""
+    return nn.Sequential(nn.Linear(in_dim, hidden), nn.Tanh(),
+                         nn.Linear(hidden, out_dim))
+
+def fit_value(ac, obs, target, num_steps=1):
+    """Regress the value head on a fixed target: eq_value_baseline for nets.
+
+    Defined in :numref:`sec_deeprl`"""
+    obs, target = torch.as_tensor(obs), torch.as_tensor(target)
+    for _ in range(num_steps):
+        loss = ((ac.V(obs) - target) ** 2).mean()
+        ac.opt_v.zero_grad()
+        loss.backward()
+        ac.opt_v.step()
+    return loss.item()
+
+class GaussianHead(nn.Module):
+    """A Gaussian over actions: a trunk of hidden features, a linear mean,
+    and a log standard deviation that is one learned vector or, with
+    `state_std=True`, a second linear head clamped to [-5, 2]. The default
+    trunk is one tanh layer; any module with `hidden` outputs will do.
+    `zero_mean=True` sets the mean layer to zero, so that mu = 0 at first.
+
+    Defined in :numref:`sec_deeprl`"""
+    def __init__(self, obs_dim, act_dim, hidden, state_std=False, trunk=None,
+                 zero_mean=False):
+        super().__init__()
+        self.trunk = trunk if trunk is not None else nn.Sequential(
+            nn.Linear(obs_dim, hidden), nn.Tanh())
+        self.mean = nn.Linear(hidden, act_dim)
+        if zero_mean:
+            nn.init.zeros_(self.mean.weight), nn.init.zeros_(self.mean.bias)
+        self.state_std = state_std
+        self.log_std = (nn.Linear(hidden, act_dim) if state_std
+                        else nn.Parameter(torch.zeros(act_dim)))
+
+    def forward(self, obs):
+        h = self.trunk(obs)
+        if self.state_std:
+            return self.mean(h), self.log_std(h).clamp(-5, 2).exp()
+        return self.mean(h), self.log_std.exp()
+
+class GaussianPolicy(ActorCritic):
+    """The same interface over a Normal instead of a softmax; nothing that
+    consumes the interface changes. `head_args` go to GaussianHead.
+
+    Defined in :numref:`sec_deeprl`"""
+    def __init__(self, obs_dim, act_dim, hidden=64, lr=1e-2, seed=None,
+                 **head_args):
+        with d2l.seeded(seed):
+            policy = GaussianHead(obs_dim, act_dim, hidden, **head_args)
+            value = tanh_mlp(obs_dim, hidden, 1)
+        super().__init__(policy, value, lr)
+
+    def log_prob(self, obs, act):
+        """log pi(a|s): the Normal density, summed over action dimensions."""
+        mean, std = self.policy(obs)
+        return torch.distributions.Normal(mean, std).log_prob(act).sum(-1)
+
+    def act(self, obs, rng):
+        """Sample mu(s) + sigma(s) z, z ~ N(0, I) from the numpy rng."""
+        with torch.inference_mode():
+            mean, std = self.policy(torch.as_tensor(obs))
+        return mean.numpy() + std.numpy() * rng.standard_normal(
+            mean.shape, dtype=np.float32)
+
+    def act_greedy(self, obs, rng=None):
+        """The mean action mu(s)."""
+        with torch.inference_mode():
+            return self.policy(torch.as_tensor(obs))[0].numpy()
+
+def steps_to(run, level, window):
+    """Env steps at which the mean return of the last `window` rows of
+    run = [(env step, return, ...), ...] first reaches `level`; inf if it
+    never does.
+
+    Defined in :numref:`sec_actorcritic`"""
+    mean = np.convolve(run[:, 1], np.ones(window) / window, 'valid')
+    hit = np.flatnonzero(mean >= level)
+    return run[hit[0] + window - 1, 0] if len(hit) else np.inf
+
+def clipped_surrogate(rho, adv, epsilon):
+    """PPO's per-sample objective eq_ppo_clip: min(rho A, clip(rho) A).
+
+    Defined in :numref:`sec_ppo`"""
+    return torch.minimum(rho * adv,
+                         rho.clamp(1 - epsilon, 1 + epsilon) * adv)
+
+def plain_surrogate(rho, adv, epsilon):
+    """The unclipped per-sample objective rho A.
+
+    Defined in :numref:`sec_ppo`"""
+    return rho * adv
+
+def ppo_epochs(ac, obs, act, adv, logp_old, epsilon, num_epochs,
+               entropy_coef=0.01, surrogate=clipped_surrogate):
+    """num_epochs passes on the mean surrogate plus an entropy bonus, on one
+    frozen batch of states and actions; returns [num_epochs, 3] numpy
+    diagnostics, recorded before each pass: fraction of ratios outside the
+    band, approximate KL, mean policy entropy.
+
+    Defined in :numref:`sec_ppo`"""
+    obs, act, adv, logp_old = (torch.as_tensor(x)
+                               for x in (obs, act, adv, logp_old))
+    diag = []
+    for _ in range(num_epochs):
+        logp_all = torch.log_softmax(ac.policy(obs), dim=-1)
+        logp = logp_all.gather(-1, act[:, None]).squeeze(-1)
+        rho = torch.exp(logp - logp_old)
+        entropy = -(logp_all.exp() * logp_all).sum(-1).mean()
+        loss = -surrogate(rho, adv, epsilon).mean() - entropy_coef * entropy
+        ac.opt_pi.zero_grad()
+        loss.backward()
+        ac.opt_pi.step()
+        diag.append(torch.stack([((rho - 1).abs() > epsilon).float().mean(),
+                                 (logp_old - logp).mean(), entropy]).detach())
+    return torch.stack(diag).numpy()
+
+class ReplayBuffer:
+    """A ring of transitions in preallocated numpy; sample() returns a Batch.
+
+    Defined in :numref:`sec_dqn`"""
+    def __init__(self, capacity, obs_dim):
+        self.obs = np.zeros((capacity, obs_dim), np.float32)
+        self.act = np.zeros(capacity, np.int64)
+        self.rew = np.zeros(capacity, np.float32)
+        self.next_obs = np.zeros((capacity, obs_dim), np.float32)
+        self.term = np.zeros(capacity, np.float32)
+        self.capacity, self.size, self.ptr = capacity, 0, 0
+
+    def add(self, obs, act, rew, next_obs, term):
+        i = self.ptr
+        self.obs[i], self.act[i], self.rew[i] = obs, act, rew
+        self.next_obs[i], self.term[i] = next_obs, term
+        self.ptr, self.size = (i + 1) % self.capacity, min(self.size + 1,
+                                                           self.capacity)
+
+    def __len__(self):
+        return self.size
+
+    def sample(self, batch_size, rng):
+        """batch_size transitions drawn uniformly, each a one-step
+        fragment: ep_ends marks every transition as its own episode."""
+        i = rng.integers(self.size, size=batch_size)
+        return d2l.Batch(self.obs[i], self.act[i], self.rew[i],
+                         self.next_obs[i], self.term[i],
+                         np.arange(1, batch_size + 1))
+
+class SquashedGaussianPolicy(nn.Module):
+    """d2l.GaussianHead with SAC's network (two ReLU layers and a
+    state-dependent standard deviation), squashed through
+    a = scale * tanh(u).
+
+    Defined in :numref:`sec_sac`"""
+    def __init__(self, obs_dim, act_dim, hidden=64, scale=2.0, seed=None):
+        super().__init__()
+        with d2l.seeded(seed):
+            trunk = nn.Sequential(nn.Linear(obs_dim, hidden), nn.ReLU(),
+                                  nn.Linear(hidden, hidden), nn.ReLU())
+            self.policy = d2l.GaussianHead(obs_dim, act_dim, hidden,
+                                           state_std=True, trunk=trunk)
+        self.scale = scale
+
+    def log_prob_u(self, u, mean, std):
+        """log pi at a = scale tanh(u), from the pre-squash u the sampler
+        keeps."""
+        logdet = 2 * (np.log(2) - u - nn.functional.softplus(-2 * u))
+        return (torch.distributions.Normal(mean, std).log_prob(u)
+                - logdet - np.log(self.scale)).sum(-1)
+
+    def sample(self, obs):
+        """A reparameterized action and its log-probability, differentiable."""
+        mean, std = self.policy(obs)
+        u = mean + std * torch.randn_like(std)
+        return self.scale * torch.tanh(u), self.log_prob_u(u, mean, std)
+
+    @torch.inference_mode()
+    def _draw(self, obs, rng):
+        """A pre-squash sample u with the head's mean and std, from numpy
+        states and the noise of rng."""
+        mean, std = self.policy(torch.as_tensor(obs))
+        noise = rng.standard_normal(mean.shape, dtype=np.float32)
+        return mean + std * torch.as_tensor(noise), mean, std
+
+    def act(self, obs, rng):
+        """A sampled action, numpy in and out."""
+        return self.scale * np.tanh(self._draw(obs, rng)[0].numpy())
+
+    @torch.inference_mode()
+    def act_logp(self, obs, rng):
+        """A sampled action and its log-probability, numpy in and out."""
+        u, mean, std = self._draw(obs, rng)
+        return (self.scale * np.tanh(u.numpy()),
+                self.log_prob_u(u, mean, std).numpy())
+
+    @torch.inference_mode()
+    def act_greedy(self, obs, rng=None):
+        """The squashed mean scale * tanh(mean), numpy in and out."""
+        mean = self.policy(torch.as_tensor(obs))[0].numpy()
+        return self.scale * np.tanh(mean)
+
+class ReplayBufferC(d2l.ReplayBuffer):
+    """d2l.ReplayBuffer with the action column widened to float vectors.
+
+    Defined in :numref:`sec_sac`"""
+    def __init__(self, capacity, obs_dim, act_dim):
+        super().__init__(capacity, obs_dim)
+        self.act = np.zeros((capacity, act_dim), np.float32)
+
+def update_D(X, Z, net_D, net_G, trainer_D):
+    """Update the critic; return its log loss summed over both batches
+    (per sample, the sum of two means: 2 log 2 at equilibrium).
+
+    Defined in :numref:`sec_basic_gan`"""
+    trainer_D.zero_grad()
+    real_Y = net_D(X)
+    # The generator is the fixed player here: detach its output
+    fake_Y = net_D(net_G(Z).detach())
+    loss_D = (F.binary_cross_entropy_with_logits(
+                  real_Y, torch.ones_like(real_Y), reduction='sum') +
+              F.binary_cross_entropy_with_logits(
+                  fake_Y, torch.zeros_like(fake_Y), reduction='sum'))
+    loss_D.backward()
+    trainer_D.step()
+    return loss_D
+
+def update_G(Z, net_D, net_G, trainer_G):
+    """Update the generator on the non-saturating loss; return its sum.
+
+    Defined in :numref:`sec_basic_gan`"""
+    trainer_G.zero_grad()
+    # net_D changed in its half-step, so recompute the scores
+    fake_Y = net_D(net_G(Z))
+    loss_G = F.binary_cross_entropy_with_logits(
+        fake_Y, torch.ones_like(fake_Y), reduction='sum')
+    loss_G.backward()  # also fills net_D's .grad (update_D zeroes it)
+    trainer_G.step()
+    return loss_G
+
+def train_gan(net_D, net_G, data_iter, num_epochs, latent_dim, lr_D, lr_G,
+              step_G=update_G, seed=None, on_epoch=None, ema=None):
+    """Alternate update_D and step_G over the minibatches with Adam
+    (beta_1 = 0.5), calling ema.update(net_G) after every generator step
+    and on_epoch(epoch) after each epoch if given; return each epoch's
+    per-sample losses (loss_D, the sum of the critic's two batch means,
+    and loss_G).
+
+    Defined in :numref:`sec_basic_gan`"""
+    if seed is not None:
+        torch.manual_seed(seed)
+    trainer_D = torch.optim.Adam(net_D.parameters(), lr=lr_D,
+                                 betas=(0.5, 0.999))
+    trainer_G = torch.optim.Adam(net_G.parameters(), lr=lr_G,
+                                 betas=(0.5, 0.999))
+    history = []
+    for epoch in range(1, num_epochs + 1):
+        loss_D, loss_G, n = 0, 0, 0  # summed on the device, read once
+        for X, *_ in data_iter:  # labels, if any, are ignored
+            Z = torch.randn(X.shape[0], latent_dim, device=X.device)
+            loss_D += update_D(X, Z, net_D, net_G, trainer_D).detach()
+            loss_G += step_G(Z, net_D, net_G, trainer_G).detach()
+            if ema is not None:
+                ema.update(net_G)
+            n += X.shape[0]
+        history.append(torch.stack([loss_D, loss_G]) / n)
+        if on_epoch is not None:
+            on_epoch(epoch)
+    return torch.stack(history).cpu().numpy()
+
+def make_mlp(sizes, act):
+    """Linear layers of the given widths with the activation module act
+    between them; weights uniform in +-1/sqrt(fan_in), zero biases.
+
+    Defined in :numref:`sec_basic_gan`"""
+    layers = []
+    for d_in, d_out in zip(sizes[:-1], sizes[1:]):
+        linear = nn.Linear(d_in, d_out)  # weights uniform by default
+        nn.init.zeros_(linear.bias)
+        layers += [linear, act]
+    return nn.Sequential(*layers[:-1])
+
+mu_p = np.array([[0.0, 2.4], [-2.1, -1.2], [2.1, -1.2]])     # data
+A_p = np.stack([0.7 * np.eye(2)] * 3)
+
+def mixture_logpdf(x, mus, As):
+    """Log density of the uniform mixture of Gaussians N(mu_k, A_k^T A_k).
+
+    Defined in :numref:`sec_gan_objectives`"""
+    comps = []
+    for mu, A in zip(mus, As):
+        Sigma, diff = A.T @ A, x - mu
+        sol = np.linalg.solve(Sigma, diff.T).T
+        comps.append(-0.5 * ((diff * sol).sum(1)
+                             + np.linalg.slogdet(2 * np.pi * Sigma)[1]))
+    return np.logaddexp.reduce(np.stack(comps) - np.log(len(mus)), axis=0)
+
+def sample_mixture(n, mus, As, rng):
+    """n draws from the uniform mixture of Gaussians mu_k + z A_k.
+
+    Defined in :numref:`sec_gan_objectives`"""
+    k = rng.integers(0, len(mus), n)
+    z = rng.standard_normal((n, 2))
+    return np.einsum('ni,nij->nj', z, As[k]) + mus[k]
+
+grid_1d = np.linspace(-7.0, 7.0, 281)
+grid_2d = np.stack([g.ravel() for g in np.meshgrid(grid_1d, grid_1d)], axis=1)
+cell_area = (grid_1d[1] - grid_1d[0]) ** 2
+
+def js_mixtures(mus_q, As_q, mus_p=mu_p, As_p=A_p):
+    """JS(p, q) between two known mixtures, p the data by default, by
+    quadrature on grid_2d.
+
+    Defined in :numref:`sec_gan_objectives`"""
+    logp = mixture_logpdf(grid_2d, mus_p, As_p)
+    logq = mixture_logpdf(grid_2d, mus_q, As_q)
+    p, q = np.exp(logp), np.exp(logq)
+    logm = np.log(np.maximum((p + q) / 2, 1e-300))
+    return 0.5 * (p * (logp - logm) + q * (logq - logm)).sum() * cell_area
+
+TRUNC_STD = 0.8796  # standard deviation of N(0, 1) truncated at +-2
+
+def make_critic():
+    """Leaky-ReLU MLP with LeCun-normal weights and zero biases.
+
+    Defined in :numref:`sec_gan_objectives`"""
+    D = nn.Sequential(nn.Linear(2, 64), nn.LeakyReLU(0.2),
+                      nn.Linear(64, 64), nn.LeakyReLU(0.2), nn.Linear(64, 1))
+    for layer in D[::2]:  # weight std 1/sqrt(fan_in) after truncation
+        s = layer.in_features ** -0.5 / TRUNC_STD
+        nn.init.trunc_normal_(layer.weight, std=s, a=-2 * s, b=2 * s)
+        nn.init.zeros_(layer.bias)
+    return D
+
+to_t = lambda a: torch.tensor(a, dtype=torch.float32)
+
+def mmd2_unbiased(K_pp, K_qq, K_pq):
+    """Unbiased MMD^2 from the kernel matrices within p, within q, and
+    across; the diagonals (a point with itself) are left out.
+
+    Defined in :numref:`sec_gan_objectives`"""
+    m, n = len(K_pp), len(K_qq)
+    return ((K_pp.sum() - K_pp.diagonal().sum()) / (m * (m - 1))
+            + (K_qq.sum() - K_qq.diagonal().sum()) / (n * (n - 1))
+            - 2 * K_pq.mean())
+
+def gradient_penalty(D, X, fake, u, one_sided=False):
+    """Mean (|D'(x)| - 1)^2 at the points u X + (1 - u) fake (inputs 1-D);
+    one-sided, only slopes steeper than one pay: max(0, |D'(x)| - 1)^2.
+
+    Defined in :numref:`sec_gan_objectives`"""
+    x = (u * X + (1 - u) * fake).requires_grad_()
+    grad, = torch.autograd.grad(D(x).sum(), x, create_graph=True)
+    excess = grad.abs() - 1
+    return ((excess.clamp(min=0) if one_sided else excess) ** 2).mean()
+
+class Shift(nn.Module):
+    """The generator x' = theta + z.
+
+    Defined in :numref:`sec_gan_objectives`"""
+    def __init__(self, theta0):
+        super().__init__()
+        self.theta = nn.Parameter(torch.tensor(theta0))
+
+    def forward(self, z):
+        return self.theta + z
+
+def train_shift(critic_loss, gen_loss, seed, gp=0.0, one_sided=False,
+                theta0=6.0, steps=1500, n_critic=5, batch=256, lr_D=1e-2,
+                lr_G=1e-2):
+    """Fit x' = theta + z to N(0, 1) by plain gradient steps on theta; return
+    theta0 and theta after every step, the gradient of every step, and the
+    critic.
+
+    Defined in :numref:`sec_gan_objectives`"""
+    rng = np.random.default_rng(seed)
+    torch.manual_seed(seed)
+    G, D = Shift(theta0), d2l.make_mlp([1, 32, 32, 1], nn.ReLU())
+    opt_G = torch.optim.SGD(G.parameters(), lr_G)
+    opt_D = torch.optim.Adam(D.parameters(), lr_D, betas=(0.5, 0.9))
+    n = n_critic if critic_loss else 0
+    thetas, grads = [theta0], []
+    for _ in range(steps):
+        X, Z = (to_t(rng.standard_normal((n + 1, batch, 1))) for _ in range(2))
+        U = to_t(rng.uniform(size=(n, batch, 1)))   # interpolation weights
+        for i in range(n):
+            fake = G(Z[i]).detach()
+            loss = critic_loss(D(X[i]), D(fake))
+            if gp:
+                loss = loss + gp * gradient_penalty(D, X[i], fake, U[i],
+                                                    one_sided)
+            opt_D.zero_grad()
+            loss.backward()
+            opt_D.step()
+        fake = G(Z[-1])
+        loss = (gen_loss(X[-1], fake) if critic_loss is None
+                else gen_loss(D(X[-1]), D(fake)))
+        opt_G.zero_grad()
+        loss.backward()
+        grads.append(G.theta.grad.item())
+        opt_G.step()
+        thetas.append(G.theta.item())
+    return np.array(thetas), np.array(grads), D
+
+mu_0 = np.array([[1.0, -1.0], [-4.3, -2.0], [-1.0, 3.8]])  # off the modes
+A_0 = np.stack([0.4 * np.eye(2)] * 3)      # below the data's scale of 0.7
+
+class MixtureGenerator(nn.Module):
+    """x = mu_k + z A_k for a uniformly drawn component k.
+
+    Defined in :numref:`sec_gan_objectives`"""
+    def __init__(self, mu, A):
+        super().__init__()
+        self.mu = nn.Parameter(to_t(mu))
+        self.A = nn.Parameter(to_t(A))
+
+    def forward(self, z, k):
+        return torch.einsum('ni,nij->nj', z, self.A[k]) + self.mu[k]
+
+    def params_np(self):
+        return (self.mu.detach().numpy().copy(),
+                self.A.detach().numpy().copy())
+
+def train_toy(critic_loss, gen_loss, seed=0, steps=6000, batch=256, lr=1e-3):
+    """Fit a MixtureGenerator from (mu_0, A_0) to the data mixture, one
+    critic step per generator step. The losses act on the critic's scores of
+    the real and generated batch; with critic_loss None, gen_loss acts on the
+    two batches. Returns the exact JS(p, q_t) every 200 steps.
+
+    Defined in :numref:`sec_gan_objectives`"""
+    rng = np.random.default_rng(seed)
+    torch.manual_seed(seed)
+    G, D = MixtureGenerator(mu_0, A_0), make_critic()
+    opt_G = torch.optim.Adam(G.parameters(), lr)
+    opt_D = torch.optim.Adam(D.parameters(), 2 * lr)
+    trace = []
+    for t in range(steps):
+        X = to_t(sample_mixture(batch, mu_p, A_p, rng))
+        z = to_t(rng.standard_normal((batch, 2)))
+        k = torch.tensor(rng.integers(0, 3, batch))
+        if critic_loss is not None:
+            opt_D.zero_grad()
+            critic_loss(D(X), D(G(z, k).detach())).backward()
+            opt_D.step()
+        opt_G.zero_grad()
+        fake = G(z, k)
+        loss = (gen_loss(X, fake) if critic_loss is None
+                else gen_loss(D(X), D(fake)))
+        loss.backward()
+        opt_G.step()
+        if t % 200 == 0:
+            trace.append(js_mixtures(*G.params_np()))
+    return np.array(trace)
+
+def rpgan_loss_D(critic, real, fake):
+    """Relativistic pairing critic loss -E[log sigma(D(x) - D(x'))].
+
+    Defined in :numref:`sec_gan_relativistic`"""
+    return F.softplus(critic(fake) - critic(real)).mean()
+
+def rpgan_loss_G(critic, real, fake):
+    """Non-saturating pairing loss for the generator.
+
+    Defined in :numref:`sec_gan_relativistic`"""
+    return F.softplus(critic(real) - critic(fake)).mean()
+
+def gan_loss_D(critic, real, fake):
+    """Logistic critic loss -E[log sigma(D(x))] - E[log sigma(-D(x'))]: the
+    sum of two batch means, 2 log 2 at equilibrium, as update_D.
+
+    Defined in :numref:`sec_gan_convergence`"""
+    return F.softplus(-critic(real)).mean() + F.softplus(critic(fake)).mean()
+
+def gan_loss_G(critic, real, fake):
+    """Non-saturating generator loss -E[log sigma(D(x'))]; real is unused.
+
+    Defined in :numref:`sec_gan_convergence`"""
+    return F.softplus(-critic(fake)).mean()
+
+def r1_r2_penalty(critic, real, fake):
+    """Per-sample squared critic input gradients on real (R1) and fake (R2),
+    before the gamma/2 scale.
+
+    Defined in :numref:`sec_gan_convergence`"""
+    def sq_grad_norm(x):
+        x = x.detach().requires_grad_(True)
+        grad, = torch.autograd.grad(critic(x).sum(), x, create_graph=True)
+        return grad.reshape(x.shape[0], -1).pow(2).sum(dim=1)
+    return sq_grad_norm(real), sq_grad_norm(fake)
+
+def critic_step(net_D, opt_D, loss_D, real, fake, gamma, y=None):
+    """One critic step on loss_D + gamma/2 (R1 + R2); return the loss and
+    the batch means of R1 and R2.
+
+    Defined in :numref:`sec_gan_convergence`"""
+    critic = net_D if y is None else lambda x: net_D(x, y)
+    fake = fake.detach()  # the generator is held fixed
+    r1, r2 = r1_r2_penalty(critic, real, fake)
+    loss = loss_D(critic, real, fake)
+    opt_D.zero_grad()
+    (loss + gamma / 2 * (r1 + r2).mean()).backward()
+    opt_D.step()
+    return loss.detach(), r1.mean().detach(), r2.mean().detach()
+
+def generator_step(net_G, opt_G, loss_G, net_D, real, z, y=None):
+    """One generator step on loss_G against the critic; return the loss.
+
+    Defined in :numref:`sec_gan_convergence`"""
+    critic = net_D if y is None else lambda x: net_D(x, y)
+    loss = loss_G(critic, real, net_G(z) if y is None else net_G(z, y))
+    opt_G.zero_grad()
+    loss.backward()
+    opt_G.step()
+    return loss.detach()
+
+d2l.DATA_HUB['pokemon'] = (d2l.DATA_URL + 'pokemon.zip',
+                           'c065c0e2593b8b161a2d7873e42418bf6a21106c')
+
+def load_pokemon(resolution=64):
+    """All Pokemon sprites as one (n, 3, h, w) tensor in [-1, 1].
+
+    Defined in :numref:`sec_dcgan`"""
+    import warnings
+    transform = torchvision.transforms.Compose([
+        torchvision.transforms.Resize((resolution, resolution)),
+        torchvision.transforms.PILToTensor()])
+    dataset = torchvision.datasets.ImageFolder(
+        d2l.download_extract('pokemon'), transform=transform)
+    loader = torch.utils.data.DataLoader(
+        dataset, batch_size=512, num_workers=d2l.get_dataloader_workers())
+    with warnings.catch_warnings():  # palette sprites with transparency
+        warnings.filterwarnings('ignore', message='Palette images')
+        return torch.cat([X for X, _ in loader]).float() / 127.5 - 1
+
+class EMA:
+    """Exponential moving average of a model's parameters, given as a
+    half-life in steps. Buffers such as batch-norm statistics are copied;
+    the average is kept in evaluation mode.
+
+    Defined in :numref:`sec_dcgan`"""
+    def __init__(self, model, half_life):
+        import copy  # the d2l library preamble does not import it
+        self.model = copy.deepcopy(model).requires_grad_(False).eval()
+        self.decay = 0.5 ** (1 / half_life)
+
+    def update(self, model):
+        with torch.no_grad():
+            for avg, p in zip(self.model.parameters(), model.parameters()):
+                avg.lerp_(p, 1 - self.decay)
+            for avg, b in zip(self.model.buffers(), model.buffers()):
+                avg.copy_(b)
+
+def fan_in_init(module):
+    """Fan-in normal weights with the leaky-ReLU gain, zero offsets.
+
+    Defined in :numref:`sec_dcgan`"""
+    if isinstance(module, (nn.Conv2d, nn.Linear)):
+        nn.init.kaiming_normal_(module.weight, a=0.2)
+        nn.init.zeros_(module.bias)
+
+class Generator(nn.Module):
+    """Learned 4x4 constant + projected latent (+ extra 4x4 input maps),
+    bilinearly upsampled to resolution x resolution; no normalization.
+
+    Defined in :numref:`sec_dcgan`"""
+    def __init__(self, latent_dim, resolution, base_ch, *, extra_ch=0,
+                 const_ch=128):
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.const = nn.Parameter(torch.randn(1, const_ch, 4, 4))
+        self.z_proj = nn.Linear(latent_dim, 16 * latent_dim)
+        self.mix = nn.Conv2d(const_ch + latent_dim + extra_ch, base_ch, 3,
+                             padding=1)
+        num_stages = int(np.log2(resolution / 4))       # 64: four doublings
+        chans = [base_ch // 2 ** i for i in range(num_stages + 1)]
+        self.stages = nn.ModuleList(
+            [nn.Conv2d(c_in, c_out, 3, padding=1)
+             for c_in, c_out in zip(chans[:-1], chans[1:])])
+        self.to_rgb = nn.Conv2d(chans[-1], 3, 3, padding=1)
+        self.act = nn.LeakyReLU(0.2)
+        self.apply(fan_in_init)
+
+    def forward(self, z, extra=None):
+        zc = self.z_proj(z).reshape(-1, self.latent_dim, 4, 4)
+        const = self.const.expand(z.shape[0], -1, -1, -1)
+        maps = [const, zc] + ([] if extra is None else [extra])
+        x = self.act(self.mix(torch.cat(maps, dim=1)))
+        for conv in self.stages:                     # 4 -> 8 -> ... -> 64
+            x = F.interpolate(x, scale_factor=2, mode='bilinear')
+            x = self.act(conv(x))
+        return self.to_rgb(x)                        # no tanh: raw output
+
+class Discriminator(nn.Module):
+    """Critic that mirrors the generator: conv + leaky ReLU + bilinear
+    downsampling to a 4x4 feature map phi(x), then a linear head on the
+    flattened map.
+
+    Defined in :numref:`sec_dcgan`"""
+    def __init__(self, resolution, base_ch):
+        super().__init__()
+        num_stages = int(np.log2(resolution / 4))
+        chans = [3] + [base_ch * 2 ** i for i in range(num_stages)]
+        self.stages = nn.ModuleList(
+            [nn.Conv2d(c_in, c_out, 3, padding=1)
+             for c_in, c_out in zip(chans[:-1], chans[1:])])
+        self.mix = nn.Conv2d(chans[-1], 2 * chans[-1], 3, padding=1)
+        self.head = nn.Linear(2 * chans[-1] * 4 * 4, 1)
+        self.act = nn.LeakyReLU(0.2)
+        self.apply(fan_in_init)
+
+    def phi(self, x):
+        for conv in self.stages:                     # 64 -> 32 -> ... -> 4
+            x = F.interpolate(self.act(conv(x)), scale_factor=0.5,
+                              mode='bilinear', antialias=True)
+        return self.act(self.mix(x))
+
+    def forward(self, x):
+        return self.head(self.phi(x).flatten(1))
+
+def sample_real(images, n, labels=None):
+    """Draw a training batch with random horizontal flips; return it with
+    its labels (None without labels).
+
+    Defined in :numref:`sec_dcgan`"""
+    idx = torch.randint(0, len(images), (n,), device=images.device)
+    batch = images[idx]
+    flip = torch.rand(n, device=images.device) < 0.5
+    batch = torch.where(flip.view(-1, 1, 1, 1), batch.flip(-1), batch)
+    return batch, (None if labels is None else labels[idx])
+
+def pair_stats(net_D, real, fake, y=None):
+    """Ranking accuracy P(D(x) > D(x')) and mean rank weight
+    E[sigma(D(x') - D(x))] over aligned (real, generated) pairs; given
+    labels y, the critic is D(., y).
+
+    Defined in :numref:`sec_dcgan`"""
+    critic = net_D if y is None else lambda x: net_D(x, y)
+    with torch.no_grad():
+        diff = critic(fake) - critic(real)
+    return float((diff < 0).float().mean()), float(torch.sigmoid(diff).mean())
+
+def train_r3gan(net_G, net_D, loss_D, loss_G, gamma, num_steps, images,
+                labels=None, *, eval_images=None, eval_labels=None,
+                eval_size=256, batch_size=64, lr=2e-4, half_life=500,
+                log_every=250, seed=None):
+    """Train with Adam (beta_1 = 0), alternating critic_step and
+    generator_step on flipped real batches; a generated batch takes the
+    labels of its real batch, if any. Every log_every steps, log the losses,
+    R1, R2 and pair_stats on fresh pairs from eval_images (default: images).
+    Return the EMA of the generator and the history, a dict of arrays.
+
+    Defined in :numref:`sec_dcgan`"""
+    if seed is not None:
+        torch.manual_seed(seed)
+    if eval_images is None:
+        eval_images, eval_labels = images, labels
+    opt_G, opt_D = [torch.optim.Adam(net.parameters(), lr, betas=(0.0, 0.99))
+                    for net in (net_G, net_D)]
+    noise = lambda n: torch.randn(n, net_G.latent_dim, device=images.device)
+    generate = lambda z, y: net_G(z) if y is None else net_G(z, y)
+    ema = EMA(net_G, half_life)
+    history = {k: [] for k in ('step', 'loss_D', 'loss_G', 'R1', 'R2',
+                               'accuracy', 'rank_weight')}
+    for step in range(1, num_steps + 1):
+        X, y = sample_real(images, batch_size, labels)
+        with torch.no_grad():
+            fake = generate(noise(batch_size), y)
+        loss_d, r1, r2 = d2l.critic_step(net_D, opt_D, loss_D, X, fake,
+                                         gamma, y)
+        X, y = sample_real(images, batch_size, labels)
+        loss_g = d2l.generator_step(net_G, opt_G, loss_G, net_D, X,
+                                    noise(batch_size), y)
+        ema.update(net_G)
+        if step % log_every == 0:  # fresh pairs of real and generated images
+            X, y = sample_real(eval_images, eval_size, eval_labels)
+            with torch.no_grad():
+                fake = generate(noise(eval_size), y)
+            acc, weight = pair_stats(net_D, X, fake, y)
+            logs = (step, loss_d, loss_g, r1, r2, acc, weight)
+            for k, v in zip(history, logs):
+                history[k].append(float(v))
+    return ema.model, {k: np.array(v) for k, v in history.items()}
+
+def tile_images(imgs, num_rows):
+    """Tile images (n, 3, h, w) in [-1, 1] into one (rows * h, cols * w, 3)
+    array in [0, 1].
+
+    Defined in :numref:`sec_dcgan`"""
+    n, c, h, w = imgs.shape
+    grid = (imgs.clamp(-1, 1) + 1) / 2
+    grid = grid.reshape(num_rows, n // num_rows, c, h, w)
+    grid = grid.permute(0, 3, 1, 4, 2)  # (rows, h, cols, w, c)
+    return grid.reshape(num_rows * h, -1, c).cpu().numpy()
+
+def fid_score(feat_p, feat_q):
+    """Frechet distance between Gaussians fitted to two feature sets.
+
+    Defined in :numref:`sec_dcgan`"""
+    feat_p = np.asarray(feat_p, np.float64)
+    feat_q = np.asarray(feat_q, np.float64)
+    mu_p, mu_q = feat_p.mean(0), feat_q.mean(0)
+    C_p = np.cov(feat_p, rowvar=False)
+    C_q = np.cov(feat_q, rowvar=False)
+    lam, U = np.linalg.eigh(C_p)
+    sqrt_C_p = (U * np.sqrt(np.maximum(lam, 0))) @ U.T
+    M = sqrt_C_p @ C_q @ sqrt_C_p
+    cross = np.linalg.eigvalsh((M + M.T) / 2)   # symmetric up to rounding
+    return (((mu_p - mu_q) ** 2).sum() + np.trace(C_p) + np.trace(C_q)
+            - 2 * np.sqrt(np.maximum(cross, 0)).sum())
+
+def kid_score(feat_p, feat_q):
+    """Unbiased MMD^2 between two feature sets, cubic polynomial kernel.
+
+    Defined in :numref:`sec_dcgan`"""
+    d = feat_p.shape[1]
+    kernel = lambda a, b: (a @ b.T / d + 1) ** 3
+    return d2l.mmd2_unbiased(kernel(feat_p, feat_p), kernel(feat_q, feat_q),
+                             kernel(feat_p, feat_q))
+
+def batched(f, X, batch_size=1000):
+    """Apply f to X in batches, without gradients, and concatenate.
+
+    Defined in :numref:`sec_dcgan`"""
+    with torch.no_grad():
+        return torch.cat([f(X_k) for X_k in X.split(batch_size)])
+
+def precision_recall(feat_real, feat_gen, k=3, chunk=1000):
+    """k-NN precision and recall of two feature sets: the fraction of each
+    set inside the union of the other set's balls, each ball reaching to its
+    center's k-th nearest neighbor; return (precision, recall).
+
+    Defined in :numref:`sec_dcgan`"""
+    P = np.asarray(feat_real, np.float64)
+    Q = np.asarray(feat_gen, np.float64)
+    def dists(A, B):  # (len(A), len(B)) Euclidean distances
+        sq = (A ** 2).sum(1)[:, None] - 2 * A @ B.T + (B ** 2).sum(1)
+        return np.sqrt(np.maximum(sq, 0))
+    def chunks(A):
+        return (A[i:i + chunk] for i in range(0, len(A), chunk))
+    def radii(A):  # sorted distances start with the point itself, at 0
+        return np.concatenate([np.partition(dists(a, A), k, axis=1)[:, k]
+                               for a in chunks(A)])
+    def covered(A, B, r_B):  # is each row of A inside some ball of B?
+        return np.concatenate([(dists(a, B) <= r_B).any(1)
+                               for a in chunks(A)])
+    return (float(covered(Q, P, radii(P)).mean()),
+            float(covered(P, Q, radii(Q)).mean()))
+
+class GaussianMixture:
+    """A mixture of isotropic Gaussians, exact at every noise level.
+
+    Defined in :numref:`sec_diffusion-denoising`"""
+    def __init__(self, means, weights, std, device=None):
+        self.means = torch.tensor(means, dtype=torch.float32, device=device)
+        self.weights = torch.tensor(weights, dtype=torch.float32,
+                                    device=device)
+        self.std = std
+
+    @staticmethod
+    def three_modes(device=None):
+        """The chapter's running example, with mode weights 0.5/0.3/0.2."""
+        return GaussianMixture([[-2.5, -1.5], [2.5, -1.5], [0.0, 2.5]],
+                               [0.5, 0.3, 0.2], 0.5, device)
+
+    def sample(self, n):
+        """n draws from the mixture."""
+        k = torch.multinomial(self.weights, n, replacement=True)
+        return self.means[k] + self.std * torch.randn(
+            n, self.means.shape[1], device=self.means.device)
+
+    def _modes(self, x, alpha, sigma):
+        """Per-mode log densities, offsets x - alpha mu_k, variances, alpha."""
+        a, s = (torch.as_tensor(v, dtype=x.dtype, device=x.device)
+                .reshape(-1, 1, 1) for v in (alpha, sigma))
+        var = (a * self.std) ** 2 + s ** 2
+        r = x[:, None] - a * self.means
+        log_p = (torch.log(self.weights) - (r ** 2).sum(-1) / (2 * var[..., 0])
+                 - x.shape[1] / 2 * torch.log(2 * torch.pi * var[..., 0]))
+        return log_p, r, var, a
+
+    def log_prob(self, x, alpha=1.0, sigma=0.0):
+        """log p(x) for x = alpha x0 + sigma eps."""
+        return torch.logsumexp(self._modes(x, alpha, sigma)[0], 1)
+
+    def score(self, x, alpha=1.0, sigma=0.0):
+        """The gradient of log p(x) for x = alpha x0 + sigma eps."""
+        log_p, r, var, _ = self._modes(x, alpha, sigma)
+        return -(torch.softmax(log_p, 1)[..., None] * r / var).sum(1)
+
+    def posterior_mean(self, x, alpha, sigma):
+        """E[x0 | x]; finite at alpha = 0 and at sigma = 0."""
+        log_p, r, var, a = self._modes(x, alpha, sigma)
+        return (torch.softmax(log_p, 1)[..., None]
+                * (self.means + a * self.std ** 2 / var * r)).sum(1)
+
+    def nll(self, x):
+        """Mean negative log-likelihood of clean points, in nats.
+
+        Defined in :numref:`sec_diffusion-denoising`"""
+        return -self.log_prob(x).mean()
+
+    def summary(self, x):
+        """Mode weights by nearest mean, stray fraction, spread of the rest.
+
+        Defined in :numref:`sec_diffusion-denoising`"""
+        d2 = ((x[:, None] - self.means) ** 2).sum(-1)
+        near, k = d2.min(1)
+        inside = near < (3 * self.std) ** 2
+        weights = torch.bincount(k, minlength=len(self.weights)) / len(x)
+        return dict(weights=[round(w, 3) for w in weights.tolist()],
+                    stray=round(1 - inside.float().mean().item(), 4),
+                    spread=round(near[inside].mean().item(), 3))
+
+    def velocity(self, x, t):
+        """E[eps - x0 | x_t] on the linear path x_t = (1 - t) x0 + t eps.
+
+        Defined in :numref:`sec_diffusion-gaussian-paths`"""
+        log_p, r, var, a = self._modes(x, 1 - t, t)
+        eps = (1 - a) * r / var                        # E[eps | x_t, mode k]
+        x0 = self.means + a * self.std ** 2 / var * r  # E[x0 | x_t, mode k]
+        return (torch.softmax(log_p, 1)[..., None] * (eps - x0)).sum(1)
+
+def scatter_panels(samples, titles=None, data=None, lim=4.5,
+                   size=3.0):
+    """Scatter 2-D point sets side by side on equal, shared axes.
+
+    Defined in :numref:`sec_diffusion-denoising`"""
+    _, axes = d2l.plt.subplots(1, len(samples), squeeze=False,
+                               figsize=(size * len(samples), size))
+    for i, (ax, pts) in enumerate(zip(axes[0], samples)):
+        if data is not None:
+            ax.scatter(*d2l.numpy(data).T, s=2, c='lightgray')
+        ax.scatter(*d2l.numpy(pts).T, s=2)
+        ax.set(xlim=(-lim, lim), ylim=(-lim, lim), aspect='equal')
+        if titles:
+            ax.set_title(titles[i])
+    return axes[0]
+
+def time_embedding(t, dim, freqs=(1.0, 64.0)):
+    """Sines and cosines of t at dim / 2 frequencies, geometric from freqs[0]
+    to freqs[1] radians per unit of t (t in [0, 1]).
+
+    Defined in :numref:`sec_diffusion-denoising`"""
+    f = torch.exp(torch.linspace(math.log(freqs[0]), math.log(freqs[1]),
+                                 dim // 2, device=t.device))
+    args = t.float()[:, None] * f
+    return torch.cat([args.sin(), args.cos()], 1)
+
+class TimeMLP(nn.Module):
+    """An MLP on a point x and the time features of one or more times;
+    time_freqs: see time_embedding.
+
+    Defined in :numref:`sec_diffusion-denoising`"""
+    def __init__(self, hidden=256, depth=3, *, dim=2, num_times=1,
+                 time_dim=64, time_freqs=(1.0, 64.0)):
+        super().__init__()
+        self.time_dim, self.time_freqs = time_dim, time_freqs
+        self.embed = d2l.make_mlp([time_dim * num_times, hidden, hidden],
+                                  nn.SiLU())
+        self.inp = nn.Linear(dim, hidden)
+        self.body = nn.Sequential(  # depth layers, each after a SiLU
+            nn.SiLU(), d2l.make_mlp([hidden] * depth + [dim], nn.SiLU()))
+
+    def forward(self, x, *ts):
+        feats = [time_embedding(t, self.time_dim, self.time_freqs) for t in ts]
+        return self.body(self.inp(x) + self.embed(torch.cat(feats, 1)))
+
+def train_regression(model, loss_fn, batch_fn, num_steps, *,
+                     lr=1e-3, cosine=False, ema_half_life=1000,
+                     compiled=True):
+    """Adam on loss_fn(model, batch_fn()) -> (model, EMA model, losses).
+
+    The learning rate is constant or, with cosine=True, decays to zero along
+    a cosine. The EMA model averages the weights (d2l.EMA): the weights of
+    ema_half_life updates ago count half as much as the current ones. On a
+    GPU, Adam is fused into one kernel and, with compiled=True, the loss and
+    its gradient run as CUDA graphs: the networks of this chapter are so
+    small that launching their kernels one at a time would cost more time
+    than running them.
+
+    Defined in :numref:`sec_diffusion-denoising`"""
+    params = list(model.parameters())
+    opt = torch.optim.Adam(params, lr=lr, fused=params[0].is_cuda)
+    sched = (torch.optim.lr_scheduler.CosineAnnealingLR(opt, num_steps)
+             if cosine else None)
+    if compiled and params[0].is_cuda:  # loss and gradient as CUDA graphs
+        loss_fn = torch.compile(loss_fn, mode='reduce-overhead',
+                                dynamic=False)
+    ema, losses = d2l.EMA(model, ema_half_life), []
+    for _ in range(num_steps):
+        loss = loss_fn(model, batch_fn())
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        if sched:
+            sched.step()
+        ema.update(model)
+        losses.append(loss.detach().clone())  # the graph reuses its output
+    return model, ema.model, torch.stack(losses)
+
+@torch.no_grad()
+def langevin(score_fn, x, step, num_steps):
+    """Langevin steps x <- x + step / 2 * score + sqrt(step) * noise.
+
+    Defined in :numref:`sec_diffusion-denoising`"""
+    for _ in range(num_steps):
+        x = x + step / 2 * score_fn(x) + step ** 0.5 * torch.randn_like(x)
+    return x
+
+def load_fashion_mnist_pm1(binary=False):
+    """Fashion-MNIST (X, y, X_test, y_test), images in [-1, 1] or binary.
+
+    Defined in :numref:`sec_diffusion-denoising`"""
+    data, device = d2l.FashionMNIST(), d2l.try_gpu()  # on the GPU if any
+    def prep(X):  # (n, 1, 28, 28) floats or (n, 28, 28) binary pixels
+        return (X > 127).long() if binary else X[:, None].float() / 127.5 - 1
+    return (prep(data.train.data).to(device), data.train.targets.to(device),
+            prep(data.val.data).to(device), data.val.targets.to(device))
+
+def show_gray(imgs, num_rows, num_cols, titles=None, scale=1.0):
+    """Show images (n, 1, h, w) in [-1, 1], or binary (n, h, w), in gray.
+
+    Defined in :numref:`sec_diffusion-denoising`"""
+    imgs = imgs.detach().cpu()
+    imgs = ((imgs[:, 0] + 1) / 2).clamp(0, 1) if imgs.is_floating_point() \
+        else imgs.float()
+    return d2l.show_images(imgs[..., None].expand(-1, -1, -1, 3), num_rows,
+                           num_cols, titles, scale)
+
+class GaussianPath:
+    """x_t = alpha(t) x0 + sigma(t) eps, data at t = 0 and noise at t = 1.
+
+    Defined in :numref:`sec_diffusion-gaussian-paths`"""
+    def __init__(self, alpha, sigma):
+        self.alpha, self.sigma = alpha, sigma
+
+    @staticmethod
+    def vp(beta_min=0.1, beta_max=20.0):
+        """Variance preserving, Ho et al.'s linear beta in continuous time."""
+        log_abar = lambda t: -(beta_min * t + (beta_max - beta_min) * t**2 / 2)
+        return GaussianPath(lambda t: torch.exp(log_abar(t) / 2),
+                            lambda t: torch.sqrt(-torch.expm1(log_abar(t))))
+
+    @staticmethod
+    def linear():
+        """The straight line of flow matching and rectified flow."""
+        return GaussianPath(lambda t: 1 - t, lambda t: t)
+
+    @staticmethod
+    def cosine(s=0.008):
+        """Variance preserving, Nichol and Dhariwal's cosine schedule."""
+        c = lambda t: torch.cos(math.pi / 2 * (t + s) / (1 + s))
+        g = lambda t: c(t) / c(torch.zeros_like(t))   # exactly 1 at t = 0
+        # and exactly 0 at t = 1 (cos(pi/2) is not), keeping the slope
+        f = lambda t: torch.where(t < 1, g(t), g(t) - g(t).detach())
+        return GaussianPath(f, lambda t: torch.sqrt(1 - f(t) ** 2))
+
+    def log_snr(self, t):
+        """lambda_t = log(alpha_t^2 / sigma_t^2), falling from +inf at 0."""
+        return 2 * (torch.log(self.alpha(t)) - torch.log(self.sigma(t)))
+
+    def sample(self, x0, t, eps):
+        """x_t for per-example times t of shape (n,)."""
+        t = t.reshape(-1, *[1] * (x0.dim() - 1))
+        return self.alpha(t) * x0 + self.sigma(t) * eps
+
+    def grid(self, steps, t_start=1.0, t_end=0.0):
+        """Lists of alpha and sigma at steps + 1 even times, t_start to t_end.
+
+        Defined in :numref:`sec_diffusion-gaussian-paths`"""
+        t = torch.linspace(t_start, t_end, steps + 1, dtype=torch.float64)
+        return self.alpha(t).tolist(), self.sigma(t).tolist()
+
+    def rates(self, t):
+        """The time derivatives (alpha'(t), sigma'(t)), by forward-mode AD.
+
+        Defined in :numref:`sec_diffusion-gaussian-paths`"""
+        ones = torch.ones_like(t)
+        return (torch.func.jvp(self.alpha, (t,), (ones,))[1],
+                torch.func.jvp(self.sigma, (t,), (ones,))[1])
+
+    def target(self, kind, x0, eps, t):
+        """The regression target of a kind: eps, x0, v, score or velocity.
+
+        Defined in :numref:`sec_diffusion-gaussian-paths`"""
+        t = t.reshape(-1, *[1] * (x0.dim() - 1))
+        a, s = self.alpha(t), self.sigma(t)
+        if kind == 'eps': return eps
+        if kind == 'x0': return x0
+        if kind == 'v': return a * eps - s * x0
+        if kind == 'score': return -eps / s
+        if kind != 'velocity': raise ValueError(f'unknown kind {kind!r}')
+        da, ds = self.rates(t)                      # velocity = d x_t / dt
+        return da * x0 + ds * eps
+
+    def x0_eps(self, kind, out, x, t):
+        """The (x0, eps) that a prediction `out` of a kind implies at (x, t).
+
+        Defined in :numref:`sec_diffusion-gaussian-paths`"""
+        t = t.reshape(-1, *[1] * (x.dim() - 1))
+        a, s = self.alpha(t), self.sigma(t)
+        if kind == 'eps': return (x - s * out) / a, out
+        if kind == 'x0': return out, (x - a * out) / s
+        if kind == 'v': return ((a * x - s * out) / (a**2 + s**2),
+                                (s * x + a * out) / (a**2 + s**2))
+        if kind == 'score': return (x + s ** 2 * out) / a, -s * out
+        if kind != 'velocity': raise ValueError(f'unknown kind {kind!r}')
+        da, ds = self.rates(t)
+        det = a * ds - s * da
+        return (ds * x - s * out) / det, (a * out - da * x) / det
+
+    def sigma_bars(self, steps):
+        """sigma_bar = sigma / alpha on the grid of steps; inf where alpha = 0.
+
+        Defined in :numref:`sec_diffusion-integration`"""
+        a, s = self.grid(steps)
+        return [s_k / a_k if a_k > 0 else math.inf for a_k, s_k in zip(a, s)]
+
+    def time_at(self, log_snr):
+        """The time with a given log-SNR, by bisection (lambda_t falls in t).
+
+        Defined in :numref:`sec_diffusion-integration`"""
+        lo, hi = torch.zeros_like(log_snr), torch.ones_like(log_snr)
+        for _ in range(50):
+            mid = (lo + hi) / 2
+            later = self.log_snr(mid) > log_snr      # the answer lies after mid
+            lo, hi = torch.where(later, mid, lo), torch.where(later, hi, mid)
+        return (lo + hi) / 2
+
+def regression_loss(path, kind):
+    """Squared error of net(x_t, t) against the target of a kind, t ~ U(0, 1).
+
+    Defined in :numref:`sec_diffusion-gaussian-paths`"""
+    def loss_fn(net, x0):
+        t = torch.rand(len(x0), device=x0.device)
+        eps = torch.randn_like(x0)
+        error = net(path.sample(x0, t, eps), t) - path.target(kind, x0, eps, t)
+        return (error ** 2).flatten(1).sum(1).mean()  # ||error||^2 per example
+    return loss_fn
+
+def pred_bar(pred, xb, r):
+    """pred at x = alpha x_bar, sigma_bar = r; at r = inf, x_bar is noise.
+
+    Defined in :numref:`sec_diffusion-integration`"""
+    if math.isinf(r):
+        return pred(xb, 0.0, 1.0)
+    a = 1 / math.sqrt(1 + r ** 2)
+    return pred(xb * a, a, r * a)
+
+@torch.no_grad()
+def ode_sample(pred, x, sigma_bars):
+    """Euler (= DDIM) on d x_bar / d sigma_bar = eps, from x to data; x is the
+    noisy point at the first level, unit-variance scale (noise if inf).
+
+    Defined in :numref:`sec_diffusion-integration`"""
+    r0 = sigma_bars[0]
+    xb = x if math.isinf(r0) else x * math.sqrt(1 + r0 ** 2)  # x / alpha
+    for r_t, r_s in zip(sigma_bars[:-1], sigma_bars[1:]):
+        x0, eps = pred_bar(pred, xb, r_t)
+        xb = x0 + r_s * eps                    # the Euler (= DDIM) step
+    return xb
+
+def make_pred(net, path, kind):
+    """pred(x, alpha, sigma) -> (x0, eps) from net(x, t) of a kind on path.
+
+    Defined in :numref:`sec_diffusion-integration`"""
+    def pred(x, alpha, sigma):
+        log_snr = 2 * math.log(alpha / sigma) if alpha > 0 else -math.inf
+        t = path.time_at(torch.tensor(log_snr, dtype=torch.float64))
+        x = x * (path.sigma(t).item() / sigma)  # the same point on our path
+        t = torch.full((len(x),), t.item(), device=x.device)
+        return path.x0_eps(kind, net(x, t), x, t)
+    return pred
+
+@torch.no_grad()
+def ancestral_sample(pred, x, path, steps, *, t_start=1.0):
+    """Ho et al.'s sampler from x at t_start (1 is noise) to data at t = 0.
+
+    Defined in :numref:`sec_diffusion-integration`"""
+    a, s = path.grid(steps, t_start)
+    for i in range(steps):
+        x0, eps = pred(x, a[i], s[i])
+        ratio = s[i + 1] * a[i] / (a[i + 1] * s[i])
+        x = a[i + 1] * x0 + s[i + 1] * ratio * eps      # the posterior mean
+        if s[i + 1] > 0:                                # no noise at t = 0
+            var = s[i] ** 2 - (a[i] / a[i + 1] * s[i + 1]) ** 2  # forward step
+            x = x + math.sqrt(var) * torch.randn_like(x)
+    return x
+
+class UNetBlock(nn.Module):
+    """Two 3x3 convolutions with group norm, a residual, and an embedding.
+
+    Defined in :numref:`sec_diffusion-images`"""
+    def __init__(self, c_in, c_out, emb_dim=None):
+        super().__init__()
+        self.norm1 = nn.GroupNorm(8, c_in)
+        self.conv1 = nn.Conv2d(c_in, c_out, 3, padding=1)
+        self.emb = nn.Linear(emb_dim, c_out) if emb_dim else None
+        self.norm2 = nn.GroupNorm(8, c_out)
+        self.conv2 = nn.Conv2d(c_out, c_out, 3, padding=1)
+        self.skip = (nn.Conv2d(c_in, c_out, 1) if c_in != c_out
+                     else nn.Identity())
+
+    def forward(self, x, emb=None):
+        h = self.conv1(F.silu(self.norm1(x)))
+        if self.emb is not None:
+            h = h + self.emb(emb)[:, :, None, None]
+        h = self.conv2(F.silu(self.norm2(h)))
+        return h + self.skip(x)
+
+class UNet(nn.Module):
+    """A small U-Net on an image x (n, c, h, w), times t (n,) and labels y.
+
+    y = num_classes is the null label. cond (n, emb_dim), if given, is added
+    to the time features; the flow map of the few-step section passes the
+    embedding of its step size there. time_freqs: see time_embedding.
+
+    Defined in :numref:`sec_diffusion-images`"""
+    def __init__(self, ch=64, num_classes=None, in_channels=1,
+                 out_channels=1, emb_dim=128, time_freqs=(1.0, 64.0)):
+        super().__init__()
+        self.emb_dim, self.num_classes = emb_dim, num_classes
+        self.time_freqs = time_freqs
+        self.label_emb = (nn.Embedding(num_classes + 1, emb_dim)
+                          if num_classes else None)
+        self.emb_mlp = d2l.make_mlp([emb_dim] * 3, nn.SiLU())
+        self.inc = nn.Conv2d(in_channels, ch, 3, padding=1)
+        self.down1 = UNetBlock(ch, ch, emb_dim)                   # 28 x 28
+        self.pool1 = nn.Conv2d(ch, ch, 3, stride=2, padding=1)    # 14 x 14
+        self.down2 = UNetBlock(ch, 2 * ch, emb_dim)
+        self.pool2 = nn.Conv2d(2 * ch, 2 * ch, 3, stride=2, padding=1)  # 7 x 7
+        self.mid = UNetBlock(2 * ch, 2 * ch, emb_dim)
+        self.up1 = UNetBlock(4 * ch, ch, emb_dim)                 # 14 x 14
+        self.up0 = UNetBlock(2 * ch, ch, emb_dim)                 # 28 x 28
+        self.outc = nn.Sequential(nn.GroupNorm(8, ch), nn.SiLU(),
+                                  nn.Conv2d(ch, out_channels, 3, padding=1))
+
+    def forward(self, x, t, y=None, cond=None):
+        emb = d2l.time_embedding(t, self.emb_dim, self.time_freqs)
+        if y is not None:
+            emb = emb + self.label_emb(y)
+        if cond is not None:
+            emb = emb + cond
+        emb = self.emb_mlp(emb)
+        up = lambda h, skip: torch.cat([F.interpolate(
+            h, size=skip.shape[-2:], mode='nearest-exact'), skip], 1)
+        h1 = self.down1(self.inc(x), emb)
+        h2 = self.down2(self.pool1(h1), emb)
+        h = self.mid(self.pool2(h2), emb)
+        h = self.up1(up(h, h2), emb)  # skip connection
+        h = self.up0(up(h, h1), emb)  # skip connection
+        return self.outc(h)
+
+def conditional(net, c):
+    """The field (x, t) -> net(x, t, c) with the labels c fixed.
+
+    Defined in :numref:`sec_diffusion-images`"""
+    return lambda x, t: net(x, t, c)
+
+def fashion_feature_cnn(X, y):
+    """The feature network that judges Fashion-MNIST samples in this chapter.
+
+    Defined in :numref:`sec_diffusion-images`"""
+    cnn = d2l.FeatureCNN(resolution=28).to(X.device)
+    d2l.train_feature_cnn(cnn, X.expand(-1, 3, -1, -1), y)
+    return cnn
+
+def fd_features(cnn, imgs):
+    """Features of gray images (n, 1, 28, 28) in [-1, 1], on the CPU.
+
+    Defined in :numref:`sec_diffusion-images`"""
+    rgb = lambda x: x.clamp(-1, 1).expand(-1, 3, -1, -1)
+    return d2l.batched(lambda x: cnn.features(rgb(x)), imgs).cpu()
+
+def cfg(net, c, gamma):
+    """Classifier-free guidance: (x, t) -> u + gamma (u_c - u), u unlabeled.
+
+    gamma is a Python number; at gamma = 1 this is conditional(net, c).
+
+    Defined in :numref:`sec_diffusion-images`"""
+    if gamma == 1:
+        return d2l.conditional(net, c)
+    null = torch.full_like(c, net.num_classes)
+    def guided(x, t):  # one doubled batch: labeled, then unlabeled
+        out_c, out = net(torch.cat([x, x]), torch.cat([t, t]),
+                         torch.cat([c, null])).chunk(2)
+        return out + gamma * (out_c - out)
+    return guided
+
+@torch.no_grad()
+def ddim_sample(pred, x, path, steps, eta=0.0, *, t_start=1.0, t_end=0.0):
+    """DDIM from x at t_start (1 is noise) to t_end; eta = 0 is deterministic.
+    eta = 1 draws the posterior variance: not the ancestral sampler's.
+
+    Defined in :numref:`sec_diffusion-samplers`"""
+    a, s = path.grid(steps, t_start, t_end)
+    for i in range(steps):
+        x0, eps = pred(x, a[i], s[i])
+        ratio = s[i + 1] * a[i] / (a[i + 1] * s[i])     # kappa of the text
+        var = (eta * s[i + 1]) ** 2 * (1 - ratio ** 2)   # fresh noise
+        x = a[i + 1] * x0 + math.sqrt(s[i + 1] ** 2 - var) * eps
+        if var > 0:
+            x = x + math.sqrt(var) * torch.randn_like(x)
+    return x
+
+def edm_grid(steps, sigma_max=80.0, sigma_min=0.002, rho=7):
+    """Karras et al.'s levels sigma_bar: even in sigma_bar^(1/rho), then 0.
+
+    Defined in :numref:`sec_diffusion-samplers`"""
+    hi, lo = sigma_max ** (1 / rho), sigma_min ** (1 / rho)
+    return [(hi + i / (steps - 1) * (lo - hi)) ** rho
+            for i in range(steps)] + [0.0]
+
+@torch.no_grad()
+def heun_sample(pred, x, sigma_bars):
+    """Heun on d x_bar / d sigma_bar = eps: an Euler trial, then the average
+    of the two slopes; from x at the first level to data, as ode_sample.
+
+    Defined in :numref:`sec_diffusion-samplers`"""
+    r0 = sigma_bars[0]
+    xb = x if math.isinf(r0) else x * math.sqrt(1 + r0 ** 2)  # x / alpha
+    for r_t, r_s in zip(sigma_bars[:-1], sigma_bars[1:]):
+        x0, eps = d2l.pred_bar(pred, xb, r_t)
+        x_next = x0 + r_s * eps                       # the Euler step
+        if r_s > 0 and not math.isinf(r_t):           # no slope at 0 or inf
+            x_next = xb + (r_s - r_t) * (
+                eps + d2l.pred_bar(pred, x_next, r_s)[1]) / 2
+        xb = x_next
+    return xb
+
+@torch.no_grad()
+def ddim_invert(pred, x, path, steps, t_end=1.0):
+    """Deterministic DDIM run backwards, from data x at t = 0 to t_end.
+
+    Defined in :numref:`sec_diffusion-samplers`"""
+    a, s = path.grid(steps, 0.0, t_end)
+    for i in range(steps):
+        j = max(i, 1)  # at t = 0 (sigma = 0) x is read at the next level
+        eps = pred(x, a[j], s[j])[1]
+        x = a[i + 1] * (x - s[i] * eps) / a[i] + s[i + 1] * eps
+    return x
+
+class Autoencoder(nn.Module):
+    """Residual convolutional autoencoder from 28x28x1 images to a 7x7
+    Gaussian latent and back; returns the reconstruction and the KL term.
+
+    Defined in :numref:`sec_diffusion-latent`"""
+    def __init__(self, latent_channels=4, ch=64, num_blocks=2):
+        super().__init__()
+        blocks = lambda a, b: [d2l.UNetBlock(a, b)] + [
+            d2l.UNetBlock(b, b) for _ in range(num_blocks - 1)]
+        down = lambda c: nn.Conv2d(c, c, 3, stride=2, padding=1)
+        head = lambda a, b: [nn.GroupNorm(8, a), nn.SiLU(),
+                             nn.Conv2d(a, b, 3, padding=1)]
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, ch, 3, padding=1), *blocks(ch, ch),
+            down(ch), *blocks(ch, 2 * ch),                       # 14 x 14
+            down(2 * ch), *blocks(2 * ch, 2 * ch),               # 7 x 7
+            *head(2 * ch, 2 * latent_channels))  # mean and log variance
+        self.decoder = nn.Sequential(
+            nn.Conv2d(latent_channels, 2 * ch, 3, padding=1),
+            *blocks(2 * ch, 2 * ch),
+            nn.Upsample(scale_factor=2), *blocks(2 * ch, ch),    # 14 x 14
+            nn.Upsample(scale_factor=2), *blocks(ch, ch),        # 28 x 28
+            *head(ch, 1))
+
+    def encode(self, x):
+        mean, log_var = self.encoder(x).chunk(2, dim=1)
+        return mean, log_var.clamp(-30, 20)
+
+    def forward(self, x):
+        mean, log_var = self.encode(x)
+        z = mean + (0.5 * log_var).exp() * torch.randn_like(mean)
+        kl = 0.5 * (mean ** 2 + log_var.exp() - 1 - log_var).mean()
+        return self.decoder(z), kl
+
+def train_step_gflops(net, loss_fn, shape, batch_size=128):
+    """GFLOP of one training step, forward and backward, on a batch of zeros
+    of the given shape.
+
+    Defined in :numref:`sec_diffusion-latent`"""
+    # A local import, so that d2l needs nothing beyond its header's imports
+    from torch.utils.flop_counter import FlopCounterMode
+    x = torch.zeros(batch_size, *shape, device=next(net.parameters()).device)
+    with FlopCounterMode(display=False) as counter:
+        loss_fn(net, x).backward()
+    return counter.get_total_flops() / 1e9
+
+class DiTBlock(d2l.ViTBlock):
+    """ViTBlock with adaLN-Zero: the condition c sets a shift, a scale and a
+    gate for each sublayer; the gates start at zero.
+
+    Defined in :numref:`sec_diffusion-latent`"""
+    def __init__(self, num_hiddens, mlp_num_hiddens, num_heads):
+        super().__init__(num_hiddens, mlp_num_hiddens, num_heads, dropout=0.0,
+                         use_bias=True)
+        ln = lambda: nn.LayerNorm(num_hiddens, elementwise_affine=False,
+                                  eps=1e-6)
+        self.norm1, self.norm2 = ln(), ln()
+        self.ada = nn.Sequential(nn.SiLU(),
+                                 nn.Linear(num_hiddens, 6 * num_hiddens))
+        nn.init.zeros_(self.ada[1].weight), nn.init.zeros_(self.ada[1].bias)
+
+    def forward(self, X, c):
+        shift1, scale1, gate1, shift2, scale2, gate2 = (
+            self.ada(c)[:, None].chunk(6, dim=-1))
+        X_mod = self.norm1(X) * (1 + scale1) + shift1
+        X = X + gate1 * self.attention(X_mod, X_mod, X_mod)
+        return X + gate2 * self.ffn(self.norm2(X) * (1 + scale2) + shift2)
+
+class DiT(nn.Module):
+    """Diffusion transformer conditioned on a time t in [0, 1] and, with
+    num_classes, on a label y; label num_classes means no label.
+
+    Defined in :numref:`sec_diffusion-latent`"""
+    def __init__(self, img_size=28, patch_size=4, num_channels=1, width=256,
+                 depth=6, num_heads=4, num_classes=None):
+        super().__init__()
+        self.width, self.num_classes = width, num_classes
+        self.p, self.g = patch_size, img_size // patch_size
+        self.patch = d2l.PatchEmbedding(img_size, patch_size, width,
+                                        num_channels)
+        self.pos = nn.Parameter(0.02 * torch.randn(1, self.g ** 2, width))
+        self.time_mlp = d2l.make_mlp([width] * 3, nn.SiLU())
+        self.label_emb = (nn.Embedding(num_classes + 1, width)
+                          if num_classes else None)
+        self.blks = nn.ModuleList([DiTBlock(width, 4 * width, num_heads)
+                                   for _ in range(depth)])
+        self.ln = nn.LayerNorm(width, elementwise_affine=False, eps=1e-6)
+        self.ada = nn.Sequential(nn.SiLU(), nn.Linear(width, 2 * width))
+        self.out = nn.Linear(width, patch_size ** 2 * num_channels)
+        for m in (self.ada[1], self.out):
+            nn.init.zeros_(m.weight), nn.init.zeros_(m.bias)
+
+    def forward(self, x, t, y=None):
+        c = self.time_mlp(d2l.time_embedding(t, self.width))
+        if y is not None:
+            c = c + self.label_emb(y)
+        X = self.patch(x) + self.pos
+        for blk in self.blks:
+            X = blk(X, c)
+        shift, scale = self.ada(c)[:, None].chunk(2, dim=-1)
+        X = self.out(self.ln(X) * (1 + scale) + shift)  # (n, g*g, p*p*c)
+        n, g, p = len(x), self.g, self.p  # tokens back to pixels
+        X = X.reshape(n, g, g, p, p, -1).permute(0, 5, 1, 3, 2, 4)
+        return X.reshape(n, -1, g * p, g * p)
+
+def flow_map_error(u, teacher, x0, eps, s, t):
+    """Per-example squared error of the average velocity u(x_t, s, t) against
+    the stop-gradient target v - (t - s) du/dt; v from teacher, or eps - x0.
+
+    Defined in :numref:`sec_diffusion-few-step`"""
+    x_t = d2l.GaussianPath.linear().sample(x0, t, eps)
+    if teacher is None:
+        v = eps - x0
+    else:
+        with torch.no_grad():
+            v = teacher(x_t, t)
+    u_t, du_dt = torch.func.jvp(lambda x, r: u(x, s, r), (x_t, t),
+                                (v, torch.ones_like(t)))
+    gap = (t - s).reshape(-1, *[1] * (x0.dim() - 1))
+    target = (v - gap * du_dt).detach()
+    return ((u_t - target) ** 2).flatten(1).sum(1)
+
+def flow_map_sample(u, x, steps, t_start=1.0):
+    """Jump from x at t_start (1 is noise) to data at t = 0 in equal steps.
+
+    Defined in :numref:`sec_diffusion-few-step`"""
+    ts = torch.linspace(t_start, 0, steps + 1, device=x.device)
+    for t, s in zip(ts[:-1], ts[1:]):
+        x = x - (t - s) * u(x, s.expand(len(x)), t.expand(len(x)))
+    return x
+
+class UNetFlowMap(nn.Module):
+    """u(x, s, t): a velocity U-Net, plus a zero-initialized input for the
+    gap t - s. The caller passes a copy of the teacher's U-Net.
+
+    Defined in :numref:`sec_diffusion-few-step`"""
+    def __init__(self, unet):
+        super().__init__()
+        # the teacher is an EMA copy with gradients off; the student trains
+        self.unet = unet.requires_grad_(True)
+        self.gap = nn.Linear(unet.emb_dim, unet.emb_dim)
+        nn.init.zeros_(self.gap.weight), nn.init.zeros_(self.gap.bias)
+
+    def forward(self, x, s, t):
+        gap = self.gap(d2l.time_embedding(t - s, self.unet.emb_dim,
+                                          self.unet.time_freqs))
+        return self.unet(x, t, cond=gap)
+
+HF_REVISIONS = {
+    'Qwen/Qwen3-0.6B': 'c1899de289a04d12100db370d81485cdf75e47ca',
+    'Qwen/Qwen3-0.6B-Base': 'da87bfb608c14b7cf20ba1ce41287e8de496c0cd',
+    'Qwen/Qwen3-1.7B': '70d244cc86ccca08cf5af4e1e306ecf908b1ad5e',
+    'Qwen/Qwen3-1.7B-Base': 'ea980cb0a6c2ae4b936e82123acc929f1cec04c1',
+    'Qwen/Qwen3-4B': '1cfa9a7208912126459214e8b04321603b3df60c',
+    'Qwen/Qwen3-8B': 'b968826d9c46dd6066d109eabc6255188de91218',
+    'Qwen/Qwen3.5-0.8B': '2fc06364715b967f1860aea9cf38778875588b17',
+    'Qwen/Qwen3.5-0.8B-Base': 'dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68',
+    'Qwen/Qwen3.5-2B': '15852e8c16360a2fea060d615a32b45270f8a8fc',
+    'Qwen/Qwen3.5-4B': '851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a',
+    'google/gemma-4-E2B-it': '4adf15748de9e1a0097b6274cee9c15836c41c37'}
+
+LM_DATA_URL = 'https://d2l-data.smola.org/lm/'
+
+d2l.DATA_HUB['lm-hf-memory-speed-v2'] = (  # fused kernels (fla, flex_sdpa)
+    d2l.LM_DATA_URL + 'lm-hf-memory-speed-v2.json',
+    'e1a6407448d04a3aef8cc6fff5ed39cfea549f0b')
+
+def safetensors_header(model_id, revision=None, timeout=30):
+    """Shape and dtype of every tensor of a Hub checkpoint, read by HTTP
+    range requests without fetching tensor data (in production:
+    `huggingface_hub.get_safetensors_metadata`).
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import urllib.error
+    import urllib.request
+    import huggingface_hub
+    revision = revision or d2l.HF_REVISIONS.get(model_id)
+    if revision is None:
+        revision = huggingface_hub.HfApi().model_info(model_id).sha
+        print(f'unpinned: {model_id}@{revision}')
+    token = huggingface_hub.get_token()  # for gated repositories
+
+    class HubRedirect(urllib.request.HTTPRedirectHandler):
+        """Keep the token on redirects within the Hub, not to the CDN."""
+        def redirect_request(self, request, *args):
+            new = super().redirect_request(request, *args)
+            auth = request.unredirected_hdrs.get('Authorization')
+            if new and auth and new.host == request.host:
+                new.add_unredirected_header('Authorization', auth)
+            return new
+
+    opener = urllib.request.build_opener(HubRedirect)
+
+    def fetch(filename, start=None, stop=None):  # bytes start, ..., stop - 1
+        request = urllib.request.Request(huggingface_hub.hf_hub_url(
+            model_id, filename, revision=revision))
+        if start is not None:
+            request.add_header('Range', f'bytes={start}-{stop - 1}')
+        if token:  # unredirected: dropped when a redirect leaves the Hub
+            request.add_unredirected_header('Authorization', f'Bearer {token}')
+        with opener.open(request, timeout=timeout) as response:
+            if start is None or response.status == 206:
+                return response.read()
+            return response.read(stop)[start:]  # the server ignored the range
+
+    try:  # a sharded checkpoint lists its shards in an index
+        index = json.loads(fetch('model.safetensors.index.json'))
+        shards = sorted(set(index['weight_map'].values()))
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+        shards = ['model.safetensors']
+    tensors = {}
+    for shard in shards:
+        n = int.from_bytes(fetch(shard, 0, 8), 'little')  # header length
+        header = json.loads(fetch(shard, 8, 8 + n))
+        header.pop('__metadata__', None)
+        tensors.update({name: (tuple(t['shape']), t['dtype'])
+                        for name, t in header.items()})
+    return tensors
+
+def load_hf(model_id, revision=None, dtype=torch.bfloat16, device_map='auto',
+            *, attn_implementation=None):
+    """A pinned causal language model from the Hugging Face Hub, text part
+    only, in eval mode, and its tokenizer; prints a load report and the
+    kernels it runs. The tokenizer's end token joins the stop tokens of
+    `generate`; the attention defaults to `d2l.hf_attention`'s choice.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import collections
+    import warnings
+    import transformers
+    if revision is None:
+        revision = d2l.HF_REVISIONS.get(model_id)
+    if revision is None:
+        import huggingface_hub
+        revision = huggingface_hub.HfApi().model_info(model_id).sha
+        print(f'unpinned: {model_id}@{revision}')
+    if device_map == 'auto':  # one GPU: everything on it; none: the CPU
+        n_gpus = torch.cuda.device_count()
+        device_map = ('cpu' if n_gpus == 0 else {'': 0} if n_gpus == 1
+                      else 'auto')
+    pin = dict(revision=revision, trust_remote_code=False)
+    config = transformers.AutoConfig.from_pretrained(model_id, **pin)
+    text = config.get_text_config()  # the language model's configuration
+    renames = {}
+    if text is not config and text.model_type in d2l._TEXT_KEY_MAPPING:
+        renames['key_mapping'] = d2l._TEXT_KEY_MAPPING[text.model_type]
+    d2l.bind_hf_kernels()  # routes fused kernels, registers flex_sdpa
+    if attn_implementation is None:  # the device of the first module
+        device = (next(iter(device_map.values()))
+                  if isinstance(device_map, dict) else device_map)
+        attn_implementation = d2l.hf_attention(
+            text, 0 if device == 'auto' else device)
+    model, info = transformers.AutoModelForCausalLM.from_pretrained(
+        model_id, config=text, dtype=dtype, device_map=device_map,
+        attn_implementation=attn_implementation, use_safetensors=True,
+        output_loading_info=True, **pin, **renames)
+    if info['missing_keys']:  # these modules would stay randomly initialized
+        del model  # a kept traceback would otherwise hold its memory
+        raise RuntimeError(f'no weights for {sorted(info["missing_keys"])}')
+    model.revision = revision
+    tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, **pin)
+    # Without generation_config.json, `generate` stops only at the
+    # configuration's end token, which need not be the one ending a chat turn
+    stop = model.generation_config.eos_token_id
+    stop = ([] if stop is None else [stop] if isinstance(stop, int)
+            else list(stop))
+    if tokenizer.eos_token_id not in [*stop, None]:
+        stop.append(tokenizer.eos_token_id)
+        model.generation_config.eos_token_id = stop
+    unexpected = collections.Counter(  # keys in the file the model ignores
+        '.'.join(key.split('.')[:2]) for key in info['unexpected_keys'])
+    print(f'{model_id}@{revision[:12]}: {type(model).__name__}, '
+          f'stop tokens {stop}')
+    print('0 missing keys; unexpected keys:',
+          '(not loaded)' if unexpected else 'none')
+    if unexpected:  # by count, then name
+        d2l.print_wrapped('    ' + ', '.join(f'{k} {n:,}' for k, n in sorted(
+            unexpected.items(), key=lambda kv: (-kv[1], kv[0]))), width=96)
+    print('kernels:', ', '.join(f'{k} {v}'
+                                for k, v in d2l.hf_kernels(model).items()))
+    devices = set(getattr(model, 'hf_device_map', {}).values())
+    if len(devices) > 1:
+        warnings.warn(f'{model_id} is spread over {sorted(map(str, devices))}')
+    return model.eval(), tokenizer
+
+def _hf_text_config(config):
+    """A configuration and its text part, as plain dicts.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    c = config.to_dict() if hasattr(config, 'to_dict') else dict(config)
+    return c, c.get('text_config') or c
+
+def _hf_layers(t):
+    """Kind, head dimension, KV heads and KV sharing of every layer.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    L, H = t['num_hidden_layers'], t['num_attention_heads']
+    first_shared = L - (t.get('num_kv_shared_layers') or 0)
+    overrides = {int(i): o
+                 for i, o in (t.get('per_layer_config') or {}).items()}
+    layers = []
+    for i, kind in enumerate(t.get('layer_types') or ['full_attention'] * L):
+        d_h = t.get('head_dim') or t['hidden_size'] // H
+        H_kv = t.get('num_key_value_heads') or H
+        if kind == 'full_attention':  # Gemma 4's global layers are wider
+            d_h = t.get('global_head_dim') or d_h
+            if t.get('attention_k_eq_v'):
+                H_kv = t.get('num_global_key_value_heads') or H_kv
+        o = overrides.get(i, {})
+        layers.append((kind, o.get('head_dim', d_h),
+                       o.get('num_key_value_heads', H_kv), i >= first_shared))
+    return layers
+
+def config_params(config, include_vision=False, include_mtp=False,
+                  by_group=False):
+    """Parameters of a dense or hybrid model (Qwen3, Qwen3.5, Gemma 4),
+    counted from its configuration; other layouts raise.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    c, t = _hf_text_config(config)
+    if (t.get('num_experts') or t.get('n_routed_experts')
+            or t.get('enable_moe_block')):
+        raise NotImplementedError(
+            'mixture-of-experts layouts are not counted here')
+    known = ('qwen3', 'qwen3_5_text', 'gemma4_text')  # QK norms, no biases
+    if (t['model_type'] not in known or t.get('attention_bias')
+            or t.get('mlp_bias')):
+        raise NotImplementedError(f'{t["model_type"]} layout, not one of '
+                                  f'{known} without biases')
+    d, f, H, V = (t['hidden_size'], t['intermediate_size'],
+                  t['num_attention_heads'], t['vocab_size'])
+    gemma = t['model_type'] == 'gemma4_text'
+    gate = 2 if (t.get('attn_output_gate')  # gated attention output
+                 or t['model_type'] == 'qwen3_5_text') else 1
+    g = dict.fromkeys(['embed', 'per_layer_embed', 'attention',
+                       'linear_attention', 'mlp', 'per_layer_proj', 'norm',
+                       'lm_head', 'vision', 'mtp'], 0)
+    g['embed'] = V * d
+    g['lm_head'] = 0 if t.get('tie_word_embeddings', True) else V * d
+
+    def attention(kind, d_h, H_kv, shared):  # Q (+ gate), K, V, O, QK norms
+        n_kv = (0 if shared else
+                1 if t.get('attention_k_eq_v') and kind == 'full_attention'
+                else 2)
+        norms = d_h * (1 if shared else 2)
+        return gate * d * H * d_h + n_kv * d * H_kv * d_h + H * d_h * d + norms
+
+    for kind, d_h, H_kv, shared in _hf_layers(t):
+        if kind == 'linear_attention':  # Gated DeltaNet
+            H_v, d_v = t['linear_num_value_heads'], t['linear_value_head_dim']
+            K = t['linear_num_key_heads'] * t['linear_key_head_dim']
+            U, C = H_v * d_v, 2 * K + H_v * d_v  # C: convolution channels
+            g['linear_attention'] += (d * C + 2 * d * U + 2 * d * H_v + 2 * H_v
+                                      + C * t['linear_conv_kernel_dim'] + d_v)
+        else:
+            g['attention'] += attention(kind, d_h, H_kv, shared)
+        wide = 2 if shared and t.get('use_double_wide_mlp') else 1
+        g['mlp'] += 3 * d * f * wide
+        g['norm'] += (4 if gemma else 2) * d
+    g['norm'] += d  # final norm
+    p, L = t.get('hidden_size_per_layer_input') or 0, t['num_hidden_layers']
+    if p:  # Gemma 4: per-layer embeddings, their projections and norms
+        g['per_layer_embed'] = t['vocab_size_per_layer_input'] * L * p
+        g['per_layer_proj'] = d * L * p + L * 2 * d * p
+        g['norm'] += p + L * d
+    if include_mtp and t.get('mtp_num_hidden_layers'):  # Qwen3.5
+        block = attention('full_attention', t.get('head_dim') or d // H,
+                          t['num_key_value_heads'], False) + 3 * d * f + 2 * d
+        g['mtp'] = t['mtp_num_hidden_layers'] * block + 2 * d * d + 3 * d
+    v = c.get('vision_config')
+    if include_vision and v:
+        if (v['model_type'] not in ('qwen3_5', 'qwen3_5_vision')
+                or v.get('deepstack_visual_indexes')):
+            raise NotImplementedError(f'vision tower of {v["model_type"]}')
+        D, I, m = v['hidden_size'], v['intermediate_size'], (
+            v['spatial_merge_size'] ** 2)
+        patch = (v['in_channels'] * v['temporal_patch_size']
+                 * v['patch_size'] ** 2)
+        block = 4 * D * D + 2 * D * I + 9 * D + I  # with biases, LayerNorms
+        g['vision'] = ((patch + 1 + v['num_position_embeddings']) * D
+                       + v['depth'] * block + 2 * D
+                       + (D * m + 1) * (D * m + v['out_hidden_size']))
+    return g if by_group else sum(g.values())
+
+def config_memory(config, seq_len, batch_size, dtype_bytes=2, *,
+                  state_bytes=4, conv_bytes=None, conv_taps=None,
+                  window_cached=None, include_vision=False, include_mtp=False,
+                  logits_to_keep=1):
+    """Bytes to run a model on `batch_size` sequences of `seq_len` tokens.
+
+    The defaults store what Transformers 5.22.2 stores: a sliding layer keeps
+    `sliding_window - 1` positions, a linear-attention layer all
+    `linear_conv_kernel_dim` convolution inputs; a prefill holds every
+    position until it ends: `window_cached=seq_len`. `activations` counts
+    what a prefill holds at its peak with the kernels `load_hf` binds: the
+    residual stream and the largest layer's tensors, rotary tables (under
+    3%) aside. `logits_to_keep` of None or 0 keeps every position's logits.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import warnings
+    c, t = _hf_text_config(config)
+    n, B, b = seq_len, batch_size, dtype_bytes
+    if n > t.get('max_position_embeddings', n):
+        warnings.warn(f'seq_len {n} exceeds max_position_embeddings '
+                      f'{t["max_position_embeddings"]}')
+    if window_cached is None and t.get('sliding_window'):
+        window_cached = t['sliding_window'] - 1
+    conv_bytes = b if conv_bytes is None else conv_bytes
+    if conv_taps is None:
+        conv_taps = t.get('linear_conv_kernel_dim')
+    d, H = t['hidden_size'], t['num_attention_heads']
+    gate = 2 if (t.get('attn_output_gate')  # gated attention output
+                 or t['model_type'] == 'qwen3_5_text') else 1
+    kv = state = mixer = 0  # mixer: entries per token of the widest layer
+    for kind, d_h, H_kv, shared in _hf_layers(t):
+        if kind == 'linear_attention':  # fixed matrix state + conv inputs
+            H_v, d_k = t['linear_num_value_heads'], t['linear_key_head_dim']
+            d_v, K = t['linear_value_head_dim'], (
+                t['linear_num_key_heads'] * d_k)
+            V, C = H_v * d_v, 2 * K + H_v * d_v
+            state += H_v * d_k * d_v * state_bytes + C * conv_taps * conv_bytes
+            # Chunked kernel (64 tokens): the convolved q, k, v and their
+            # copy, normalized q, k, w, u, new values, output, output gate,
+            # one d_k x d_v state per chunk and a 64 x 64 block per chunk;
+            # with more value heads than key heads, q and k are first
+            # repeated to the value heads, two more tensors of H_v d_k
+            repeat = 2 * H_v * d_k if H_v > t['linear_num_key_heads'] else 0
+            mixer = max(mixer, 2 * C + 3 * K + 4 * V + repeat
+                        + H_v * (d_k * d_v // 64 + 64))
+            continue
+        # Q (and gate), K, V, normalized and rotated Q and K, output (gated)
+        mixer = max(mixer, (3 + 4 * (gate - 1)) * H * d_h + 4 * H_kv * d_h)
+        if not shared:  # a KV-sharing layer reads an earlier layer's cache
+            kept = min(n, window_cached) if kind == 'sliding_attention' else n
+            kv += 2 * H_kv * d_h * b * kept
+    f = t['intermediate_size'] * (2 if t.get('use_double_wide_mlp')
+                                  and t.get('num_kv_shared_layers') else 1)
+    # The embeddings, the layer input and its normalized copy live across a
+    # layer; the MLP adds the attention's residual and its three f-wide
+    # products. Gemma 4 keeps its per-layer inputs for the whole pass.
+    per_layer = t['num_hidden_layers'] * (
+        t.get('hidden_size_per_layer_input') or 0)
+    params = config_params(config, include_vision, include_mtp)
+    n_out = min(logits_to_keep, n) if logits_to_keep else n
+    memory = {'params': params, 'weights': params * b,
+              'kv_cache': B * kv, 'recurrent_state': B * state,
+              'activations': B * n * b * (max(3 * d + mixer, 4 * d + 3 * f)
+                                          + per_layer),
+              'logits': B * n_out * t['vocab_size'] * b}
+    memory['total'] = sum(memory.values()) - params
+    return memory
+
+def cache_bytes(cache):
+    """Bytes of the floating-point tensors reachable from a cache object,
+    by dtype: logical (every distinct view) and resident (every underlying
+    storage once). Integer tensors are bookkeeping, not cache.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import collections
+    logical, resident = collections.Counter(), collections.Counter()
+    views, storages, visited, todo = set(), set(), set(), [cache]
+    while todo:
+        obj = todo.pop()
+        if isinstance(obj, torch.Tensor) and obj.is_floating_point():
+            if (obj.data_ptr(), obj.shape) not in views:
+                views.add((obj.data_ptr(), obj.shape))
+                logical[obj.dtype] += obj.nbytes
+            storage = obj.untyped_storage()
+            if storage.data_ptr() not in storages:
+                storages.add(storage.data_ptr())
+                resident[obj.dtype] += storage.nbytes()
+        elif id(obj) not in visited:
+            visited.add(id(obj))
+            if isinstance(obj, dict):
+                todo.extend(obj.values())
+            elif isinstance(obj, (list, tuple)):
+                todo.extend(obj)
+            elif type(obj).__module__.startswith('transformers.'):
+                todo.extend(vars(obj).values())  # cache and layer objects
+    return logical, resident
+
+def bytes_read(config, n, b=2):
+    """Bytes a decode step reads at context n: the weights except the
+    gathered per-layer table, every cache a layer attends to (a KV-sharing
+    layer re-reads its source's), and the state, read and written.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    t = config.get_text_config().to_dict()
+    t['num_kv_shared_layers'] = 0
+    mem = config_memory(t, n, 1, b)
+    groups = config_params(config, by_group=True)
+    return (b * (sum(groups.values()) - groups['per_layer_embed'])
+            + mem['kv_cache'] + 2 * mem['recurrent_state'])
+
+d2l.DATA_HUB['lm-qwen3-port-prompts-v1'] = (
+    d2l.LM_DATA_URL + 'lm-qwen3-port-prompts-v1.json',
+    'b5840fad4ad3d8d1897c12d522def18f6eb8fa06')
+
+def qwen3_rope_tables(n, head_dim, theta, offset=0, device=None):
+    """Cosines and sines, each (n, head_dim / 2) in fp32, of the RoPE angles
+    of positions offset, ..., offset + n - 1, with the frequencies computed
+    as Transformers computes them.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    # 1 / theta^(2i/d) on the CPU, as Transformers builds its buffer; the
+    # book's theta^(-2i/d) is equal in exact arithmetic but not in fp32
+    inv = 1.0 / float(theta) ** (torch.arange(
+        0, head_dim, 2, dtype=torch.float32, device='cpu') / head_dim)
+    pos = torch.arange(n, dtype=torch.float32, device=device) + offset
+    angles = pos[:, None] * inv.to(pos.device)[None, :]
+    return torch.cos(angles), torch.sin(angles)
+
+class Qwen3Attention(d2l.CausalAttention):
+    """Causal attention with separate projections, an explicit head width,
+    optional RMSNorm of queries and keys per head before RoPE (QK-norm),
+    and a step that reads and writes a key-value cache.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    def __init__(self, num_hiddens, num_heads, num_kv_heads, *, head_dim=None,
+                 qk_norm=False, rope_theta=10000.0, norm_eps=1e-6, bias=False,
+                 rope=True, causal=True):
+        nn.Module.__init__(self)  # CausalAttention's would allocate W_qkv
+        if not causal:
+            raise ValueError('Qwen3Attention is causal only')
+        self.num_heads, self.num_kv_heads = num_heads, num_kv_heads
+        self.head_dim = head_dim or num_hiddens // num_heads
+        self.qk_norm, self.rope, self.rope_theta = qk_norm, rope, rope_theta
+        self.kv_hiddens = num_kv_heads * self.head_dim
+        q_hiddens = num_heads * self.head_dim  # may differ from num_hiddens
+        self.W_q = nn.Linear(num_hiddens, q_hiddens, bias=bias)
+        self.W_k = nn.Linear(num_hiddens, self.kv_hiddens, bias=bias)
+        self.W_v = nn.Linear(num_hiddens, self.kv_hiddens, bias=bias)
+        self.W_o = nn.Linear(q_hiddens, num_hiddens, bias=bias)
+        if qk_norm:  # one gain per coordinate of a head, shared by the heads
+            self.q_norm = nn.RMSNorm(self.head_dim, eps=norm_eps)
+            self.k_norm = nn.RMSNorm(self.head_dim, eps=norm_eps)
+
+    def qkv(self, X, offset=0, tables=None):
+        B, T, _ = X.shape
+        q = self.W_q(X).reshape(B, T, self.num_heads, self.head_dim)
+        k = self.W_k(X).reshape(B, T, self.num_kv_heads, self.head_dim)
+        v = self.W_v(X).reshape(B, T, self.num_kv_heads, self.head_dim)
+        if self.qk_norm:  # normalize each head's query and key
+            q, k = self.q_norm(q), self.k_norm(k)
+        q, k, v = (u.transpose(1, 2) for u in (q, k, v))  # (B, heads, T, d_h)
+        if self.rope:
+            if tables is None:
+                tables = qwen3_rope_tables(T, self.head_dim, self.rope_theta,
+                                           offset, X.device)
+            q, k = (d2l.rope(u, tables=tables) for u in (q, k))
+        return q, k, v
+
+    def forward_step(self, X, cache, tables=None):
+        """Attention output for X at positions t, ..., t + T - 1, where cache
+        = (ks, vs, t) holds this block's buffers, each (batch, kv heads,
+        max_len, head_dim); writes the keys and values of X into them."""
+        ks, vs, t = cache
+        T = X.shape[1]
+        q, k, v = self.qkv(X, t, tables)
+        ks[:, :, t:t + T], vs[:, :, t:t + T] = k, v
+        Y = F.scaled_dot_product_attention(
+            q, ks[:, :, :t + T], vs[:, :, :t + T],
+            attn_mask=d2l.causal_mask(T, t + T, X.device),
+            enable_gqa=self.num_kv_heads < self.num_heads)
+        return self.W_o(Y.transpose(1, 2).flatten(2))
+
+class SwiGLU(d2l.FeedForward):
+    """SwiGLU feed-forward network with an explicit hidden width.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    def __init__(self, num_hiddens, hidden, bias=False):
+        nn.Module.__init__(self)  # FeedForward's would allocate width 8d/3
+        self.act = 'swiglu'
+        self.W_g = nn.Linear(num_hiddens, hidden, bias=bias)
+        self.W_1 = nn.Linear(num_hiddens, hidden, bias=bias)
+        self.W_2 = nn.Linear(hidden, num_hiddens, bias=bias)
+
+class Qwen3GPT(d2l.GPT):
+    """d2l.GPT with Qwen3's head width, QK-norm, RoPE base, feed-forward
+    width and normalization epsilon, and an optional untied output head.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    def __init__(self, vocab_size, num_hiddens, num_heads, num_kv_heads,
+                 num_blks, *, head_dim=None, qk_norm=True, rope_theta=1e6,
+                 ffn_hidden=None, norm_eps=1e-6, tie_embeddings=True,
+                 max_len=40960, bias=False):
+        head_dim = head_dim or num_hiddens // num_heads
+        ffn_hidden = ffn_hidden or round(8 * num_hiddens / 3)
+        # read by CausalAttention below while GPT builds the blocks; a plain
+        # attribute may be set before nn.Module.__init__ runs
+        self.attn_options = dict(head_dim=head_dim, qk_norm=qk_norm,
+                                 rope_theta=rope_theta, norm_eps=norm_eps)
+        super().__init__(
+            vocab_size, num_hiddens=num_hiddens, num_heads=num_heads,
+            num_blks=num_blks, max_len=max_len, bias=bias,
+            num_kv_heads=num_kv_heads,
+            ffn_factory=lambda: SwiGLU(num_hiddens, ffn_hidden, bias))
+        for blk in self.blks:
+            blk.norm1.eps = blk.norm2.eps = norm_eps
+        self.norm.eps = norm_eps
+        self.head_width, self.rope_theta = head_dim, rope_theta
+        if not tie_embeddings:
+            self.lm_head = nn.Linear(num_hiddens, vocab_size, bias=False)
+            nn.init.normal_(self.lm_head.weight, std=0.02)
+
+    def CausalAttention(self, d, H, *, bias, rope, num_kv_heads):
+        """The attention GPT builds in each block (a method, not a lambda,
+        so that the model can be pickled)."""
+        return Qwen3Attention(d, H, num_kv_heads, bias=bias, rope=rope,
+                              **self.attn_options)
+
+    def forward(self, X, logits_to_keep=None, tables=None):
+        if tables is None:  # RoPE angles of positions 0, ..., T - 1
+            tables = qwen3_rope_tables(X.shape[1], self.head_width,
+                                       self.rope_theta, device=X.device)
+        H = self.token_emb(X)
+        for blk in self.blks:
+            H = blk(H, tables=tables)
+        if logits_to_keep is not None:  # the head only where logits are read
+            H = H[:, -logits_to_keep:]
+        H = self.norm(H)
+        if hasattr(self, 'lm_head'):
+            return self.lm_head(H)
+        return F.linear(H, self.token_emb.weight)
+
+    def init_cache(self, batch_size, max_len):
+        """Zeroed keys and values for every block, each (blocks, batch, kv
+        heads, max_len, head_dim).
+
+        Defined in :numref:`sec_lm_d2l_checkpoint`"""
+        attn = self.blks[0].attention
+        shape = (len(self.blks), batch_size, attn.num_kv_heads, max_len,
+                 attn.head_dim)
+        p = self.token_emb.weight
+        return (torch.zeros(shape, device=p.device, dtype=p.dtype),
+                torch.zeros(shape, device=p.device, dtype=p.dtype))
+
+    @torch.inference_mode()
+    def forward_cached(self, X, ks, vs, t):
+        """Logits after the last of the new tokens X, which sit at positions
+        t, t + 1, ...; writes their keys and values into the cache.
+
+        Defined in :numref:`sec_lm_d2l_checkpoint`"""
+        tables = qwen3_rope_tables(X.shape[1], self.head_width, self.rope_theta,
+                                   t, X.device)
+        H = self.token_emb(X)
+        for i, blk in enumerate(self.blks):  # the modules of blk.forward
+            H = H + blk.attention.forward_step(blk.norm1(H), (ks[i], vs[i], t),
+                                               tables)
+            H = H + blk.ffn(blk.norm2(H))
+        H = self.norm(H[:, -1])
+        if hasattr(self, 'lm_head'):
+            return self.lm_head(H), ks, vs
+        return F.linear(H, self.token_emb.weight), ks, vs
+
+    @torch.inference_mode()
+    def generate_cached(self, prefix, num_tokens, temperature=1.0, top_k=None):
+        """Sample as generate does, but never recompute the prefix.
+
+        Defined in :numref:`sec_lm_d2l_checkpoint`"""
+        assert len(prefix) + num_tokens <= self.max_len, 'cache overflow'
+        X = torch.tensor(prefix, device=self.token_emb.weight.device)[None]
+        ks, vs = self.init_cache(1, len(prefix) + num_tokens)
+        logits, ks, vs = self.forward_cached(X, ks, vs, 0)
+        tokens = []
+        for t in range(len(prefix), len(prefix) + num_tokens):
+            tokens.append(d2l.sample_logits(logits, 'sample', temperature,
+                                            k=top_k))
+            if t + 1 < len(prefix) + num_tokens:  # logits for the next draw
+                logits, ks, vs = self.forward_cached(tokens[-1][:, None], ks, vs,
+                                                     t)
+        return list(prefix) + torch.cat(tokens).tolist()
+
+def qwen3_gpt_kwargs(cfg):
+    """Qwen3GPT's arguments from a Qwen3 configuration (a dict or a
+    Transformers config); raises on settings the port does not implement.
+    A dict without head_dim, tie_word_embeddings or a RoPE base gets
+    Transformers' Qwen3Config defaults (128, untied, 10,000).
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    c = cfg if isinstance(cfg, dict) else cfg.to_dict()
+    kind = c.get('model_type')
+    if kind == 'qwen3_moe':
+        raise NotImplementedError('qwen3_moe: expert layers are not ported')
+    if kind and kind.startswith('qwen3_5'):
+        raise NotImplementedError(
+            f'{kind}: Qwen3GPT has no Gated DeltaNet layers; '
+            'load this model with d2l.load_hf')
+    if kind != 'qwen3':
+        raise ValueError(f'not a Qwen3 configuration: {kind!r}')
+    rope = c.get('rope_parameters') or {}  # where Transformers 5 keeps theta
+    for name, value in [('use_sliding_window', c.get('use_sliding_window')),
+                        ('rope_scaling', c.get('rope_scaling')),
+                        ('rope_type', rope.get('rope_type', 'default')
+                         != 'default'),
+                        ('attention_bias', c.get('attention_bias'))]:
+        if value:
+            raise ValueError(f'{name} is not implemented in Qwen3GPT')
+    return dict(
+        vocab_size=c['vocab_size'], num_hiddens=c['hidden_size'],
+        num_heads=c['num_attention_heads'],
+        num_kv_heads=c['num_key_value_heads'],
+        num_blks=c['num_hidden_layers'], head_dim=c.get('head_dim', 128),
+        qk_norm=True, rope_theta=float(c.get('rope_theta') or rope.get(
+            'rope_theta', 1e4)),
+        ffn_hidden=c['intermediate_size'], norm_eps=c['rms_norm_eps'],
+        tie_embeddings=c.get('tie_word_embeddings', False),
+        max_len=c['max_position_embeddings'], bias=False)
+
+def qwen3_rope_permutation(head_dim):
+    """Index idx with idx[2i] = i and idx[2i + 1] = i + head_dim / 2: taking
+    row idx[j] of a head's rows as row j turns Transformers' split-half
+    RoPE pairs into the book's interleaved pairs.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    half = torch.arange(head_dim // 2)
+    return torch.stack([half, half + head_dim // 2], 1).flatten()
+
+def map_qwen3_state_dict(hf_state, cfg, rope_layout='permute'):
+    """A Qwen3GPT state dict from a Transformers Qwen3 state dict. Renames
+    every tensor and, per head, permutes the rows of q_proj and k_proj and
+    the gains of q_norm and k_norm into the book's RoPE pairing
+    (rope_layout='none' skips this). A KeyError lists every tensor not
+    consumed and every key not produced.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    assert rope_layout in ('permute', 'none'), rope_layout
+    kw = qwen3_gpt_kwargs(cfg)
+    d_h = kw['head_dim'] or kw['num_hiddens'] // kw['num_heads']
+    idx = qwen3_rope_permutation(d_h)
+
+    def permute(W):  # W: (heads * d_h, ...) rows, or one head's (d_h,) gains
+        if rope_layout == 'none':
+            return W
+        return W.unflatten(0, (-1, d_h))[:, idx.to(W.device)].flatten(0, 1)
+
+    keep = lambda W: W
+    layer = {'input_layernorm': ('norm1', keep),
+             'self_attn.q_proj': ('attention.W_q', permute),
+             'self_attn.k_proj': ('attention.W_k', permute),
+             'self_attn.v_proj': ('attention.W_v', keep),
+             'self_attn.o_proj': ('attention.W_o', keep),
+             'self_attn.q_norm': ('attention.q_norm', permute),
+             'self_attn.k_norm': ('attention.k_norm', permute),
+             'post_attention_layernorm': ('norm2', keep),
+             'mlp.gate_proj': ('ffn.W_g', keep),
+             'mlp.up_proj': ('ffn.W_1', keep),
+             'mlp.down_proj': ('ffn.W_2', keep)}
+    names = {'model.embed_tokens': ('token_emb', keep)}
+    for i in range(kw['num_blks']):
+        names.update({f'model.layers.{i}.{hf}': (f'blks.{i}.{ours}', f)
+                      for hf, (ours, f) in layer.items()})
+    names['model.norm'] = ('norm', keep)
+    if not kw['tie_embeddings']:
+        names['lm_head'] = ('lm_head', keep)
+    left, state, missing = dict(hf_state), {}, []
+    head = left.get('lm_head.weight')
+    emb = left.get('model.embed_tokens.weight')
+    if kw['tie_embeddings'] and head is not None:  # a stored copy of emb
+        if not (head.is_meta or emb is None or torch.equal(head, emb)):
+            raise ValueError('lm_head.weight differs from the tied embedding')
+        del left['lm_head.weight']
+    for hf, (ours, f) in names.items():
+        if hf + '.weight' in left:
+            state[ours + '.weight'] = f(left.pop(hf + '.weight'))
+        else:
+            missing.append(f'{ours}.weight (from {hf}.weight)')
+    if left or missing:
+        raise KeyError(f'not consumed: {sorted(left)}; '
+                       f'not produced: {missing}')
+    return state
+
+def load_qwen3(model_id='Qwen/Qwen3-0.6B', revision=None, *,
+               dtype=torch.bfloat16, device=None):
+    """A pinned Qwen3 checkpoint from the Hugging Face Hub as a Qwen3GPT in
+    eval mode: built on the meta device, then its mapped weights assigned.
+    The tokenizer is loaded separately, at model.revision.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    from safetensors.torch import load_file  # lazy, as in load_gpt2
+    revision = revision or d2l.HF_REVISIONS[model_id]
+    config_file, generation_file, weight_files = d2l._qwen3_files(
+        model_id, revision)
+    with open(config_file) as fh:
+        cfg = json.load(fh)
+    with torch.device('meta'):  # shapes only: no memory is allocated
+        model = Qwen3GPT(**qwen3_gpt_kwargs(cfg))
+    hf_state = {}
+    for path in weight_files:
+        hf_state.update(load_file(path))
+    device = device or d2l.try_gpu()
+    state = {name: W.to(device, dtype)
+             for name, W in map_qwen3_state_dict(hf_state, cfg).items()}
+    # assign=True: meta tensors cannot be copied into, so take the tensors
+    model.load_state_dict(state, strict=True, assign=True)
+    model.hf_config, model.revision = cfg, revision
+    model.generation_config = None
+    if generation_file is not None:
+        import transformers
+        with open(generation_file) as fh:
+            model.generation_config = transformers.GenerationConfig.from_dict(
+                json.load(fh))
+    return model.eval()
+
+Generation = collections.namedtuple(  # finish_reason: 'eos', 'stop', 'length'
+    'Generation', 'text token_ids logprobs finish_reason')
+
+def truncated_probs(logits, temperature=1.0, k=None, p=None, min_p=None):
+    """Rows of logits (batch, vocab) -> the temperature-scaled distribution
+    truncated by top-k, top-p and min-p and renormalized; ties in rank go
+    to the smaller token id. As in Transformers and vLLM (and unlike
+    sample_next of the book's section on decoding), top-p measures mass
+    within the top k.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    probs = F.softmax(logits.float() / temperature, -1)
+    ranked, order = torch.sort(probs, dim=-1, descending=True, stable=True)
+    keep = torch.full_like(order[:, :1], probs.shape[-1])  # tokens kept
+    if k is not None:  # top-k: a fixed count
+        keep = keep.clamp(max=k)
+    if p is not None:  # top-p: the smallest head of mass at least p of
+        cum = ranked.double().cumsum(-1)  # the top-k mass (1 without k)
+        head = (cum < p * cum.gather(-1, keep - 1)).sum(-1, keepdim=True) + 1
+        keep = torch.minimum(keep, head)
+    if min_p is not None:  # min-p: a fraction of the top probability
+        keep = torch.minimum(keep, (ranked >= min_p * ranked[:, :1]).sum(
+            -1, keepdim=True))
+    ranked = ranked * (torch.arange(probs.shape[-1], device=probs.device)
+                       < keep)
+    probs = torch.zeros_like(probs).scatter(-1, order, ranked)
+    return probs / probs.sum(-1, keepdim=True)
+
+def sample_logits(logits, strategy='greedy', temperature=1.0, k=None,
+                  p=None, min_p=None, generator=None):
+    """One token id per row of logits (batch, vocab): the argmax (ties to
+    the smaller id), or a draw from truncated_probs by inverting its
+    distribution function at a uniform from generator (a torch.Generator,
+    or one per row).
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    if strategy == 'greedy':
+        return logits.argmax(-1)
+    if strategy != 'sample':
+        raise ValueError(f'unknown strategy: {strategy!r}')
+    cdf = truncated_probs(logits, temperature, k, p, min_p).double().cumsum(-1)
+    if isinstance(generator, (list, tuple)):  # one uniform per row
+        u = torch.cat([torch.rand(1, generator=g, dtype=torch.float64)
+                       for g in generator])
+    else:
+        u = torch.rand(len(cdf), generator=generator, dtype=torch.float64)
+    u = u.to(cdf.device)[:, None] * cdf[:, -1:]  # in [0, total mass)
+    return torch.searchsorted(cdf, u, right=True)[:, 0]
+
+def _lm_cached_steps(model, ids, num_new):
+    """Prefill equal-length prompts ids (lists of token ids) into the
+    model's cache; returns the last logits and step(next_ids) -> logits.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    X = torch.tensor(ids, device=model.token_emb.weight.device)
+    ks, vs = model.init_cache(len(ids), X.shape[1] + num_new)
+    t = X.shape[1]
+    logits = model.forward_cached(X, ks, vs, 0)[0]
+
+    def step(next_ids):  # next_ids: (batch,), at position t
+        nonlocal t
+        logits = model.forward_cached(next_ids[:, None], ks, vs, t)[0]
+        t += 1
+        return logits
+    return logits, step
+
+def _lm_recompute_steps(model, ids):
+    """For any model mapping token ids to logits: each step runs the whole
+    sequence again.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    X = torch.tensor(ids, device=next(model.parameters()).device)
+
+    def step(next_ids):
+        nonlocal X
+        X = torch.cat([X, next_ids[:, None]], 1)
+        return model(X)[:, -1]
+    return model(X)[:, -1], step
+
+def _lm_hf_steps(model, ids, pad_id):
+    """Prompts of any lengths through a Transformers model and its cache:
+    padded on the left, with positions counted from each prompt's first
+    token, and logits computed at the last position only.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    T = max(map(len, ids))
+    X = torch.tensor([[pad_id] * (T - len(r)) + r for r in ids],
+                     device=model.device)
+    mask = torch.tensor([[0] * (T - len(r)) + [1] * len(r) for r in ids],
+                        device=model.device)
+    cache = None
+
+    def run(X):
+        nonlocal cache
+        pos = (mask.cumsum(-1) - 1).masked_fill(mask == 0, 1)[:, -X.shape[1]:]
+        out = model(input_ids=X, attention_mask=mask, position_ids=pos,
+                    past_key_values=cache, use_cache=True, logits_to_keep=1)
+        cache = out.past_key_values
+        return out.logits[:, -1]
+
+    def step(next_ids):
+        nonlocal mask
+        mask = torch.cat([mask, mask.new_ones(len(ids), 1)], 1)
+        return run(next_ids[:, None])
+    return run(X), step
+
+def _lm_finish(tokens, logprobs, tokenizer, eos_ids, stop):
+    """One row's Generation: a final end token is dropped, and the text is
+    cut before the first stop string.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    reason = 'length'
+    if tokens and tokens[-1] in eos_ids:
+        tokens, reason = tokens[:-1], 'eos'
+    text = tokenizer.decode(tokens)
+    cuts = [text.find(s) for s in stop or () if s in text]
+    if cuts:
+        text, reason = text[:min(cuts)], 'stop'
+    if logprobs is not None:
+        logprobs = logprobs[:len(tokens)]
+    return Generation(text, tokens, logprobs, reason)
+
+@torch.inference_mode()
+def generate(model, tokenizer, prompts, max_new_tokens=None, *,
+             strategy='greedy', temperature=1.0, k=None, p=None, min_p=None,
+             seed=0, eos_token_ids=None, stop=None, chat=False,
+             enable_thinking=None, return_logprobs=False, batch_size=8):
+    """Continue each prompt (a string, or with chat=True also a list of
+    messages) and return one Generation per prompt, in input order.
+    strategy is 'greedy' or 'sample' (with truncated_probs's temperature,
+    k, p and min_p). stop and eos_token_ids take one item or a list. seed
+    is an int or a torch.Generator (one stream for the call) or a list of
+    one int per prompt (each prompt's draws then depend only on its seed).
+    A sampled text can still depend on the batch: batch and padding change
+    the logits by rounding, which can flip a near-tie.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    max_new_tokens, eos_ids, stop = d2l._lm_stopping(
+        model, tokenizer, max_new_tokens, eos_token_ids, stop)
+    ids = d2l._lm_prompt_ids(tokenizer, prompts, chat, enable_thinking)
+    generators = d2l._lm_generators(seed, len(ids))
+    hf = sys.modules.get('transformers')  # loaded if model is one of its
+    if hf is not None and isinstance(d2l._lm_unwrap(model),
+                                     hf.PreTrainedModel):
+        pad = getattr(tokenizer, 'pad_token_id', None) or 0
+        start = lambda rows: _lm_hf_steps(model, rows, pad)
+        groups = [list(range(len(ids)))]  # left padding: input order
+    else:  # no attention mask: batch only prompts of equal length
+        if hasattr(model, 'forward_cached'):
+            start = lambda rows: _lm_cached_steps(model, rows, max_new_tokens)
+        else:
+            start = lambda rows: _lm_recompute_steps(model, rows)
+        groups = [[i for i in range(len(ids)) if len(ids[i]) == n]
+                  for n in sorted({len(r) for r in ids})]
+    out = [None] * len(ids)
+    for rows in (g[j:j + batch_size] for g in groups
+                 for j in range(0, len(g), batch_size)):
+        logits, step = start([ids[i] for i in rows])
+        gen = generators(rows)
+        tokens = [[] for _ in rows]
+        logprobs = [[] for _ in rows] if return_logprobs else None
+        active = set(range(len(rows)))
+        for n in range(max_new_tokens):
+            nxt = sample_logits(logits, strategy, temperature, k, p, min_p,
+                                gen)
+            if return_logprobs:  # under the untruncated distribution
+                lp = F.log_softmax(logits.float(), -1).gather(
+                    -1, nxt[:, None])[:, 0].tolist()
+            for j, token in enumerate(nxt.tolist()):
+                if j in active:
+                    tokens[j].append(token)
+                    if return_logprobs:
+                        logprobs[j].append(lp[j])
+                    text = tokenizer.decode(tokens[j]) if stop else ''
+                    if token in eos_ids or any(s in text for s in stop or ()):
+                        active.discard(j)
+            if not active or n == max_new_tokens - 1:
+                break
+            logits = step(nxt)
+        for j, i in enumerate(rows):
+            out[i] = _lm_finish(tokens[j], logprobs and logprobs[j],
+                                tokenizer, eos_ids, stop)
+    return out
+
+_HIDDEN_POINTS = ('attn_out', 'resid_mid', 'mlp_out', 'resid_post')
+
+def collect_hiddens(model, input_ids):
+    """Per layer, in execution order: the attention output, the residual
+    stream after it, the FFN output, and the stream after the block; each
+    (layers, batch, T, d) on the CPU, fp64 for an fp64 model, else fp32.
+    model is a d2l.GPT or a Transformers Qwen3 model.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    if isinstance(model, d2l.GPT):
+        layers = [(b.attention, b.norm2, b.ffn, b) for b in model.blks]
+    else:  # Transformers: attention, second norm and MLP of each layer
+        layers = [(b.self_attn, b.post_attention_layernorm, b.mlp, b)
+                  for b in model.model.layers]
+    dtype = (torch.float64 if next(model.parameters()).dtype == torch.float64
+             else torch.float32)
+    caps = {name: [] for name in _HIDDEN_POINTS}
+
+    def save(name, x):  # Transformers modules may return tuples
+        x = x[0] if isinstance(x, tuple) else x
+        caps[name].append(x.detach().to('cpu', dtype))
+
+    handles = []
+    try:
+        for attn, norm2, ffn, blk in layers:
+            handles += [
+                attn.register_forward_hook(
+                    lambda m, a, y: save('attn_out', y)),
+                norm2.register_forward_pre_hook(  # the stream entering norm2
+                    lambda m, a: save('resid_mid', a[0])),
+                ffn.register_forward_hook(lambda m, a, y: save('mlp_out', y)),
+                blk.register_forward_hook(
+                    lambda m, a, y: save('resid_post', y))]
+        with torch.inference_mode():
+            model(input_ids)
+    finally:
+        for handle in handles:
+            handle.remove()
+    return {name: torch.stack(caps[name]) for name in _HIDDEN_POINTS}
+
+def layer_errors(ref, ours, skip_first=1):
+    """Relative Frobenius error of each capture of collect_hiddens against a
+    reference over positions skip_first, ..., T - 1, per layer, capture
+    point and prompt: an array (layers, 4, batch).
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    errors = []
+    for name in _HIDDEN_POINTS:
+        r, o = (u[:, :, skip_first:].double().flatten(2)
+                for u in (ref[name], ours[name]))
+        errors.append(((o - r).norm(dim=-1) / r.norm(dim=-1)).numpy())
+    return np.stack(errors, 1)
+
+def first_divergence(errors, floor, factor=10.0):
+    """The first (layer, capture point) in execution order whose median
+    error over prompts exceeds factor times the median floor there (the
+    clean port's error); None if there is none.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    above = np.median(errors, -1) > factor * np.median(floor, -1)
+    if not above.any():
+        return None
+    layer, point = np.argwhere(above)[0]  # row-major: layer by layer
+    return int(layer), _HIDDEN_POINTS[point]
+
+def label_logprobs(model, tokenizer, prompts, label_words, *, batch_size=8,
+                   chat=False, enable_thinking=False, sep=None):
+    """Log-probabilities (len(prompts), len(label_words)), float32 on the
+    CPU, of each label word's first token as the next token, normalized
+    over the label tokens only. A word follows its prompt after sep, by
+    default a space, but none after whitespace or next to Chinese text.
+    With chat=True a prompt is a message list (a string is one user
+    message), rendered with the generation prefix. The label logits are
+    computed in float32 from the last hidden state and the label words'
+    rows of the output layer (bf16 logits of size 20 to 40 are 1/8 to 1/4
+    apart and tie).
+
+    Defined in :numref:`sec_lm_prompting`"""
+    if chat:
+        opts = {} if enable_thinking is None else {
+            'enable_thinking': enable_thinking}
+        prompts = [tokenizer.apply_chat_template(
+            [{'role': 'user', 'content': m}] if isinstance(m, str) else m,
+            tokenize=False, add_generation_prompt=True, **opts)
+                   for m in prompts]
+    ids, labels = d2l.label_token_ids(tokenizer, prompts, label_words, sep)
+    if not chat:  # as d2l.generate: a plain prompt gets the BOS, if any
+        ids = [d2l._lm_bos_ids(tokenizer) + r for r in ids]
+    if not all(ids):
+        raise ValueError('an empty prompt has no position to predict from')
+    W = d2l._label_output_layer(model)
+    if W is None:  # a d2l GPT, or a soft-capped output layer
+        return d2l._label_logprobs_logits(model, tokenizer, ids, labels,
+                                          batch_size)
+    decoder = d2l._lm_unwrap(model).get_decoder()
+    pad = getattr(tokenizer, 'pad_token_id', None) or 0
+    device = next(model.parameters()).device
+    out = torch.empty(len(ids), len(label_words))
+    for j in range(0, len(ids), batch_size):  # left-padded, in input order
+        rows, lab = ids[j:j + batch_size], labels[j:j + batch_size]
+        T = max(len(r) for r in rows)
+        X = torch.tensor([[pad] * (T - len(r)) + r for r in rows],
+                         device=device)
+        mask = torch.tensor([[0] * (T - len(r)) + [1] * len(r)
+                             for r in rows], device=device)
+        pos = (mask.cumsum(-1) - 1).masked_fill(mask == 0, 1)
+        with torch.inference_mode():
+            h = decoder(input_ids=X, attention_mask=mask, position_ids=pos,
+                        use_cache=False).last_hidden_state[:, -1]
+            lab = torch.tensor(lab, device=device)  # (batch, labels)
+            z = torch.einsum('bd,bld->bl', h.float(), W.weight[lab].float())
+            if W.bias is not None:
+                z = z + W.bias[lab].float()
+            lp = z.log_softmax(-1).cpu()
+        out[j:j + batch_size] = lp  # out is an ordinary tensor
+    return out
+
+def fewshot_prompt(demos, query, template='plain', *, fmt=None,
+                   label_map=None, system=None):
+    """Demonstrations demos, a list of (x, y), and a query x as a prompt.
+    'plain' (fmt, default 'Input: {x}\\nOutput: {y}') and 'qa'
+    ('Q: {x}\\nA: {y}') give a string whose blocks are separated by a blank
+    line and which ends after the query's label field, without a space;
+    'chat_single' gives the same text as one user message, 'chat_multi'
+    one user and one assistant message per demonstration. label_map maps
+    each y to its label word.
+
+    Defined in :numref:`sec_lm_prompting`"""
+    if template not in ('plain', 'qa', 'chat_single', 'chat_multi'):
+        raise ValueError(f'unknown template: {template!r}')
+    if fmt is not None:
+        import string
+        if template not in ('plain', 'chat_single'):
+            raise ValueError(f'template {template!r} takes no fmt')
+        parts = list(string.Formatter().parse(fmt))
+        fields = [f for _, f, _, _ in parts if f is not None]
+        tail = parts[-1][0] if parts and parts[-1][1] is None else ''
+        if (set(fields) != {'x', 'y'} or fields.count('y') > 1 or
+                fields[-1] != 'y' or tail.strip()):
+            raise ValueError('fmt needs the fields {x} and {y}, with {y} '
+                             f'once and last: {fmt!r}')
+
+    def word(y):
+        if label_map is not None:
+            if y not in label_map:
+                raise KeyError(f'label {y!r} is not in label_map')
+            y = label_map[y]
+        if not isinstance(y, str):
+            raise TypeError(f'label {y!r} is not a string: pass label_map')
+        return y
+    demos = [(x, word(y)) for x, y in demos]
+    head = [] if system is None else [{'role': 'system', 'content': system}]
+    if template == 'chat_multi':
+        return head + [{'role': r, 'content': c} for x, y in demos
+                       for r, c in (('user', x), ('assistant', y))] + [
+                           {'role': 'user', 'content': query}]
+    fmt = 'Q: {x}\nA: {y}' if template == 'qa' else (
+        fmt or 'Input: {x}\nOutput: {y}')
+    text = '\n\n'.join([fmt.format(x=x, y=y) for x, y in demos] +
+                       [fmt.format(x=query, y='').rstrip()])
+    if template == 'chat_single':
+        return head + [{'role': 'user', 'content': text}]
+    return text if system is None else system + '\n\n' + text
+
+d2l.DATA_HUB['ag-news-train'] = (
+    'https://huggingface.co/datasets/sh0416/ag_news/resolve/'
+    '70e3fa1915be9a8daebec5e840f20df9a8e18793/train.jsonl',
+    '4b8aa80c8d0e1bea19ec0924b720317a6a61b040')
+d2l.DATA_HUB['ag-news-test'] = (
+    'https://huggingface.co/datasets/sh0416/ag_news/resolve/'
+    '70e3fa1915be9a8daebec5e840f20df9a8e18793/test.jsonl',
+    '6c874e265fe5ff35861f27eaf3e681dda147ba12')
+d2l.DATA_HUB['lm-fewshot-grid-v2'] = (
+    d2l.LM_DATA_URL + 'lm-fewshot-grid-v2.csv',
+    '0c2a1c87635bbfcdca9cedb479723901b3d5cbd5')
+
+def calibrate_labels(logprobs, content_free_logprobs):
+    """Contextual calibration: subtract the mean log-probabilities (M, L)
+    of content-free inputs from logprobs (N, L) and renormalize over the
+    L labels; one content-free input may be given as an (L,) row. The
+    mean is taken in log space; Zhao et al. (2021) average the
+    probabilities instead.
+
+    Defined in :numref:`sec_lm_prompting`"""
+    logprobs = torch.as_tensor(logprobs)
+    cf = torch.as_tensor(content_free_logprobs)
+    if cf.ndim not in (1, 2) or cf.shape[-1] != logprobs.shape[-1]:
+        raise ValueError(f'content-free log-probabilities {tuple(cf.shape)}'
+                         f' are not (M, {logprobs.shape[-1]}) or '
+                         f'({logprobs.shape[-1]},)')
+    return torch.log_softmax(logprobs - cf.reshape(-1, cf.shape[-1]).mean(0),
+                             dim=-1)
+
+# Several of these files share a name: fetch them with d2l.download_keyed
+d2l.DATA_HUB['arc-challenge-test'] = (
+    'https://huggingface.co/datasets/allenai/ai2_arc/resolve/'
+    '210d026faf9955653af8916fad021475a3f00453/ARC-Challenge/'
+    'test-00000-of-00001.parquet',
+    '029435570dd5b680c95603f2f51a93218fa30cb2')
+d2l.DATA_HUB['arc-challenge-train'] = (
+    'https://huggingface.co/datasets/allenai/ai2_arc/resolve/'
+    '210d026faf9955653af8916fad021475a3f00453/ARC-Challenge/'
+    'train-00000-of-00001.parquet',
+    '43a863338c7852a03fc5ab79f7c80b88e01a192d')
+d2l.DATA_HUB['gsm8k-train'] = (
+    'https://huggingface.co/datasets/openai/gsm8k/resolve/'
+    '740312add88f781978c0658806c59bc2815b9866/main/'
+    'train-00000-of-00001.parquet',
+    '2328586d74d5426d030f29ac85a485f58514efbd')
+d2l.DATA_HUB['gsm8k-test'] = (
+    'https://huggingface.co/datasets/openai/gsm8k/resolve/'
+    '740312add88f781978c0658806c59bc2815b9866/main/'
+    'test-00000-of-00001.parquet',
+    'b0c27c2f1cb845ba83b135c7e2575070b33ca967')
+d2l.DATA_HUB['wikitext-2-raw-test'] = (
+    'https://huggingface.co/datasets/Salesforce/wikitext/resolve/'
+    'b08601e04326c79dfdd32d625aee71d232d685c3/wikitext-2-raw-v1/'
+    'test-00000-of-00001.parquet',
+    'ab23bd60c20d2e169a8dc2d139ab6e7bf8b74e91')
+# Fixed inputs: lm-evaluation-harness's scores on 200 ARC items
+# (tools/oneshot/make_lm_eval_arc_fixture.py) and the held-out texts
+# (tools/oneshot/make_lm_heldout_texts.py)
+d2l.DATA_HUB['lm-eval-reference-arc-v1'] = (
+    d2l.LM_DATA_URL + 'lm-eval-reference-arc-v1.json',
+    'c0bdeb8593b0ba75406025d06e8cbea9016a2c71')
+d2l.DATA_HUB['lm-heldout-texts-v1'] = (
+    d2l.LM_DATA_URL + 'lm-heldout-texts-v1.json',
+    '11b0ed4fead96910fba1078b2d9f5ee5b6a59b69')
+# This section's measured results, written by a run with D2L_RERUN (the
+# keys in use are in ARTIFACTS below). The next section reads
+# lm-gsm8k-samples-v2 and lm-arc-scores-v3; the API section reads the
+# problem ids of lm-gsm8k-samples-v1
+d2l.DATA_HUB['lm-gsm8k-samples-v1'] = (
+    d2l.LM_DATA_URL + 'lm-gsm8k-samples-v1.jsonl',
+    '11b561b6fb07d19016f5a00b4a5dcf35d3dbbb07')
+d2l.DATA_HUB['lm-gsm8k-samples-v2'] = (
+    d2l.LM_DATA_URL + 'lm-gsm8k-samples-v2.jsonl',
+    'e02bde69f9fca1f0af49d1170088d87a304ceb0f')
+d2l.DATA_HUB['lm-bpb-v3'] = (
+    d2l.LM_DATA_URL + 'lm-bpb-v3.csv',
+    '1afa5c853c605511c3c5d8f41ee4607ee7bfd12b')
+d2l.DATA_HUB['lm-arc-generations-v5'] = (
+    d2l.LM_DATA_URL + 'lm-arc-generations-v5.jsonl',
+    'c4f2733f91d489a0b89101531a037f12e77a03c8')
+d2l.DATA_HUB['lm-arc-scores-v3'] = (
+    d2l.LM_DATA_URL + 'lm-arc-scores-v3.parquet',
+    '7f3e186697deceed231f826da256c2fce646eef1')
+
+def format_mc(question, options, fmt='cloze', *, shots=()):
+    """A multiple-choice item as (prompt, choices). 'cloze': the prompt
+    'Question: {question}\\nAnswer:' and each option after a space;
+    'letter': 'Question: {question}', a line 'A. {option}' per option and
+    'Answer:', with the letters ' A', ' B', ... as choices (OLMES's
+    multiple-choice formulation); 'mmlu': the same without 'Question: ',
+    as the MMLU paper and lm-evaluation-harness's mmlu tasks write it. Each
+    shot, a tuple (question, options, answer_index), is rendered the same
+    way with its answer and put before the item, separated by a blank line.
+    Callers that want a header (such as MMLU's subject line) prepend it
+    themselves.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    if fmt not in ('cloze', 'letter', 'mmlu'):
+        raise ValueError(f'unknown fmt: {fmt!r}')
+
+    def render(q, opts):
+        opts = [str(o) for o in opts]  # also numpy arrays, pandas Series
+        if not opts:
+            raise ValueError(f'no options for {q!r}')
+        if fmt == 'cloze':
+            return f'Question: {q}\nAnswer:', [' ' + o for o in opts]
+        if len(opts) > 26:
+            raise ValueError(f'{len(opts)} options, but 26 letters')
+        letters = [chr(ord('A') + i) for i in range(len(opts))]
+        lines = [q if fmt == 'mmlu' else f'Question: {q}'] + [
+            f'{a}. {o}' for a, o in zip(letters, opts)]
+        return '\n'.join(lines + ['Answer:']), [' ' + a for a in letters]
+    blocks = []
+    for q, opts, a in shots:
+        prompt, choices = render(q, opts)
+        if not 0 <= a < len(choices):
+            raise ValueError(f'answer index {a} for {len(choices)} options')
+        blocks.append(prompt + choices[a])
+    prompt, choices = render(question, options)
+    return '\n\n'.join(blocks + [prompt]), choices
+
+ScoreComponents = collections.namedtuple(  # each (N, C_max), padded with
+    'ScoreComponents', 'll n_tokens n_chars n_bytes')  # -inf (ll) and 0
+
+def score_choices(model, tokenizer, prompts, choices, norm='token', *,
+                  batch_size=8, return_components=False):
+    """Log-likelihood scores (N, C_max) of each choice after its prompt,
+    -inf in padded columns; the prediction is argmax(-1). choices holds N
+    lists (ragged) or one list shared by all prompts. norm divides the
+    summed log-probability ll: 'sum' by 1, 'token' by the continuation's
+    tokens, 'char' and 'byte' by the length and UTF-8 length of the choice
+    without one leading whitespace character (lm-evaluation-harness's
+    acc_norm and acc_bytes). The continuation is the suffix of
+    encode(prompt + choice) beyond encode(prompt), trailing prompt
+    whitespace moved to the choice, no BOS (see _lm_continuations). With
+    return_components=True, returns ScoreComponents, from which every norm
+    follows. The scored positions are projected by the output layer in
+    fp32 (as label_logprobs does) and log-softmaxed in fp32. In bf16 an
+    item's score depends on which items share its batch, so a different
+    call over the same items (another batch size or item set) agrees only
+    up to that batch drift, not bit for bit.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    if norm not in ('sum', 'token', 'char', 'byte'):
+        raise ValueError(f'unknown norm: {norm!r}')
+    rows, inputs, conts, texts, shape = d2l._lm_continuations(
+        tokenizer, prompts, choices, d2l._lm_max_len(model))
+    head = d2l._label_output_layer(model)  # a plain linear layer, or None
+    if head is not None:  # its weights in fp32, once per call
+        W = head.weight.float()
+        bias = None if head.bias is None else head.bias.float()
+    pad = getattr(tokenizer, 'pad_token_id', None) or 0
+    device = next(model.parameters()).device
+    order = sorted(range(len(rows)), key=lambda r: (-len(inputs[r]), r))
+    ll = torch.empty(len(rows), dtype=torch.float64)
+    for s in range(0, len(order), batch_size):  # longest inputs first
+        b = order[s:s + batch_size]
+        x, m = [inputs[r] for r in b], [len(conts[r]) for r in b]
+        y = torch.tensor([t for r in b for t in conts[r]], device=device)
+        with torch.inference_mode():
+            if head is None:  # a d2l GPT, or a soft-capped output layer
+                H = d2l._lm_cont_logits(model, x, m, pad)
+            else:  # left padding: every row ends with its continuation
+                T = max(map(len, x))
+                X = torch.tensor([[pad] * (T - len(r)) + r for r in x],
+                                 device=device)
+                mask = torch.tensor([[0] * (T - len(r)) + [1] * len(r)
+                                     for r in x], device=device)
+                pos = (mask.cumsum(-1) - 1).masked_fill(mask == 0, 1)
+                H = d2l._lm_unwrap(model).get_decoder()(
+                    input_ids=X, attention_mask=mask, position_ids=pos,
+                    use_cache=False).last_hidden_state
+                H = torch.cat([H[k, T - mk:] for k, mk in enumerate(m)])
+            lp = []  # fp32, at most 1,024 scored positions at a time
+            for i in range(0, len(y), 1024):
+                z = H[i:i + 1024].float()
+                z = z if head is None else F.linear(z, W, bias)
+                lp.append(z.log_softmax(-1).gather(
+                    -1, y[i:i + 1024, None])[:, 0])
+            lp = torch.cat(lp).double()
+        ll[b] = torch.stack([v.sum() for v in lp.split(m)]).cpu()
+    comps = d2l._lm_components(rows, ll, conts, texts, shape)
+    if return_components:
+        return comps
+    return comps.ll / {'sum': 1, 'token': comps.n_tokens,
+                       'char': comps.n_chars, 'byte': comps.n_bytes}[norm]
+
+def bits_per_byte(model, tokenizer, texts, ctx_len=2048, stride=None,
+                  batch_size=4):
+    """Bits per UTF-8 byte of texts: total negative log-likelihood in nats
+    over ln 2 times the total bytes. Each text is put in Unicode NFC form
+    (as Qwen's tokenizers do themselves, so the bytes counted are those
+    scored), tokenized whole (no BOS) and preceded by one unscored
+    document-boundary token (Qwen3: 151643, Qwen3.5: 248044); without one,
+    its first tokens go unscored (see _lm_unscored_head). Windows of
+    ctx_len input tokens (capped at the model's maximum input length, with
+    a warning) advance by stride (default ctx_len // 2) and score every
+    token once, the first window ctx_len tokens and each later one stride
+    tokens, each with at least ctx_len - stride + 1 tokens of context;
+    texts are scored independently. A model with a plain linear output
+    layer runs its decoder on batch_size windows and projects the scored
+    positions in fp32, 1,024 at a time; any other model runs one window at
+    a time on its own logits.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    import unicodedata
+    texts = [texts] if isinstance(texts, str) else list(texts)
+    texts = [unicodedata.normalize('NFC', str(t)) for t in texts]
+    ctx_len = d2l._lm_ctx_len(model, ctx_len)
+    stride = ctx_len // 2 if stride is None else stride
+    if ctx_len < 1 or not 1 <= stride <= ctx_len:
+        raise ValueError(f'need 1 <= stride <= ctx_len, got {stride}, '
+                         f'{ctx_len}')
+    b, windows, n_bytes = d2l._lm_boundary_id(tokenizer), [], 0
+    for text, ids in zip(texts, d2l._lm_encode(tokenizer, texts)):
+        if not ids:
+            continue
+        n_bytes += len(text.encode('utf-8'))
+        if b is None:  # the text's first tokens have no context
+            first, unscored = d2l._lm_unscored_head(tokenizer, text, ids)
+            seq, n_bytes = ids, n_bytes - unscored
+        else:  # the boundary token is the first one's context
+            first, seq = 1, [b] + ids
+        done = first - 1  # targets seq[first:done + 1] are scored
+        while done < len(seq) - 1:  # inputs seq[start:end] predict
+            end = min(max(ctx_len, done + 1) if done == first - 1
+                      else done + stride, len(seq) - 1)
+            start = max(end - ctx_len, 0)  # seq[start + 1:end + 1]
+            windows.append((seq[start:end], seq[done + 1:end + 1]))
+            done = end
+    if not n_bytes:
+        raise ValueError('no text to score')
+    head = d2l._label_output_layer(model)  # a plain linear layer, or None
+    if head is not None:
+        W = head.weight.float()
+        bias = None if head.bias is None else head.bias.float()
+    size = 1 if head is None else batch_size
+    device, nll = next(model.parameters()).device, 0.0
+    for s in range(0, len(windows), size):
+        w = windows[s:s + size]
+        y = torch.tensor([t for _, ys in w for t in ys], device=device)
+        with torch.inference_mode():
+            if head is None:  # the model's own logits
+                H = d2l._lm_cont_logits(model, [x for x, _ in w],
+                                        [len(ys) for _, ys in w])
+            else:  # right padding: decoder states of the scored positions
+                T = max(len(x) for x, _ in w)
+                X = torch.tensor([x + [0] * (T - len(x)) for x, _ in w],
+                                 device=device)
+                mask = (torch.arange(T, device=device) < torch.tensor(
+                    [len(x) for x, _ in w], device=device)[:, None]).long()
+                H = d2l._lm_unwrap(model).get_decoder()(
+                    input_ids=X, attention_mask=mask,
+                    use_cache=False).last_hidden_state
+                H = torch.cat([H[k, len(x) - len(ys):len(x)]
+                               for k, (x, ys) in enumerate(w)])
+            for i in range(0, len(y), 1024):  # fp32, 1,024 at a time
+                z = H[i:i + 1024].float()
+                z = z if head is None else F.linear(z, W, bias)
+                nll += F.cross_entropy(z, y[i:i + 1024],
+                                       reduction='sum').item()
+    return nll / (math.log(2) * n_bytes)
+
+def extract_answer(text, kind='gsm8k', strict=False):
+    """The answer a generated text commits to, as a string, or None.
+    'gsm8k': the first number after the last '####', else after the last
+    'the answer is' (any case), else, unless strict, the last number in the
+    text; commas and '$' are removed and the number is normalized ('1,000'
+    and '1000.00' give '1000', '-0.50' and '−0.50' give '-0.5'); a hyphen
+    right after a letter, digit or point is not a sign ('10-15' gives
+    '15'). 'boxed': the content
+    of the last \\boxed{...} whose braces match, stripped.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    if kind == 'boxed':
+        found, i = None, text.find('\\boxed{')
+        while i != -1:
+            depth = 0
+            for j in range(i + 6, len(text)):  # from the opening brace
+                depth += {'{': 1, '}': -1}.get(text[j], 0)
+                if depth == 0:
+                    found = text[i + 7:j].strip()
+                    break
+            i = text.find('\\boxed{', i + 1)
+        return found or None
+    if kind != 'gsm8k':
+        raise ValueError(f'unknown kind: {kind!r}')
+    from decimal import Decimal
+    number = re.compile(r'(?:(?<![\w.])[-\u2212])?\$?'  # sign, not hyphen
+                        r'(?:\d[\d,]*(?:\.\d+)?|\.\d+)')
+
+    def normalize(s):
+        d = Decimal(s.translate({ord(','): None, ord('$'): None,
+                                 0x2212: '-'}))
+        if d == d.to_integral_value():
+            return str(int(d))
+        return format(d.normalize(), 'f')
+    for marker in ('####', 'the answer is'):
+        ends = [k.end() for k in re.finditer(re.escape(marker), text, re.I)]
+        m = number.search(text, ends[-1]) if ends else None
+        if m:
+            return normalize(m.group())
+    found = None if strict else number.findall(text)
+    return normalize(found[-1]) if found else None
+
+def pass_at_k(n, c, k):
+    """Unbiased pass@k from n samples of which c are correct: the
+    probability that k of them, drawn without replacement, include a
+    correct one, 1 - C(n - c, k) / C(n, k), in the product form
+    1 - prod_{i = n - c + 1}^{n} (1 - k / i). Integer arrays broadcast.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    n, c, k = np.broadcast_arrays(*(np.asarray(v) for v in (n, c, k)))
+    if not all(np.issubdtype(v.dtype, np.integer) for v in (n, c, k)):
+        raise TypeError('n, c and k must be integers')
+    for bad, msg in ((c < 0, 'c < 0'), (c > n, 'c > n'), (k < 1, 'k < 1'),
+                     (k > n, 'k > n')):
+        if np.any(bad):
+            raise ValueError(f'pass_at_k needs 0 <= c <= n, 1 <= k <= n: '
+                             f'{msg}')
+    out = np.empty(n.shape)
+    for idx in np.ndindex(n.shape):
+        ni, ci, ki = int(n[idx]), int(c[idx]), int(k[idx])
+        out[idx] = 1.0 if ni - ci < ki else 1.0 - np.prod(
+            1.0 - ki / np.arange(ni - ci + 1, ni + 1))
+    return float(out) if out.ndim == 0 else out
+
+def pass_at_k_variance(n, p, k):
+    """Variance of pass_at_k(n, c, k) when c ~ Binomial(n, p): the sum over
+    c of Binomial(c; n, p) (U(n, c, k) - (1 - (1 - p)^k))^2.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    if not 0 <= p <= 1 or not 1 <= k <= n:
+        raise ValueError(f'need 0 <= p <= 1 and 1 <= k <= n: {n}, {p}, {k}')
+    if p in (0, 1):
+        return 0.0
+    c = np.arange(n + 1)
+    log_pmf = (math.lgamma(n + 1) - np.array([math.lgamma(i + 1) + math.lgamma(
+        n - i + 1) for i in c]) + c * math.log(p) + (n - c) * math.log1p(-p))
+    U = pass_at_k(np.full(n + 1, n), c, np.full(n + 1, k))
+    return float(np.sum(np.exp(log_pmf) * (U - (1 - (1 - p) ** k)) ** 2))
+
+def run_python_tests(program, test_code, timeout=5.0):
+    """True iff program followed by test_code runs to its end and the
+    process exits with code 0, in a fresh `python -I` process, in an empty
+    temporary directory, with stdin closed, within timeout seconds of
+    wall-clock time and, on POSIX, within limits on CPU time and address
+    space (1 GiB). Exiting early (sys.exit, os._exit, a unittest.main() of
+    the program's own) fails, as in human-eval; on POSIX, any process the
+    code started is killed when the call returns. This is not a sandbox:
+    the code runs as the caller, can read and write the caller's files and
+    reach the network. Run code you did not write in a container.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    import secrets
+    import subprocess
+    import tempfile
+    token = secrets.token_hex(16)  # written only once test_code has run
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, 'main.py'), 'w') as f:
+            f.write(program + '\n' + test_code + '\n')
+        done = os.path.join(tmp, 'done')  # absolute: the code may chdir
+        proc = subprocess.Popen(
+            [sys.executable, '-I', '-c', d2l._run_limits(timeout) +
+             "import runpy\nrunpy.run_path('main.py', run_name='__main__')\n"
+             f'open({done!r}, "w").write({token!r})'],
+            cwd=tmp, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=os.name == 'posix')
+        try:
+            if proc.wait(timeout=timeout) != 0:
+                return False
+            with open(done) as f:
+                return f.read() == token
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+        finally:
+            d2l._kill_session(proc)
+
+# Run-time downloads only (licences): fetch them with d2l.download_keyed
+d2l.DATA_HUB['gsm-symbolic-test'] = (
+    'https://huggingface.co/datasets/apple/GSM-Symbolic/resolve/'
+    '93b5b3758d9d9841ffe81d6cd2ae2b030685b078/main/test.jsonl',
+    '6d7beda4cc95f9d04f219a99daaeaf445b53c9d1')
+d2l.DATA_HUB['mt-bench-questions'] = (
+    'https://huggingface.co/datasets/HuggingFaceH4/mt_bench_prompts/resolve/'
+    'e3a795c5e9a82ee40611c416b8a7786c73198991/raw/question.jsonl',
+    '1b5197cafba020598f6c60e9401a5098bcd81d27')
+d2l.DATA_HUB['dolly-15k'] = (
+    'https://huggingface.co/datasets/databricks/databricks-dolly-15k/'
+    'resolve/bdd27f4d94b9c1f951818a7da7fd7aeea5dbff1a/'
+    'databricks-dolly-15k.jsonl',
+    '34356d82b686ae9fb3b230f428ba644f17e5e652')
+d2l.DATA_HUB['mt-bench-human'] = (
+    'https://huggingface.co/datasets/lmsys/mt_bench_human_judgments/resolve/'
+    'f7d2896d2cc5d80f8b55c2bbc722613555233c25/data/'
+    'human-00000-of-00001-25f4910818759289.parquet',
+    'e19c24360cb79f1919cfecd980a7a4951571fcdb')
+d2l.DATA_HUB['mt-bench-gpt4-pair'] = (
+    'https://huggingface.co/datasets/lmsys/mt_bench_human_judgments/resolve/'
+    'f7d2896d2cc5d80f8b55c2bbc722613555233c25/data/'
+    'gpt4_pair-00000-of-00001-c0b431264a82ddc0.parquet',
+    '8928cda0399b6a0e40589cfbd3df4b7ccebdf242')
+# The benchmark data of this edition (source in the book's repository:
+# tools/lm_data/lm_benchmarks_2026.json), approved before it was frozen
+d2l.DATA_HUB['lm-benchmarks-2026-v1'] = (
+    d2l.LM_DATA_URL + 'lm-benchmarks-2026-v1.json',
+    'f22e75c247119ba6f43196cc54beceeb9bd47e6c')
+# The measured results of this section, frozen from one D2L_RERUN=1 run
+d2l.DATA_HUB['lm-eval-scores-v2'] = (
+    d2l.LM_DATA_URL + 'lm-eval-scores-v2.parquet',
+    'd41b6cba069ee196d11cf37c789ba50e63b8e0e7')
+d2l.DATA_HUB['lm-contam-scores-v2'] = (
+    d2l.LM_DATA_URL + 'lm-contam-scores-v2.parquet',
+    '2b192f436b2d85ebb6cb53ade24cba451c8f1327')
+d2l.DATA_HUB['lm-answers-v2'] = (
+    d2l.LM_DATA_URL + 'lm-answers-v2.jsonl',
+    '6e8460ba43a3a5299a682461e0bdc91a0fbdde55')
+d2l.DATA_HUB['lm-judge-human-v2'] = (
+    d2l.LM_DATA_URL + 'lm-judge-human-v2.jsonl',
+    '03d9c0400e75ee4dc542dddbbdd6936d242f48e3')
+d2l.DATA_HUB['lm-judge-pairs-v2'] = (
+    d2l.LM_DATA_URL + 'lm-judge-pairs-v2.jsonl',
+    '767530058ce52af5fa4d985e3bbc96e07e7191ae')
+
+BootstrapResult = collections.namedtuple(  # ci = (lo, hi); p_two_sided is
+    'BootstrapResult',                      # None for a single sample
+    'mean ci se p_two_sided n n_clusters n_boot')
+
+def _bootstrap_replicates(scores, n_boot, cluster, seed, chunk=2 * 10**7):
+    """Scores y, n_boot bootstrap means and the number of clusters G. Each
+    replicate draws G clusters with replacement: with C (n_boot, G) the
+    counts, sums y_sum and sizes m of the clusters, the replicate means
+    are the ratios (C @ y_sum) / (C @ m). C is built in chunks of at most
+    chunk entries.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    y = np.asarray(scores, dtype=float).ravel()
+    if np.isnan(y).any():
+        raise ValueError('scores contain NaN')
+    if len(y) < 2:
+        raise ValueError(f'{len(y)} items: the bootstrap needs at least 2')
+    if cluster is None:  # every item its own cluster
+        y_sum, m = y, np.ones_like(y)
+    else:
+        cluster = np.asarray(cluster).ravel()
+        if len(cluster) != len(y):
+            raise ValueError(f'{len(y)} scores, {len(cluster)} cluster ids')
+        g = np.unique(cluster, return_inverse=True)[1]
+        y_sum, m = np.bincount(g, weights=y), np.bincount(g).astype(float)
+        if len(m) < 30:
+            raise ValueError(f'{len(m)} clusters: the cluster bootstrap '
+                             'needs at least 30')
+    G = len(m)
+    rng, rows, means = np.random.default_rng(seed), max(1, chunk // G), []
+    for b in range(0, n_boot, rows):  # a loop over chunks, not replicates
+        C = rng.multinomial(G, np.full(G, 1 / G), size=min(rows, n_boot - b))
+        means.append(C @ y_sum / (C @ m))
+    return y, np.concatenate(means), G
+
+def bootstrap_ci(scores, n_boot=10000, cluster=None, *, seed=0, alpha=0.05):
+    """Percentile bootstrap interval for the mean of scores. With cluster
+    (one label per score), whole clusters are resampled and each
+    replicate's mean is the ratio estimator, so clusters may differ in
+    size; at least 30 clusters are required.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    import warnings
+    y, means, G = _bootstrap_replicates(scores, n_boot, cluster, seed)
+    if len(y) < 100:
+        warnings.warn(f'bootstrap_ci: {len(y)} items; below 100 the '
+                      'percentile interval is unreliable')
+    lo, hi = np.quantile(means, [alpha / 2, 1 - alpha / 2])
+    return BootstrapResult(float(y.mean()), (float(lo), float(hi)),
+                           float(means.std(ddof=1)), None, len(y), G, n_boot)
+
+def paired_bootstrap(scores_a, scores_b, n_boot=10000, cluster=None, *,
+                     seed=0, alpha=0.05):
+    """bootstrap_ci of the per-item differences scores_a - scores_b on the
+    same items, plus a bootstrap p-value, 2 min(P*(mean <= 0),
+    P*(mean >= 0)) over the replicates; the sign-flip test of the
+    statistics appendix is its permutation counterpart.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    import warnings
+    a, b = (np.asarray(s, dtype=float).ravel() for s in (scores_a, scores_b))
+    if a.shape != b.shape:
+        raise ValueError(f'{len(a)} and {len(b)} scores: pair them by item')
+    d, means, G = _bootstrap_replicates(a - b, n_boot, cluster, seed)
+    if len(d) < 100:
+        warnings.warn(f'paired_bootstrap: {len(d)} items; below 100 the '
+                      'percentile interval is unreliable')
+    lo, hi = np.quantile(means, [alpha / 2, 1 - alpha / 2])
+    p = min(1.0, 2 * min(np.mean(means <= 0), np.mean(means >= 0)))
+    return BootstrapResult(float(d.mean()), (float(lo), float(hi)),
+                           float(means.std(ddof=1)), float(p), len(d), G,
+                           n_boot)
+
+def min_detectable_effect(sd=None, n=None, *, se=None, deff=1.0,
+                          alpha=0.05, power=0.8):
+    """Smallest true difference that a two-sided level-alpha test detects
+    with the given power: (z_{1-alpha/2} + z_power) sd sqrt(deff / n), or
+    from a standard error, (z_{1-alpha/2} + z_power) se sqrt(deff); arrays
+    broadcast.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    from statistics import NormalDist
+    z = NormalDist().inv_cdf(1 - alpha / 2) + NormalDist().inv_cdf(power)
+    if se is not None:
+        if sd is not None or n is not None:
+            raise ValueError('pass sd and n, or se alone')
+        mde = z * np.asarray(se, dtype=float) * np.sqrt(deff)
+    elif sd is None or n is None:
+        raise ValueError('pass sd and n, or se alone')
+    else:
+        mde = z * np.asarray(sd, dtype=float) * np.sqrt(
+            np.asarray(deff, dtype=float) / np.asarray(n, dtype=float))
+    return float(mde) if mde.ndim == 0 else mde
+
+EvalTask = collections.namedtuple('EvalTask', [
+    'id', 'dataset', 'revision', 'files', 'kind', 'adapter', 'split',
+    'config', 'n', 'subset_seed', 'fmt', 'norm', 'template', 'chat',
+    'enable_thinking', 'shots', 'shots_from', 'max_new_tokens', 'sampling',
+    'stop', 'extract', 'cluster', 'since'], defaults=(
+        'test', None, None, 0, 'cloze', 'token', None, False, None, 0, None,
+        None, None, (), None, None, None))
+
+def subset_ids(n_total, n, seed=0):
+    """Row indices of a seeded subset of n of n_total items: the first n
+    of one permutation, so a smaller subset is a prefix of a larger one;
+    n=None keeps every row, in order.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    if n is None:
+        return np.arange(n_total)
+    if not 0 <= n <= n_total:
+        raise ValueError(f'a subset of {n} from {n_total} items')
+    return np.random.default_rng(seed).permutation(n_total)[:n]
+
+def item_seed(seed, task_id, item_id):
+    """A 63-bit seed for one item's random draws, from sha256 of
+    'seed/task_id/item_id' (Python's hash() is salted per process).
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    digest = hashlib.sha256(f'{seed}/{task_id}/{item_id}'.encode()).digest()
+    return int.from_bytes(digest[:8], 'big') >> 1
+
+class EvalSuite:
+    """Evaluation tasks (EvalTask records, or ids of d2l.EVAL_TASKS) with
+    their items; n and seed, unless None, replace every task's n and
+    subset_seed. batch_size is a run setting, not part of the suite.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    def __init__(self, tasks, name='suite', batch_size=8, *, n=None, seed=0):
+        self.name, self.batch_size, self._items = name, batch_size, {}
+        resolved = []
+        for t in tasks:
+            if isinstance(t, str):
+                t = d2l.EVAL_TASKS[t]
+            t = EvalTask(**(t if isinstance(t, dict) else t._asdict()))
+            t = t._replace(**{k: v for k, v in (('n', n), ('subset_seed',
+                                                           seed))
+                              if v is not None})
+            t = d2l._eval_canonical(t)  # JSON values, files and stop tuples
+            if t.id in self._items:
+                raise ValueError(f'task {t.id!r} appears twice')
+            rows = d2l._eval_load_rows(t)
+            ids = subset_ids(len(rows), t.n, t.subset_seed)
+            self._items[t.id] = d2l._eval_items(t, rows, ids)
+            resolved.append(t)
+        self.tasks = tuple(resolved)
+
+    @property
+    def hash(self):
+        """sha256 of the canonical JSON of every task's fields, followed by
+        the sha256 of each task's items (ids, rendered prompts, choices and
+        references) in id order: a new dataset revision, subset or prompt
+        rendering gives a new hash."""
+        h = hashlib.sha256(json.dumps([t._asdict() for t in self.tasks],
+                                      sort_keys=True).encode())
+        for t in self.tasks:
+            items = sorted(self._items[t.id], key=lambda item: item['id'])
+            h.update(hashlib.sha256(json.dumps(
+                items, sort_keys=True, default=str).encode()).digest())
+        return h.hexdigest()
+
+    def items(self, task_id):
+        """The items of one task in subset order: dicts with the item's
+        'id' and the prompt fields of the task's kind."""
+        return self._items[task_id]
+
+    def _score(self, task, items, model, tokenizer, seed):
+        """Result rows (task, item_id, cluster, score, pred, finish_reason)
+        for some items of one task, by the task's kind; the kinds this section
+        does not run (mc_partial, code, ppl) are in d2l._eval_score_more.
+
+        Defined in :numref:`sec_lm_eval_suites`"""
+        if task.kind == 'mc':  # the highest-scoring choice; ties to the first
+            S = d2l.score_choices(model, tokenizer, [it['prompt'] for it in items],
+                                  [it['choices'] for it in items], task.norm,
+                                  batch_size=self.batch_size)
+            preds, reasons = S.argmax(-1).tolist(), [None] * len(items)
+            scores = [float(p == it['gold']) for p, it in zip(preds, items)]
+        elif task.kind == 'gen':  # a generated answer, extracted and compared
+            sampling = dict(task.sampling or {})  # None: greedy
+            if sampling:
+                sampling.setdefault('strategy', 'sample')
+            gens = d2l.generate(
+                model, tokenizer, [it['prompt'] for it in items],
+                task.max_new_tokens, chat=task.chat,
+                enable_thinking=task.enable_thinking, stop=list(task.stop),
+                batch_size=self.batch_size, **sampling,
+                seed=[item_seed(seed, task.id, it['id']) for it in items])
+            reasons = [g.finish_reason for g in gens]
+            preds = [d2l.extract_answer(g.text, task.extract or 'gsm8k')
+                     for g in gens]
+            scores = [float(p is not None and p == it['reference'])
+                      for p, it in zip(preds, items)]
+        else:
+            scores, preds, reasons = d2l._eval_score_more(
+                self, task, items, model, tokenizer, seed)
+        return [{'task': task.id, 'item_id': it['id'],
+                 'cluster': str(it[task.cluster] if task.cluster else it['id']),
+                 'score': s, 'pred': None if p is None else str(p),
+                 'finish_reason': r}
+                for it, s, p, r in zip(items, scores, preds, reasons)]
+
+    def run(self, model, tokenizer, *, seed=0, cache_dir=None, rerun=False,
+            sandbox=False):
+        """Score every item and return an EvalResult. With cache_dir, results
+        are written per chunk under the model, its revision, the suite hash
+        and a run key (seed, dtype, batch size, library versions), and a run
+        with the same key resumes (rerun=True starts over). Sampled tasks
+        draw item i of task t with the generator seeded item_seed(seed, t, i).
+        Code tasks execute model-written programs: sandbox=True says that the
+        process runs in a sandbox.
+
+        Defined in :numref:`sec_lm_eval_suites`"""
+        if not sandbox and any(t.kind == 'code' for t in self.tasks):
+            raise RuntimeError('code tasks run model-written programs; run them '
+                               'in a sandbox and pass sandbox=True')
+        model_id, revision = d2l._eval_model_id(model)
+        hf = sys.modules.get('transformers')
+        settings = {'seed': seed, 'batch_size': self.batch_size,
+                    'dtype': str(next(model.parameters()).dtype),
+                    'torch': torch.__version__,
+                    'transformers': getattr(hf, '__version__', None)}
+        run_key = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()
+                                 ).hexdigest()[:16]
+        suite_hash = self.hash  # covers the rendered prompts
+        path = None if cache_dir is None else d2l._eval_cache_path(
+            cache_dir, model_id, revision, suite_hash, run_key)
+        rows = [] if path is None or rerun else d2l._eval_cache_read(path)
+        done, start = {(r['task'], r['item_id']) for r in rows}, time.time()
+        for task in self.tasks:
+            todo = [it for it in self.items(task.id)
+                    if (task.id, it['id']) not in done]
+            step = 32 * self.batch_size  # items between two cache writes
+            for i in range(0, len(todo), step):
+                rows += self._score(task, todo[i:i + step], model, tokenizer, seed)
+                if path is not None:
+                    d2l._eval_cache_write(path, rows)
+        meta = {'model': model_id, 'revision': revision, 'suite': self.name,
+                'suite_hash': suite_hash, 'run_key': run_key, **settings,
+                'tasks': [t._asdict() for t in self.tasks],
+                'wall_clock': time.time() - start}
+        return EvalResult(pd.DataFrame(rows), meta)
+
+    @classmethod
+    def from_manifest(cls, name_or_path, batch_size=8):
+        """The suite of a frozen manifest: a name in d2l.EVAL_SUITES or a JSON
+        file written by to_manifest. Its tasks' n and subset_seed are kept.
+
+        Defined in :numref:`sec_lm_eval_suites`"""
+        if name_or_path in d2l.EVAL_SUITES:
+            manifest = d2l.EVAL_SUITES[name_or_path]
+        else:
+            with open(name_or_path, encoding='utf-8') as f:
+                manifest = json.load(f)
+        return cls(manifest['tasks'], manifest['name'], batch_size, n=None,
+                   seed=None)
+
+    def to_manifest(self, path=None):
+        """The suite as a JSON-ready manifest {'name', 'tasks'}; with path,
+        also written there as sorted-key JSON.
+
+        Defined in :numref:`sec_lm_eval_suites`"""
+        manifest = json.loads(json.dumps(
+            {'name': self.name, 'tasks': [t._asdict() for t in self.tasks]}))
+        if path is not None:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(manifest, f, sort_keys=True, indent=1)
+                f.write('\n')
+        return manifest
+
+class EvalResult:
+    """Per-item results of one model on one suite (per_item: task, item_id,
+    cluster, score, pred, finish_reason, sorted by task and item id) and
+    the run's settings (meta).
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    def __init__(self, per_item, meta):
+        self.per_item = per_item.sort_values(['task', 'item_id'],
+                                             ignore_index=True)
+        self.meta = meta
+
+    def scores(self, task=None):
+        """One task's scores ordered by item id, or a dict over tasks. Ids
+        are strings ('10' sorts before '2'): align other data by id."""
+        if task is None:
+            return {t: self.scores(t) for t in self.per_item.task.unique()}
+        return self.per_item.score[self.per_item.task == task].to_numpy()
+
+    @staticmethod
+    def _clusters(task, cluster):
+        """The cluster labels if the items share clusters, else None (one
+        cluster per item); fewer than 30 shared clusters raise."""
+        k = cluster.nunique()
+        if k == len(cluster):
+            return None
+        if k < 30:
+            raise ValueError(f'task {task}: {k} clusters; the cluster '
+                             'bootstrap needs at least 30')
+        return cluster.to_numpy()
+
+    def summary(self, n_boot=2000):
+        """Per task: n, mean and its 95% interval (clusters resampled)."""
+        rows = []
+        for task, df in self.per_item.groupby('task'):
+            r = bootstrap_ci(df.score, n_boot,
+                             self._clusters(task, df.cluster))
+            rows.append({'task': task, 'n': r.n, 'mean': r.mean,
+                         'lo': r.ci[0], 'hi': r.ci[1],
+                         'clusters': r.n_clusters})
+        return pd.DataFrame(rows)
+
+    def compare(self, other, *, n_boot=10000, seed=0):
+        """Per task, paired_bootstrap of this model's scores minus other's,
+        aligned on (task, item_id); the two runs must share suite and
+        items."""
+        if self.meta['suite_hash'] != other.meta['suite_hash']:
+            raise ValueError(f"different suites: {self.meta['suite_hash']} "
+                             f"and {other.meta['suite_hash']}")
+        m = self.per_item.merge(other.per_item, on=['task', 'item_id'],
+                                how='outer', suffixes=('', '_b'),
+                                indicator=True)
+        bad = m[m._merge != 'both']
+        if len(bad):
+            side = {'left_only': 'self', 'right_only': 'other'}
+            first = [(t, i, side[w]) for t, i, w in zip(
+                bad.task, bad.item_id, bad._merge.astype(str))][:5]
+            raise ValueError(f'item sets differ in {len(bad)} items; first '
+                             f'(task, item_id, only in): {first}')
+        return {task: paired_bootstrap(df.score, df.score_b, n_boot,
+                                       self._clusters(task, df.cluster),
+                                       seed=seed)
+                for task, df in m.groupby('task')}
+
+    def save(self, path):
+        """Write per_item to path (parquet, rows sorted) and meta, without the
+        wall clock, to path with the suffix .json (sorted keys).
+
+        Defined in :numref:`sec_lm_eval_suites`"""
+        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        _eval_sorted(self.per_item).to_parquet(path, index=False)
+        meta = {k: v for k, v in self.meta.items() if k != 'wall_clock'}
+        with open(os.path.splitext(path)[0] + '.json', 'w',
+                  encoding='utf-8') as f:
+            json.dump(meta, f, sort_keys=True, indent=1)
+            f.write('\n')
+
+    @classmethod
+    def load(cls, path):
+        """An EvalResult written by save.
+
+        Defined in :numref:`sec_lm_eval_suites`"""
+        with open(os.path.splitext(path)[0] + '.json', encoding='utf-8') as f:
+            meta = json.load(f)
+        return cls(pd.read_parquet(path), meta)
+
+JUDGE_RUBRIC_V1 = (
+    'Below are a question and two answers to it. Decide which answer is '
+    'more helpful and more correct for the person who asked. Do not '
+    'explain your decision.\n\n[Question]\n{question}\n\n[Answer A]\n'
+    '{first}\n\n[Answer B]\n{second}\n\nWhich answer is better? Reply with '
+    'a single letter: A or B.')
+
+JUDGE_PAD_V1 = (
+    'I hope this answer is useful. It responds to the question that was '
+    'asked, and the points above are meant to cover what the question asks '
+    'for. If any part of it is unclear, reading the answer above again '
+    'should help, since it already contains everything this response has '
+    'to say on the topic.')
+
+JudgeResult = collections.namedtuple(  # verdict: 'a', 'b' or 'tie'
+    'JudgeResult', 'pref_a delta position_bias consistent verdict logits')
+
+def judge_pairwise(judge, tokenizer, question, answer_a, answer_b, *,
+                   rubric=JUDGE_RUBRIC_V1, batch_size=8,
+                   max_batch_tokens=None, return_mass=False):
+    """Ask a chat model which answer is better, once with answer_a in the
+    first slot (log-odds l1 of the token 'A' over 'B') and once with
+    answer_b there (l2): delta = (l1 - l2) / 2, position_bias =
+    (l1 + l2) / 2. Strings give one JudgeResult, lists one per item.
+    Answers are cut at 1,500 tokens. d2l._judge_logodds reads the
+    log-odds in fp32, in batches of at most batch_size prompts (and
+    max_batch_tokens tokens with padding, if given). With
+    return_mass=True, also returns P(A) + P(B) per item and order.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    single = isinstance(question, str)
+    if single:
+        question, answer_a, answer_b = [question], [answer_a], [answer_b]
+    if not len(question) == len(answer_a) == len(answer_b):
+        raise ValueError('one question and two answers per item')
+
+    def render(q, first, second):
+        content = rubric.format(question=q, first=first, second=second)
+        return tokenizer.apply_chat_template(
+            [{'role': 'user', 'content': content}], tokenize=False,
+            add_generation_prompt=True, enable_thinking=False)
+    texts = []  # two per item: answer_a first, then answer_b first
+    for i, (q, a, b) in enumerate(zip(question, answer_a, answer_b)):
+        a = d2l._judge_cut(tokenizer, a, i, 'answer_a')
+        b = d2l._judge_cut(tokenizer, b, i, 'answer_b')
+        texts += [render(q, a, b), render(q, b, a)]
+    lp = d2l._judge_logodds(judge, tokenizer, texts, batch_size=batch_size,
+                            max_batch_tokens=max_batch_tokens)
+    results = []  # o1, o2: log-odds that the first slot wins, either order
+    for o1, o2 in lp[:, 2].view(-1, 2).tolist():
+        delta, bias = (o1 - o2) / 2, (o1 + o2) / 2
+        verdict = 'a' if o1 > 0 > o2 else 'b' if o1 < 0 < o2 else 'tie'
+        results.append(JudgeResult(0.5 * (1 + math.tanh(delta / 2)), delta,
+                                   bias, verdict != 'tie', verdict, (o1, o2)))
+    mass = lp[:, :2].exp().sum(-1).view(-1, 2).numpy()  # P(A) + P(B)
+    out = results[0] if single else results
+    return (out, mass[0] if single else mass) if return_mass else out
+
+def bradley_terry(winners, losers, n_items, *, weights=None, l2=1e-3,
+                  n_iter=50):
+    """Bradley-Terry strengths s, P(i beats j) = sigmoid(s_i - s_j): the
+    maximizer of the weighted log-likelihood minus l2 ||s||^2 by Newton's
+    method, centred. weights (N,) give (n_items,); weights (B, N), such as
+    bootstrap counts, give B fits at once, (B, n_items).
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    N = len(winners)
+    X = np.zeros((N, n_items))  # +1 for the winner, -1 for the loser
+    np.add.at(X, (np.arange(N), np.asarray(winners)), 1)
+    np.add.at(X, (np.arange(N), np.asarray(losers)), -1)
+    W = np.ones(N) if weights is None else np.asarray(weights, dtype=float)
+    single, W = W.ndim == 1, np.atleast_2d(W)
+    s = np.zeros((len(W), n_items))
+    for _ in range(n_iter):
+        p = 0.5 * (1 + np.tanh(s @ X.T / 2))  # (B, N): P(winner wins)
+        grad = (W * (1 - p)) @ X - 2 * l2 * s
+        H = np.einsum('bn,nk,nj->bkj', W * p * (1 - p), X, X, optimize=True
+                      ) + 2 * l2 * np.eye(n_items)  # minus the Hessian
+        step = np.linalg.solve(H, grad[..., None])[..., 0]
+        s = s + step
+        if np.abs(step).max() < 1e-10:
+            break
+    s = s - s.mean(-1, keepdims=True)
+    return s[0] if single else s
+
+d2l.HF_REVISIONS['Qwen/SAE-Res-Qwen3-1.7B-Base-W32K-L0_50'] = (
+    'ce1a79d9c5163932d65c417380e53230e1086370')
+
+d2l.DATA_HUB['lm-ud-ewt-train'] = (
+    'https://raw.githubusercontent.com/UniversalDependencies/UD_English-EWT/'
+    '6b021622f3ab7902730f313fa5955a8b8cdd52b8/en_ewt-ud-train.conllu',
+    '59e9ff791f828f7cd3dcd2e55dc4f30ea7bbd5f9')
+d2l.DATA_HUB['lm-ud-ewt-dev'] = (
+    'https://raw.githubusercontent.com/UniversalDependencies/UD_English-EWT/'
+    '6b021622f3ab7902730f313fa5955a8b8cdd52b8/en_ewt-ud-dev.conllu',
+    '1e3226c7b533354e4f79e7bae7a1aa56a7dd9c94')
+d2l.DATA_HUB['lm-ud-ewt-test'] = (
+    'https://raw.githubusercontent.com/UniversalDependencies/UD_English-EWT/'
+    '6b021622f3ab7902730f313fa5955a8b8cdd52b8/en_ewt-ud-test.conllu',
+    '41b279558051f482d78fff4ea7b3c8c98c91ecd4')
+# The recall pairs (tools/oneshot/build_lm_recall_pairs.py)
+d2l.DATA_HUB['lm-interp-recall-v1'] = (
+    d2l.LM_DATA_URL + 'lm-interp-recall-v1.json',
+    'e3025b0216df5384d8a14f1e8e10c4cab080ebbf')
+# What the regeneration run (D2L_RERUN) trained and measured
+d2l.DATA_HUB['lm-tuned-lens-qwen3-0.6b-v1'] = (
+    d2l.LM_DATA_URL + 'lm-tuned-lens-qwen3-0.6b-v1.pt',
+    'e1a9275950de634b8f8a6e7dd516de662755834e')
+d2l.DATA_HUB['lm-sae-r1-l14-v1'] = (
+    d2l.LM_DATA_URL + 'lm-sae-r1-l14-v1.pt',
+    'b7d9589fda439d7bdd9e52572a24c6ea58efb263')
+d2l.DATA_HUB['lm-sae-q17b-l14-v1'] = (
+    d2l.LM_DATA_URL + 'lm-sae-q17b-l14-v1.pt',
+    '11982ca32f0382eb9bf594faee58e808d61be12d')
+d2l.DATA_HUB['lm-interp-results-v3'] = (
+    d2l.LM_DATA_URL + 'lm-interp-results-v3.zip',
+    '75606ff34dc535f0705dfeb9194e4791c2820484')
+
+class _InterveneStop(Exception):
+    """Raised right after the stop_after site, to end a forward early.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+
+class _Intervention:
+    """The context manager that d2l.intervene returns.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    KINDS = ('resid_post', 'resid_mid', 'attn_out', 'mlp_out', 'head_z')
+
+    def __init__(self, model, sites, record, record_grad, stop_after):
+        self.model, self.record_grad = model, record_grad
+        self.sites, self.record, self.stop_after = d2l._intervene_args(
+            model, sites, record, stop_after)
+        self.cache = {s: [] for s in self.record}
+        self.wanted = set(self.sites) | self.record
+
+    @property
+    def grad_cache(self):
+        """The gradient at each recorded tensor; read after a backward."""
+        return {s: [x.grad for x in xs] for s, xs in self.cache.items()}
+
+    def _site(self, site, x):
+        """Apply the site's fn to x and record the result. Returns fn's
+        value (None without a fn) and a term to add to what the module
+        passes on (None without record_grad)."""
+        self.fired.add(site)
+        fn, y, zero = self.sites.get(site), None, None
+        if fn is not None:
+            y = fn(x)
+            if not (torch.is_tensor(y) and y.shape == x.shape
+                    and y.dtype == x.dtype):
+                raise ValueError(f'{site}: fn must return a tensor of shape '
+                                 f'{tuple(x.shape)} and dtype {x.dtype}')
+        if site in self.record:
+            v = (x if y is None else y).detach()
+            if self.record_grad:
+                if not torch.is_grad_enabled():
+                    raise RuntimeError('record_grad needs gradients enabled')
+                # leaf - leaf.detach() is exactly 0: adding it leaves the
+                # forward unchanged and makes leaf.grad the gradient there
+                v.requires_grad_()
+                zero = v - v.detach()
+            self.cache[site].append(v)
+        if site == self.stop_after:
+            raise _InterveneStop(self)
+        return y, zero
+
+    def _write_hook(self, inner, outer, base):
+        """Forward hook on a module whose output a block adds to its stream
+        (W_o, the FFN): site inner sees that output, site outer the stream
+        after the add, r = base[0] + output."""
+        def hook(module, args, out):
+            new = out
+            if inner in self.wanted:
+                y, zero = self._site(inner, out)
+                new = new if y is None else y
+                new = new if zero is None else new + zero
+            if outer in self.wanted:
+                r = base[0] + new  # the stream, as the block's add makes it
+                y, zero = self._site(outer, r)
+                if y is not None:  # the block's own add then yields about y,
+                    new = new + (y - r)  # exactly r wherever y equals r
+                new = new if zero is None else new + zero
+            return None if new is out else new
+        return hook
+
+    def _z_hook(self, site):
+        """Forward pre-hook on W_o: site head_z sees its input."""
+        def hook(module, args):
+            y, zero = self._site(site, args[0])
+            new = args[0] if y is None else y
+            new = new if zero is None else new + zero
+            return None if new is args[0] else (new,)
+        return hook
+
+    @staticmethod
+    def _store_hook(box):
+        """Forward pre-hook that keeps the module's input in box[0]."""
+        def hook(module, args):
+            box[0] = args[0]
+        return hook
+
+    def __enter__(self):
+        self.fired, self.handles = set(), []
+        for l, blk in enumerate(self.model.blks):
+            kinds = {kind for kind, layer in self.wanted if layer == l}
+            W_o, hooks = blk.attention.W_o, []
+            if 'head_z' in kinds:
+                hooks.append(W_o.register_forward_pre_hook(
+                    self._z_hook(('head_z', l))))
+            if kinds & {'attn_out', 'resid_mid'}:
+                x_in = [None]  # the block's input, the stream before it
+                hooks += [
+                    blk.norm1.register_forward_pre_hook(
+                        self._store_hook(x_in)),
+                    W_o.register_forward_hook(self._write_hook(
+                        ('attn_out', l), ('resid_mid', l), x_in))]
+            if kinds & {'mlp_out', 'resid_post'}:
+                mid = [None]  # the stream after attention, as norm2 sees it
+                hooks += [
+                    blk.norm2.register_forward_pre_hook(
+                        self._store_hook(mid)),
+                    blk.ffn.register_forward_hook(self._write_hook(
+                        ('mlp_out', l), ('resid_post', l), mid))]
+            self.handles += hooks
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        for h in self.handles:
+            h.remove()
+        self.handles = []
+        if isinstance(exc, _InterveneStop):
+            return exc.args[0] is self  # another context's stop goes on
+        if exc_type is None:
+            unfired = sorted(self.wanted - self.fired)
+            if unfired:
+                raise RuntimeError(f'sites that never fired: {unfired}')
+        return False
+
+def intervene(model, sites=None, *, record=(), record_grad=False,
+              stop_after=None):
+    """Context manager over a d2l.GPT that overwrites the sites (kind,
+    layer) -> fn(x) and records the sites in record.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    return _Intervention(model, sites, record, record_grad, stop_after)
+
+def logit_lens(model, hidden):
+    """The model's final norm and output head applied in fp32 to hidden
+    (..., d), a stream read at any block; returns logits (..., V).
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    norm, h = model.norm, hidden.float()
+    f32 = lambda p: None if p is None else p.float()  # no affine, no bias
+    if isinstance(norm, nn.RMSNorm):
+        h = F.rms_norm(h, norm.normalized_shape, f32(norm.weight), norm.eps)
+    else:  # nn.LayerNorm
+        h = F.layer_norm(h, norm.normalized_shape, f32(norm.weight),
+                         f32(norm.bias), norm.eps)
+    head = model.lm_head if hasattr(model, 'lm_head') else model.token_emb
+    return F.linear(h, head.weight.float())
+
+class TunedLens(nn.Module):
+    """One affine translator h + A_l h + b_l per block but the last (the
+    identity), applied before the logit lens; A_l and b_l start at zero,
+    so a fresh lens is the logit lens.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    def __init__(self, d_model, num_layers):
+        super().__init__()
+        self.num_layers = num_layers
+        self.translators = nn.ModuleList(
+            nn.Linear(d_model, d_model) for _ in range(num_layers - 1))
+        for t in self.translators:
+            nn.init.zeros_(t.weight)
+            nn.init.zeros_(t.bias)
+
+    def forward(self, hidden, layer):
+        if not 0 <= layer < self.num_layers:
+            raise IndexError(f'layer {layer} of {self.num_layers}')
+        if layer == self.num_layers - 1:
+            return hidden
+        t = self.translators[layer]
+        h = hidden.to(t.weight.dtype)
+        return h + t(h)
+
+    def _check(self, model):
+        if len(model.blks) != self.num_layers:
+            raise ValueError(f'a lens of {self.num_layers} layers for a '
+                             f'model of {len(model.blks)} blocks')
+
+    def logits(self, model, hidden, layer):
+        self._check(model)
+        return d2l.logit_lens(model, self(hidden, layer))
+
+    def fit(self, model, batches, *, steps, lr=1e-3, frac=0.25, seed=0,
+            chunk=512):
+        """Adam on KL(final || lens) summed over the layers, at a random
+        fraction frac of the positions >= 1 of each (B, T) batch of ids;
+        returns the loss of each step."""
+        assert not any(p.requires_grad for p in model.parameters()), (
+            'freeze the model first: model.requires_grad_(False)')
+        self._check(model)
+        L, dev = self.num_layers, self.translators[0].weight.device
+        sites = [('resid_post', l) for l in range(L)]
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        gen, batches, losses = torch.Generator().manual_seed(seed), iter(
+            batches), []
+        for _ in range(steps):
+            X = next(batches, None)
+            if X is None:
+                raise ValueError(f'batches ran out before {steps} steps')
+            with torch.no_grad(), d2l.intervene(
+                    model, record=sites, stop_after=sites[-1]) as ctx:
+                model(X.to(model.token_emb.weight.device))
+            B, T = X.shape
+            n = max(1, round(frac * (T - 1)))  # positions per sequence
+            cols = torch.stack([torch.randperm(T - 1, generator=gen)[:n] + 1
+                                for _ in range(B)]).flatten()
+            rows = torch.arange(B).repeat_interleave(n)
+            H = [ctx.cache[s][0][rows, cols].to(dev, torch.float32)
+                 for s in sites]  # each (B * n, d), detached
+            del ctx
+            optimizer.zero_grad()
+            total = 0.0
+            # each layer's loss is backpropagated alone, chunk positions at
+            # a time: the memory holds one chunk of logits
+            for i in range(0, len(rows), chunk):
+                with torch.no_grad():  # the final distribution, the target
+                    target = F.log_softmax(
+                        d2l.logit_lens(model, H[-1][i:i + chunk]), -1)
+                for l in range(L - 1):
+                    lens = F.log_softmax(self.logits(model, H[l][i:i + chunk],
+                                                     l), -1)
+                    kl = F.kl_div(lens, target, reduction='sum',
+                                  log_target=True) / len(rows)
+                    kl.backward()
+                    total += kl.item()
+            optimizer.step()
+            losses.append(total)
+        return losses
+
+class TopKSAE(nn.Module):
+    """Top-k sparse autoencoder with Qwen-Scope's parameter names and
+    shapes: W_enc (d_sae, d_model), b_enc, W_dec (d_model, d_sae), b_dec.
+    With center=True the encoder subtracts b_dec from its input first.
+    seed fixes the random initial dictionary (default: the global RNG).
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    def __init__(self, d_model, d_sae, k, *, center=False, seed=None):
+        super().__init__()
+        self.d_model, self.d_sae, self.k = d_model, d_sae, k
+        self.center = center  # a plain attribute: the encoder's convention
+        gen = None if seed is None else torch.Generator().manual_seed(seed)
+        W = torch.randn(d_model, d_sae, generator=gen)
+        W = W / W.norm(dim=0, keepdim=True)  # unit decoder columns
+        self.W_dec = nn.Parameter(W)
+        self.W_enc = nn.Parameter(W.T.clone())
+        self.b_enc = nn.Parameter(torch.zeros(d_sae))
+        self.b_dec = nn.Parameter(torch.zeros(d_model))
+
+    def pre_acts(self, x):
+        x = x.to(self.W_enc.dtype)
+        return F.linear(x - self.b_dec if self.center else x, self.W_enc,
+                        self.b_enc)
+
+    @staticmethod
+    def topk_relu(pre, k):
+        """ReLU of the k largest entries of each row, zero elsewhere; equal
+        values at the cut go to the lower indices."""
+        cut = pre.topk(k, dim=-1).values[..., -1:]
+        keep = pre >= cut
+        ties = keep.sum(-1) > k  # rows where the cut value repeats
+        if ties.any():
+            p, c = pre[ties], cut[ties]
+            above, at = p > c, p == c
+            keep[ties] = above | (at & (at.cumsum(-1)
+                                        <= k - above.sum(-1, keepdim=True)))
+        return torch.where(keep, F.relu(pre), 0.0)
+
+    def encode(self, x):
+        return self.topk_relu(self.pre_acts(x), self.k)
+
+    def decode(self, z):
+        return F.linear(z, self.W_dec, self.b_dec)
+
+    def forward(self, x):
+        z = self.encode(x)
+        return self.decode(z), z
+
+    def loss(self, x, dead=None, k_aux=256):
+        """Squared error normalized by the batch variance; the auxiliary
+        loss, the same for the residual x - x_hat reconstructed from the
+        k_aux largest pre-activations of the dead features (a mask); and
+        the codes."""
+        x = x.to(self.W_enc.dtype).reshape(-1, self.d_model)
+        pre = self.pre_acts(x)
+        z = self.topk_relu(pre, self.k)
+        x_hat = self.decode(z)
+        nmse = lambda u, v: ((u - v) ** 2).sum(-1).mean() / (
+            (v - v.mean(0)) ** 2).sum(-1).mean()
+        aux = x_hat.new_zeros(())
+        if dead is not None and dead.any():
+            e = (x - x_hat).detach()
+            z_dead = self.topk_relu(pre.masked_fill(~dead, -torch.inf),
+                                    min(k_aux, int(dead.sum())))
+            aux = nmse(F.linear(z_dead, self.W_dec), e)
+        return nmse(x_hat, x), aux, z
+
+    @torch.no_grad()
+    def normalize_decoder_(self):
+        """Project each decoder column onto the unit sphere (columns already
+        of norm 1 to within 1e-6 are left as they are)."""
+        n = self.W_dec.norm(dim=0, keepdim=True)
+        self.W_dec.div_(torch.where((n - 1).abs() > 1e-6, n.clamp_min(1e-12),
+                                    1.0))
+
+    @torch.no_grad()
+    def remove_parallel_grad_(self):
+        """Remove from W_dec.grad each column's component along the column,
+        the part a unit-norm projection would undo."""
+        W, G = self.W_dec, self.W_dec.grad
+        if G is not None:
+            G.sub_(W * (W * G).sum(0, keepdim=True) / (W * W).sum(
+                0, keepdim=True))
+
+def train_sae(sae, activations, *, steps, batch_size=4096, lr=2e-4,
+              aux_coef=1/32, dead_after=200, seed=0):
+    """Train a TopKSAE with Adam on random rows of activations (N, d), with
+    unit decoder columns and the auxiliary loss of the features idle for
+    dead_after steps; seed fixes the batches. Returns the losses.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    dev, dtype = sae.W_dec.device, sae.W_dec.dtype
+    gen, N = torch.Generator().manual_seed(seed), len(activations)
+    with torch.no_grad():  # b_dec at the data mean, W_enc = W_dec^T
+        sample = activations[torch.randperm(N, generator=gen)[:65536]]
+        sae.b_dec.copy_(sample.to(dev, dtype).mean(0))
+        sae.W_dec.div_(sae.W_dec.norm(dim=0, keepdim=True))
+        sae.W_enc.copy_(sae.W_dec.T)
+    optimizer = torch.optim.Adam(sae.parameters(), lr=lr)
+    idle = torch.zeros(sae.d_sae, dtype=torch.long, device=dev)
+    losses = []
+    for _ in range(steps):
+        x = activations[torch.randint(N, (batch_size,), generator=gen)].to(
+            dev, dtype)
+        mse, aux, z = sae.loss(x, idle >= dead_after)
+        loss = mse + aux_coef * aux
+        with torch.no_grad():  # steps since each feature last fired
+            idle = torch.where((z > 0).any(0), 0, idle + 1)
+        optimizer.zero_grad()
+        loss.backward()
+        sae.remove_parallel_grad_()
+        optimizer.step()
+        sae.normalize_decoder_()
+        losses.append(loss.item())
+    return losses
+
+def load_qwen_scope_sae(repo_id, layer, revision=None, *, device=None,
+                        dtype=torch.float32, center=False):
+    """The TopKSAE of one layer of a Qwen-Scope repository, downloaded
+    at the pinned revision and loaded with weights_only=True.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    from huggingface_hub import hf_hub_download
+    revision = revision or d2l.HF_REVISIONS[repo_id]
+    get = lambda f: hf_hub_download(repo_id, f, revision=revision)
+    with open(get('config.json')) as f:
+        cfg = json.load(f)
+    if cfg.get('model_type') != 'topk_sae':
+        raise ValueError(f'not a top-k SAE: {cfg.get("model_type")!r}')
+    if layer not in cfg['layers']:
+        raise ValueError(f'{repo_id} has no layer {layer}: {cfg["layers"]}')
+    state = torch.load(get(f'layer{layer}.sae.pt'), weights_only=True,
+                       map_location='cpu')
+    d, m = cfg['d_model'], cfg['d_sae']
+    shapes = {'W_enc': (m, d), 'b_enc': (m,), 'W_dec': (d, m), 'b_dec': (d,)}
+    if not isinstance(state, dict) or set(state) != set(shapes):
+        found = sorted(state) if isinstance(state, dict) else type(state)
+        raise KeyError(f'expected the tensors {sorted(shapes)}, found {found}')
+    for name, shape in shapes.items():
+        if tuple(state[name].shape) != shape:
+            raise ValueError(f'{name}: shape {tuple(state[name].shape)}, '
+                             f'expected {shape}')
+    with torch.device('meta'):  # no random initialization to overwrite
+        sae = TopKSAE(d, m, cfg['k'], center=center)
+    sae.load_state_dict(state, assign=True)
+    return sae.to(device=device, dtype=dtype)
+
+@torch.no_grad()
+def sae_metrics(sae, model, token_batches, layer):
+    """L0, FVU, loss recovered and firing density of sae on the stream
+    after block layer of model over token_batches ((B, T) ids), at the
+    positions >= 1 whose norm is at most 10 times the batch median.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    if sae.W_dec.shape[0] != model.num_hiddens:
+        raise ValueError(f'SAE width {sae.W_dec.shape[0]} != model width '
+                         f'{model.num_hiddens}')
+    site, dev = ('resid_post', layer), model.token_emb.weight.device
+    token_batches = list(token_batches)  # read twice
+
+    def ce(logits, X, keep):  # per row: summed loss and count, kept t
+        loss = torch.stack([F.cross_entropy(row[:-1].float(), x[1:],
+                                            reduction='none')
+                            for row, x in zip(logits, X)])  # a row at a time
+        m = keep[:, :-1]
+        return (loss * m).sum(1), m.sum(1)
+
+    keeps, ce_orig, total, n = [], [], 0.0, 0
+    for X in token_batches:  # pass 1: the clean run and the kept positions
+        X = X.to(dev)
+        with d2l.intervene(model, record=[site]) as ctx:
+            logits = model(X)
+        x = ctx.cache[site][0].float()
+        norms = x.norm(dim=-1)
+        keep = norms <= 10 * norms[:, 1:].median()
+        keep[:, 0] = False
+        keeps.append(keep)
+        ce_orig.append(ce(logits, X, keep))
+        del logits  # not alive during the next forward
+        total = total + x[keep].double().sum(0)
+        n += int(keep.sum())
+    mean = (total / n).float()
+    sse, sst = [], []  # per row, over its kept positions
+    fired = torch.zeros(sae.d_sae, device=sae.W_dec.device)
+    nnz, ce_splice, ce_mean = 0, [], []
+    for X, keep in zip(token_batches, keeps):  # pass 2: the two splices
+        X, k = X.to(dev), keep[..., None]
+
+        def splice(x):
+            nonlocal nnz, fired
+            x_hat, z = sae(x)
+            xf, x_hat = x.float(), x_hat.float()
+            sse.append((((x_hat - xf) ** 2).sum(-1) * keep).sum(1))
+            sst.append((((xf - mean) ** 2).sum(-1) * keep).sum(1))
+            active = (z > 0) & k
+            nnz += int(active.sum())
+            fired = fired + active.flatten(0, 1).sum(0)
+            return torch.where(k, x_hat.to(x.dtype), x)
+
+        with d2l.intervene(model, {site: splice}):
+            ce_splice.append(ce(model(X), X, keep))
+        with d2l.intervene(model, {site: lambda x: torch.where(
+                k, mean.to(x.dtype), x)}):
+            ce_mean.append(ce(model(X), X, keep))
+    cat = lambda xs: torch.cat(xs).double().cpu().numpy()
+    pooled = lambda pairs: (sum(float(s.sum()) for s, _ in pairs)
+                            / sum(int(c.sum()) for _, c in pairs))
+    ce_o, ce_s, ce_m = pooled(ce_orig), pooled(ce_splice), pooled(ce_mean)
+    density = (fired / n).cpu().numpy()
+    return {'l0': nnz / n, 'fvu': float(cat(sse).sum() / cat(sst).sum()),
+            'ce_orig': ce_o, 'ce_splice': ce_s, 'ce_mean_ablate': ce_m,
+            'loss_recovered': (ce_m - ce_s) / (ce_m - ce_o),
+            'unfired_frac': float((density == 0).mean()), 'density': density,
+            'n_tokens': n}
+
+def request_hash(base_url, model, messages, params, replica=0):
+    """sha256 of the canonical JSON (sorted keys, no whitespace, UTF-8) of
+    what can change a response: the endpoint's hostname, the model, the
+    messages, the merged parameters (None values dropped) without the
+    transport fields stream, stream_options, timeout and extra_headers, and
+    the client-side replica number.
+
+    Defined in :numref:`sec_lm_api`"""
+    from urllib.parse import urlsplit  # not in the d2l library preamble
+    transport = ('stream', 'stream_options', 'timeout', 'extra_headers')
+    params = d2l._chat_merge(params, {})  # drops None values at every level
+    params = {k: v for k, v in params.items() if k not in transport}
+    key = {'host': urlsplit(base_url).hostname, 'model': model,
+           'messages': messages, 'params': params, 'replica': replica}
+    blob = json.dumps(key, sort_keys=True, separators=(',', ':'),
+                      ensure_ascii=False)
+    return hashlib.sha256(blob.encode('utf-8')).hexdigest()
+
+PricePoint = collections.namedtuple(  # USD per `per` tokens
+    'PricePoint', ['input', 'output', 'cached_input', 'per'],
+    defaults=(None, 1_000_000))
+
+def api_cost(usage, price):
+    """Cost in USD of one response, ((p - c) input + c cached_input +
+    o output) / per, with p prompt, c cached and o completion tokens from
+    usage (reasoning tokens are inside o). cached_input None means no
+    discount; missing cached tokens count as 0; missing prompt or
+    completion tokens raise ValueError.
+
+    Defined in :numref:`sec_lm_api`"""
+    p, o = usage.get('prompt_tokens'), usage.get('completion_tokens')
+    if p is None or o is None:
+        raise ValueError(f'usage lacks prompt or completion tokens: {usage}')
+    c = usage.get('cached_tokens') or 0
+    cached = price.input if price.cached_input is None else price.cached_input
+    return ((p - c) * price.input + c * cached + o * price.output) / price.per
+
+def backoff_delay(attempt, base=1.0, cap=60.0, rng=None, retry_after=None):
+    """Full-jitter sleep after failed attempt `attempt` (0, 1, ...): uniform
+    on [0, min(cap, base 2^attempt)], and at least the server's
+    Retry-After.
+
+    Defined in :numref:`sec_lm_api`"""
+    rng = rng or random
+    return max(retry_after or 0, rng.uniform(0, min(cap, base * 2**attempt)))
+
+async def chat_batch(api, requests, *, concurrency=8):
+    """Send requests (dicts with 'messages', optionally 'replica' and request
+    parameters) through api with at most `concurrency` in flight; results
+    come in input order, a failed request as its exception. A replay miss
+    or a capped call is not a result: once every request has finished (the
+    paid ones are cached), the first d2l.ReplayMiss or d2l.CostCapExceeded
+    is raised, with the whole list as its `results` attribute.
+
+    Defined in :numref:`sec_lm_api`"""
+    import asyncio  # not in the d2l library preamble
+    semaphore = asyncio.Semaphore(concurrency)
+    async def one(request):
+        async with semaphore:
+            try:
+                request = dict(request)
+                return await api.achat(request.pop('messages'), **request)
+            except Exception as e:
+                return e
+    results = await asyncio.gather(*(one(r) for r in requests))
+    for r in results:
+        if isinstance(r, (d2l.ReplayMiss, d2l.CostCapExceeded)):
+            r.results = results
+            raise r
+    return results
+
+def closed_loop_stats(results, c):
+    """Throughput and latency of a closed loop that kept c requests in
+    flight; exceptions count as n_failed. The steady window runs from the
+    c-th to the (N - c)-th of the N completions. X is the completions per
+    second inside it (X_tokens their completion tokens), W the mean latency
+    and ttft_mean the mean time to first token of the requests wholly inside
+    it, and Lbar the mean number in flight; little = X W / c, sustained =
+    Lbar / c. ttft_p50 and ttft_p90 are over all N.
+
+    Defined in :numref:`sec_lm_api`"""
+    d2l.check_closed_loop(results, c)  # one loop of c, from one run
+    ok = [r for r in results if not isinstance(r, BaseException)]
+    N = len(ok)
+    if N <= 2 * c:
+        raise ValueError(f'{N} results at c = {c}; need more than 2c')
+    s = np.array([r.t_send for r in ok])
+    f = s + np.array([r.t_total for r in ok])
+    t_a, t_b = np.sort(f)[[c - 1, N - c - 1]]
+    window = t_b - t_a
+    if window <= 0:
+        raise ValueError('the steady window is empty')
+    done = (f > t_a) & (f <= t_b)  # completions inside the window
+    inside = (s >= t_a) & (f <= t_b)  # requests wholly inside it
+    tokens = [r.usage.get('completion_tokens') for r, d in zip(ok, done) if d]
+    X = done.sum() / window
+    W = (f - s)[inside].mean() if inside.any() else float('nan')
+    Lbar = np.clip(np.minimum(f, t_b) - np.maximum(s, t_a), 0, None).sum()
+    # the first token: the first content when the reasoning is only
+    # whitespace (the empty think block of a server with thinking off)
+    firsts = [r.t_first if (r.reasoning or '').strip() or (
+        r.t_first_content is None) else r.t_first_content for r in ok]
+    ttft = [None if t is None else t - r.t_send for r, t in zip(ok, firsts)]
+    known = [t for t in ttft if t is not None]
+    p50, p90 = (map(float, np.percentile(known, [50, 90])) if known
+                else (None, None))
+    steady = [t for t, i in zip(ttft, inside) if i and t is not None]
+    X_tokens = None if None in tokens else float(sum(tokens) / window)
+    return {'X': float(X), 'X_tokens': X_tokens,
+            'W': float(W), 'Lbar': float(Lbar / window),
+            'little': float(X * W / c), 'sustained': float(Lbar / window / c),
+            'ttft_p50': p50, 'ttft_p90': p90,
+            'ttft_mean': float(np.mean(steady)) if steady else None,
+            'n_429': sum(getattr(r, 'n_429', 0) or 0 for r in results),
+            'n_retries': sum(getattr(r, 'n_retries', 0) or 0 for r in results),
+            'n_failed': len(results) - N, 'window': float(window),
+            'n_window': int(done.sum())}
+
+d2l.DATA_HUB['wikitext-103-raw-train-0'] = (
+    'https://huggingface.co/datasets/Salesforce/wikitext/resolve/'
+    'b08601e04326c79dfdd32d625aee71d232d685c3/wikitext-103-raw-v1/'
+    'train-00000-of-00002.parquet',
+    '3cbc792dfc0eeedf8d7333acdc15a9f536032d9a')
+d2l.DATA_HUB['wordsim353'] = (  # Finkelstein et al.'s combined ratings
+    'https://raw.githubusercontent.com/piskvorky/gensim/'
+    '37f90ec121eb7cd401448a947e80953e0c53ccdc/gensim/test/test_data/'
+    'wordsim353.tsv', '5207d1bb6dd863994fa4032f48f149bf28a5468e')
+d2l.DATA_HUB['simlex999'] = (
+    'https://huggingface.co/datasets/Yuti/SimLex-999/resolve/'
+    'e87197824261f272ad1e9c02e32db3144bbeb0ca/data/'
+    'train-00000-of-00001.parquet',
+    'f3b074e2e08f83aa469f2d05c5b789b5ad2d3c49')
+d2l.DATA_HUB['lm-enc-we-grid-v1'] = (  # D2L_RERUN=we-grid, RTX 4090
+    d2l.LM_DATA_URL + 'lm-enc-we-grid-v1.json',
+    '8c6bc0c598c8493fa407b3662f7a26472522169e')
+
+def cooccurrence_counts(corpus, vocab_size, window=5, weighting='uniform'):
+    """Word-context counts within `window` positions as a symmetric
+    scipy.sparse.csr_matrix (float64). `corpus` is a 1-D array of word ids
+    with -1 at sentence breaks, which no pair crosses; `weighting` is
+    'uniform' (each pair counts 1) or 'harmonic' (1/distance).
+
+    Defined in :numref:`sec_lm_word_embeddings`"""
+    import scipy.sparse
+    if weighting not in ('uniform', 'harmonic'):
+        raise ValueError(f'unknown weighting {weighting!r}')
+    corpus = np.asarray(corpus)
+    sentence = np.cumsum(corpus < 0)  # the sentence of each position
+    X = scipy.sparse.csr_matrix((vocab_size, vocab_size))
+    for d in range(1, window + 1):  # all pairs at distance d
+        a, b = corpus[:-d], corpus[d:]
+        ok = (a >= 0) & (b >= 0) & (sentence[:-d] == sentence[d:])
+        a, b = a[ok], b[ok]
+        w = 1.0 if weighting == 'uniform' else 1.0 / d
+        X = X + scipy.sparse.csr_matrix(  # duplicate entries are summed
+            (np.full(2 * len(a), w), (np.r_[a, b], np.r_[b, a])),
+            shape=(vocab_size, vocab_size))
+    return X
+
+SpearmanResult = collections.namedtuple(
+    'SpearmanResult', 'rho ci n_covered n_total cosines')
+
+def spearman_eval(embeddings, vocab, pairs, n_boot=2000, seed=0):
+    """Spearman correlation between the cosine similarities of embeddings
+    and the human scores of `pairs` (a DataFrame with columns word1, word2,
+    score), on the pairs whose two words `vocab` (a d2l.Vocab or a
+    TokenEmbedding) holds; `ci` is the 95% percentile interval of n_boot
+    resamples of those pairs (nan for n_boot=0), `cosines` their cosines.
+
+    Defined in :numref:`sec_lm_word_embeddings`"""
+    from scipy.stats import rankdata
+    idx = vocab.token_to_idx
+    covered = [w1 in idx and w2 in idx
+               for w1, w2 in zip(pairs.word1, pairs.word2)]
+    p = pairs[covered]
+    Z = F.normalize(torch.as_tensor(embeddings).float(), dim=1)
+    i = torch.tensor([idx[w] for w in p.word1], dtype=torch.long)
+    j = torch.tensor([idx[w] for w in p.word2], dtype=torch.long)
+    cos = (Z[i] * Z[j]).sum(1).double().numpy()
+    human = p.score.to_numpy(np.float64)
+
+    def rho(a, b):  # Pearson correlation of the ranks, along the last axis
+        a, b = rankdata(a, axis=-1), rankdata(b, axis=-1)
+        a, b = a - a.mean(-1, keepdims=True), b - b.mean(-1, keepdims=True)
+        return (a * b).sum(-1) / np.sqrt((a * a).sum(-1) * (b * b).sum(-1))
+
+    ci = (math.nan, math.nan)
+    if n_boot:
+        b = np.random.default_rng(seed).integers(0, len(p), (n_boot, len(p)))
+        ci = tuple(np.quantile(rho(cos[b], human[b]), [0.025, 0.975]))
+    return SpearmanResult(float(rho(cos, human)), tuple(map(float, ci)),
+                          len(p), len(pairs), cos)
+
+def sgns_loss(v, u, centers, contexts_negatives, labels, masks):
+    """Skip-gram with negative sampling: the binary cross-entropy of the
+    scores u_o^T v_w of each center (centers, shape (B,)) with its context
+    and noise words (contexts_negatives, (B, L)), labels 1 for a context
+    word and 0 for a noise word, averaged over the slots where masks is 1.
+    v and u are the center and the context tables (nn.Embedding).
+
+    Defined in :numref:`sec_lm_word_embeddings`"""
+    scores = torch.einsum('bd,bld->bl', v(centers), u(contexts_negatives))
+    loss = F.binary_cross_entropy_with_logits(
+        scores, labels.float(), weight=masks.float(), reduction='sum')
+    return loss / masks.sum()
+
+def ppmi(counts, alpha=1.0, shift=0.0):
+    """Positive (shifted) PMI of a count matrix as a scipy.sparse.csr_matrix:
+    max(log(p(w, o) / (p(w) p_alpha(o))) - shift, 0), where p_alpha(o) is
+    proportional to n(o)^alpha over the contexts that occur.
+
+    Defined in :numref:`sec_lm_word_embeddings`"""
+    import scipy.sparse
+    C = scipy.sparse.coo_matrix(counts)
+    total = C.sum()
+    p_w = np.asarray(C.sum(1)).ravel() / total
+    n_o = np.asarray(C.sum(0)).ravel()
+    p_o = np.where(n_o > 0, n_o ** alpha, 0.0)
+    p_o = p_o / p_o.sum()
+    pmi = (np.log(C.data / total) - np.log(p_w[C.row])
+           - np.log(p_o[C.col]) - shift)
+    keep = pmi > 0
+    return scipy.sparse.csr_matrix(
+        (pmi[keep], (C.row[keep], C.col[keep])), shape=C.shape)
+
+def nearest_neighbors(E, vocab, word, k=5, exclude_self=True):
+    """The k rows of E nearest to word's row in cosine, as a list of
+    (token, cosine). vocab is a d2l.Vocab or a TokenEmbedding (whose
+    unknown token at index 0 is never returned), or a Hugging Face
+    tokenizer, for which word must be a single token.
+
+    Defined in :numref:`sec_lm_word_embeddings`"""
+    if hasattr(vocab, 'token_to_idx'):
+        i, skip = vocab.token_to_idx[word], [0]
+        name = lambda j: vocab.idx_to_token[j]
+    else:
+        ids = vocab.encode(word, add_special_tokens=False)
+        if len(ids) != 1:
+            raise ValueError(f'{word!r} is {len(ids)} tokens, not one')
+        i, skip, name = ids[0], [], lambda j: vocab.decode([j])
+    Z = F.normalize(torch.as_tensor(E)[:len(vocab)].float(), dim=1)
+    cos = Z @ Z[i]
+    cos[skip + ([i] if exclude_self else [])] = -math.inf
+    top = torch.topk(cos, k)
+    return [(name(int(j)), float(c)) for c, j in zip(top.values, top.indices)]
+
+class TokenEmbedding:
+    """Token Embedding.
+
+    Defined in :numref:`sec_lm_word_embeddings`"""
+    def __init__(self, embedding_name):
+        self.idx_to_token, self.idx_to_vec = self._load_embedding(
+            embedding_name)
+        self.unknown_idx = 0
+        self.token_to_idx = {token: idx for idx, token in
+                             enumerate(self.idx_to_token)}
+
+    def _load_embedding(self, embedding_name):
+        idx_to_token, idx_to_vec = ['<unk>'], []
+        data_dir = d2l.download_extract(embedding_name)
+        # GloVe website: https://nlp.stanford.edu/projects/glove/
+        # fastText website: https://fasttext.cc/
+        with open(os.path.join(data_dir, 'vec.txt'), 'r') as f:
+            for line in f:
+                elems = line.rstrip().split(' ')
+                token, elems = elems[0], [float(elem) for elem in elems[1:]]
+                # Skip header information, such as the top row in fastText
+                if len(elems) > 1:
+                    idx_to_token.append(token)
+                    idx_to_vec.append(elems)
+        idx_to_vec = [[0] * len(idx_to_vec[0])] + idx_to_vec
+        return idx_to_token, d2l.tensor(idx_to_vec)
+
+    def __getitem__(self, tokens):
+        indices = [self.token_to_idx.get(token, self.unknown_idx)
+                   for token in tokens]
+        vecs = self.idx_to_vec[d2l.tensor(indices)]
+        return vecs
+
+    def __len__(self):
+        return len(self.idx_to_token)
+
+HF_ENCODER_REVISIONS = {
+    'answerdotai/ModernBERT-base': '8949b909ec900327062f0ebf497f51aef5e6f0c8'}
+
+# Several of these files share a name: fetch them with d2l.download_keyed
+d2l.DATA_HUB['glue-mnli-train'] = (
+    'https://huggingface.co/datasets/nyu-mll/glue/resolve/'
+    'bcdcba79d07bc864c1c254ccfcedcce55bcc9a8c/mnli/'
+    'train-00000-of-00001.parquet',
+    '29c714bf5419e6a351ba0fc979f000dcc1ccf671')
+d2l.DATA_HUB['glue-mnli-validation-matched'] = (
+    'https://huggingface.co/datasets/nyu-mll/glue/resolve/'
+    'bcdcba79d07bc864c1c254ccfcedcce55bcc9a8c/mnli/'
+    'validation_matched-00000-of-00001.parquet',
+    '190b5f94bc4126d3747a817da7c0da9df619dfbc')
+d2l.DATA_HUB['glue-sst2-train'] = (
+    'https://huggingface.co/datasets/nyu-mll/glue/resolve/'
+    'bcdcba79d07bc864c1c254ccfcedcce55bcc9a8c/sst2/'
+    'train-00000-of-00001.parquet',
+    '12cd5d3347611f133d19fd975afe391fa457553f')
+d2l.DATA_HUB['glue-sst2-validation'] = (
+    'https://huggingface.co/datasets/nyu-mll/glue/resolve/'
+    'bcdcba79d07bc864c1c254ccfcedcce55bcc9a8c/sst2/'
+    'validation-00000-of-00001.parquet',
+    'bc4155c5b85fcdda2784ea3154a9cfd00bf2009a')
+d2l.DATA_HUB['conll2003-train'] = (
+    'https://huggingface.co/datasets/tner/conll2003/resolve/'
+    'b18612dee0007b1f7129731dbf2f5f2ed4039ad3/dataset/train.json',
+    '09a4703c703992a75087ece5b5eab2e0621b0590')
+d2l.DATA_HUB['conll2003-valid'] = (
+    'https://huggingface.co/datasets/tner/conll2003/resolve/'
+    'b18612dee0007b1f7129731dbf2f5f2ed4039ad3/dataset/valid.json',
+    '3f9256142388f6da88b2269541fab5b8dbfe49f0')
+d2l.DATA_HUB['conll2003-labels'] = (
+    'https://huggingface.co/datasets/tner/conll2003/resolve/'
+    'b18612dee0007b1f7129731dbf2f5f2ed4039ad3/dataset/label.json',
+    'd4fd1344c9af2613a3094dd2c84ff594e5215af0')
+d2l.DATA_HUB['lm-enc-bert-sweep-v1'] = (  # D2L_RERUN=bert-sweep, RTX 4090
+    d2l.LM_DATA_URL + 'lm-enc-bert-sweep-v1.json',
+    '06440f0e5acbd7b91deb6b66f8402f8bea8d6155')
+d2l.DATA_HUB['lm-enc-bert-sweep-v2'] = (  # at least 300 steps per run
+    d2l.LM_DATA_URL + 'lm-enc-bert-sweep-v2.json',
+    'e1ceabe56f1d40d2a71e3ef6a4ccb9dbc6d2d220')
+d2l.DATA_HUB['lm-enc-modernbert-mnli-v1'] = (  # its MNLI checkpoint, bf16
+    d2l.LM_DATA_URL + 'lm-enc-modernbert-mnli-v1.zip',
+    '36365804df9df70b812f52595ee6d092639285c1')
+d2l.DATA_HUB['lm-enc-bert-tagging-v1'] = (  # sentences alone, lr 5e-5
+    d2l.LM_DATA_URL + 'lm-enc-bert-tagging-v1.json',
+    'f0f0f41d18ed997462891d0c6dece556ad57b680')
+d2l.DATA_HUB['lm-enc-bert-tagging-v2'] = (  # D2L_RERUN=bert-tagging
+    d2l.LM_DATA_URL + 'lm-enc-bert-tagging-v2.json',
+    'f527097b8650ace236226a4cda001fd99b5fce79')
+d2l.DATA_HUB['lm-enc-bert-decoder-v1'] = (  # D2L_RERUN=bert-decoder
+    d2l.LM_DATA_URL + 'lm-enc-bert-decoder-v1.json',
+    '22b140629d3aa486a601068dce61b8a0f0301beb')
+
+def load_encoder(model_id, revision=None, *, head=None, num_labels=None,
+                 dtype=torch.bfloat16, device=None, attn_implementation='sdpa',
+                 padding_side=None):
+    """A pinned encoder from the Hugging Face Hub and its tokenizer, in eval
+    mode: the bare model (head=None), or with a masked-token head ('mlm'), a
+    sequence classifier ('seq_cls') or a token classifier ('token_cls');
+    the pin comes from HF_ENCODER_REVISIONS, then HF_REVISIONS.
+
+    Defined in :numref:`sec_lm_bert`"""
+    import logging
+    import transformers
+    revision = revision or d2l.HF_ENCODER_REVISIONS.get(
+        model_id, d2l.HF_REVISIONS.get(model_id))
+    if revision is None:
+        raise KeyError(f'{model_id} is not pinned: pass revision=')
+    auto = {None: transformers.AutoModel,
+            'mlm': transformers.AutoModelForMaskedLM,
+            'seq_cls': transformers.AutoModelForSequenceClassification,
+            'token_cls': transformers.AutoModelForTokenClassification}[head]
+    device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+    extra = {} if num_labels is None else {'num_labels': num_labels}
+    report = logging.getLogger('transformers.modeling_utils')
+    quiet = lambda record: 'LOAD REPORT' not in record.getMessage()
+    report.addFilter(quiet)  # its key table; the summary below replaces it
+    try:
+        model, info = auto.from_pretrained(
+            model_id, revision=revision, dtype=dtype, use_safetensors=True,
+            attn_implementation=attn_implementation, output_loading_info=True,
+            **extra)
+    finally:
+        report.removeFilter(quiet)
+    model = model.to(device)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_id, revision=revision)
+    if padding_side is not None:
+        tokenizer.padding_side = padding_side
+    model.revision = revision
+    print(f'{model_id}@{revision[:12]}: {type(model).__name__}\n    '
+          f'{dtype}, {device}, attention '
+          f'{model.config._attn_implementation}')
+    for what, keys in (('not used', info['unexpected_keys']),
+                       ('new, at random', info['missing_keys'])):
+        if keys:
+            print(f'    {what}: {", ".join(sorted(keys))}')
+    return model.eval(), tokenizer
+
+def mlm_corrupt(ids, mask_id, vocab_size, special_ids, p=0.15,
+                probs=(0.8, 0.1, 0.1), generator=None):
+    """BERT's masked-token corruption of ids: each token that is not in
+    special_ids is selected with probability p; a selected token becomes
+    mask_id with probability probs[0], a uniformly random token with
+    probs[1], and stays with probs[2]. Returns the corrupted ids and the
+    labels: the original id where selected, -100 (not scored) elsewhere.
+
+    Defined in :numref:`sec_lm_bert`"""
+    special = torch.isin(ids, torch.as_tensor(special_ids, device=ids.device))
+    u, v = (torch.rand(ids.shape, generator=generator, device=ids.device)
+            for _ in range(2))
+    selected = (u < p) & ~special
+    noise = torch.randint(vocab_size, ids.shape, generator=generator,
+                          device=ids.device)
+    out = torch.where(selected & (v < probs[0]), mask_id, ids)
+    out = torch.where(selected & (v >= probs[0]) & (v < probs[0] + probs[1]),
+                      noise, out)
+    return out, torch.where(selected, ids, -100)
+
+class PooledClassifier(nn.Module):
+    """A sentence or sentence-pair classifier on an encoder: the final
+    hidden states pooled (the mean over the attention mask, or the first
+    token), then dense, GELU, layer norm, dropout and a linear map to
+    num_labels logits. Biases and the norm follow the encoder's
+    configuration, as in Transformers' ModernBERT head.
+
+    Defined in :numref:`sec_lm_bert`"""
+    def __init__(self, encoder, num_labels, pooling='mean', dropout=0.0):
+        super().__init__()
+        if pooling not in ('mean', 'cls'):
+            raise ValueError(f'unknown pooling: {pooling!r}')
+        c = encoder.config
+        bias, d = getattr(c, 'classifier_bias', True), c.hidden_size
+        self.encoder, self.pooling = encoder, pooling
+        self.head = nn.Module()
+        self.head.dense = nn.Linear(d, d, bias=bias)
+        self.head.norm = nn.LayerNorm(d, eps=getattr(c, 'norm_eps', 1e-5),
+                                      bias=getattr(c, 'norm_bias', True))
+        self.drop = nn.Dropout(dropout)
+        self.classifier = nn.Linear(d, num_labels)
+        p = next(encoder.parameters())  # the head lives where the encoder is
+        self.head.to(p.device, p.dtype)
+        self.classifier.to(p.device, p.dtype)
+
+    def forward(self, input_ids, attention_mask):
+        H = self.encoder(input_ids=input_ids,
+                         attention_mask=attention_mask).last_hidden_state
+        if self.pooling == 'cls':
+            if not attention_mask[:, 0].all():
+                raise ValueError('cls pooling needs right padding')
+            h = H[:, 0]
+        else:  # padding positions do not count
+            m = attention_mask.unsqueeze(-1).to(H.dtype)
+            h = (H * m).sum(1) / m.sum(1)
+        h = self.head.norm(F.gelu(self.head.dense(h)))
+        return self.classifier(self.drop(h))
+
+def finetune_classifier(model, train, eval, lr, epochs, batch_size, seed,
+                        warmup=0.1, device=None):
+    """Fine-tune model on train, a list of (input_ids, label) or, for token
+    tagging, (input_ids, labels) with a label per token (-100: not scored),
+    then predict eval. model(input_ids=, attention_mask=) returns logits or
+    an output with .logits. AdamW (weight decay 0.01 on matrices), linear
+    warmup over the share warmup of the steps then linear decay, gradients
+    clipped to norm 1, bf16 autocast on a GPU; each batch is padded to its
+    longest sequence (with id 0: the attention mask hides it, so any id
+    serves); seed fixes the data order (and dropout, if the model has
+    any). Returns the training losses, the eval accuracy and predictions
+    (a label per example, or per scored token), the training seconds and
+    the peak GPU memory in GiB.
+
+    Defined in :numref:`sec_lm_bert`"""
+    device = torch.device(device or ('cuda' if torch.cuda.is_available()
+                                     else 'cpu'))
+    cuda = device.type == 'cuda'
+
+    def batches(data, order):
+        for i in range(0, len(order), batch_size):
+            rows = [data[j] for j in order[i:i + batch_size]]
+            T = max(len(x) for x, _ in rows)
+            X = torch.tensor([x + [0] * (T - len(x)) for x, _ in rows])
+            M = torch.tensor([[1] * len(x) + [0] * (T - len(x))
+                              for x, _ in rows])
+            y = torch.tensor([y if isinstance(y, int) else
+                              y + [-100] * (T - len(y)) for _, y in rows])
+            yield X.to(device), M.to(device), y.to(device)
+
+    def logits(X, M):
+        with torch.autocast(device.type, torch.bfloat16, enabled=cuda):
+            out = model(input_ids=X, attention_mask=M)
+        return getattr(out, 'logits', out).float()
+
+    model.to(device).train()
+    torch.manual_seed(seed)  # dropout, if the model has any
+    order = torch.Generator().manual_seed(seed)
+    steps = epochs * math.ceil(len(train) / batch_size)
+    n_warm = max(1, round(warmup * steps))
+    params = [p for p in model.parameters() if p.requires_grad]
+    opt = torch.optim.AdamW([
+        {'params': [p for p in params if p.ndim >= 2], 'weight_decay': 0.01},
+        {'params': [p for p in params if p.ndim < 2], 'weight_decay': 0.0}],
+        lr=lr)
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: (
+        (s + 1) / n_warm if s < n_warm else
+        max(0.0, (steps - s) / max(1, steps - n_warm))))
+    if cuda:
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+    t0, losses = time.perf_counter(), []
+    for _ in range(epochs):
+        perm = torch.randperm(len(train), generator=order).tolist()
+        for X, M, y in batches(train, perm):
+            loss = F.cross_entropy(logits(X, M).flatten(0, -2), y.flatten(),
+                                   ignore_index=-100)
+            loss.backward()
+            nn.utils.clip_grad_norm_(params, 1.0)
+            opt.step()
+            sched.step()
+            opt.zero_grad(set_to_none=True)
+            losses.append(loss.detach())
+    if cuda:
+        torch.cuda.synchronize(device)
+    seconds = time.perf_counter() - t0
+    model.eval()
+    with torch.inference_mode():
+        out = [(logits(X, M).argmax(-1), y)
+               for X, M, y in batches(eval, range(len(eval)))]
+    hits = sum(((p == y) & (y != -100)).sum().item() for p, y in out)
+    total = sum((y != -100).sum().item() for _, y in out)
+    preds = [v for p, y in out for v in (p.tolist() if y.ndim == 1 else [
+        r[y_r != -100].tolist() for r, y_r in zip(p, y)])]
+    return dict(loss=torch.stack(losses).tolist(),
+                eval_acc=hits / total if total else float('nan'),
+                eval_pred=preds, seconds=seconds,
+                peak_gib=(torch.cuda.max_memory_allocated(device) / 2**30
+                          if cuda else float('nan')))
+
+def align_token_labels(word_ids, word_labels, scheme='first'):
+    """Token labels from word labels; word_ids gives each token's word
+    (None for a special token). scheme='first' labels the first sub-token
+    of each word and gives the others -100 (not scored); 'all' gives every
+    sub-token its word's label.
+
+    Defined in :numref:`sec_lm_bert`"""
+    if scheme not in ('first', 'all'):
+        raise ValueError(f'unknown scheme: {scheme!r}')
+    labels, prev = [], None
+    for w in word_ids:
+        first = w is not None and w != prev
+        labels.append(word_labels[w] if first or (
+            w is not None and scheme == 'all') else -100)
+        prev = w
+    return labels
+
+def span_f1(pred_tags, gold_tags, id2label):
+    """Entity-level precision, recall and F1 of IOB2 tag sequences (a list
+    of label ids per sentence), counted as conlleval and seqeval count
+    them: an entity starts at a B- tag, or at an I- tag after O or after
+    another type, and a predicted entity is correct if its type and both
+    ends match; per_type holds the three numbers per entity type.
+
+    Defined in :numref:`sec_lm_bert`"""
+    def entities(seqs):
+        found = set()
+        for s, seq in enumerate(seqs):
+            start, kind = None, None
+            for i, t in enumerate([id2label[t] for t in seq] + ['O']):
+                bio, _, typ = t.partition('-')
+                if start is not None and (bio != 'I' or typ != kind):
+                    found.add((kind, s, start, i))
+                    start = None
+                if bio == 'B' or (bio == 'I' and start is None):
+                    start, kind = i, typ
+        return found
+
+    def prf(pred, gold):
+        tp = len(pred & gold)
+        p = tp / len(pred) if pred else 0.0
+        r = tp / len(gold) if gold else 0.0
+        return dict(precision=p, recall=r, f1=2 * p * r / (p + r) if tp
+                    else 0.0)
+    pred, gold = entities(pred_tags), entities(gold_tags)
+    kinds = sorted({e[0] for e in pred | gold})
+    return dict(**prf(pred, gold), per_type={k: prf(
+        {e for e in pred if e[0] == k}, {e for e in gold if e[0] == k})
+        for k in kinds})
+
+def cost_per_example(n_params, n_tokens, n_embed=0):
+    """Forward FLOPs per example, 2 (n_params - n_embed) n_tokens: a
+    multiply and an add per weight and token, embedding lookups excluded.
+
+    Defined in :numref:`sec_lm_bert`"""
+    return 2 * (n_params - n_embed) * n_tokens
+
+d2l.HF_ENCODER_REVISIONS['Qwen/Qwen3-Embedding-0.6B'] = (
+    '97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3')
+d2l.HF_ENCODER_REVISIONS['Qwen/Qwen3-Reranker-0.6B'] = (
+    'e61197ed45024b0ed8a2d74b80b4d909f1255473')
+
+d2l.DATA_HUB['nq-pairs'] = (
+    'https://huggingface.co/datasets/sentence-transformers/'
+    'natural-questions/resolve/f9e894e1081e206e577b4eaa9ee6de2b06ae6f17/'
+    'pair/train-00000-of-00001.parquet',
+    '545c1495f10231652b59e67f7ab02e6d21252fd0')
+d2l.DATA_HUB['lm-enc-emb-results-v1'] = (  # D2L_RERUN=emb-train, RTX 4090
+    d2l.LM_DATA_URL + 'lm-enc-emb-results-v1.json',
+    'd0bd19be14746bdb7216a190a20a8abaca4145d5')
+d2l.DATA_HUB['lm-enc-modernbert-embed-v1'] = (  # contrastive, seed 0, bf16
+    d2l.LM_DATA_URL + 'lm-enc-modernbert-embed-v1.zip',
+    'f0de3203bde6008307a9782b45733085b02f89e2')
+d2l.DATA_HUB['lm-enc-modernbert-embed-mrl-v1'] = (  # Matryoshka, bf16
+    d2l.LM_DATA_URL + 'lm-enc-modernbert-embed-mrl-v1.zip',
+    '17b1215b6d2e2ba5d8e7ef78621afe0894718095')
+
+def pool_hidden(hidden, attention_mask, mode):
+    """One vector per sequence from hidden states (B, T, m): the first
+    ('cls'), the mean ('mean') or the last ('last') of the positions the
+    mask keeps; left and right padding both work.
+
+    Defined in :numref:`sec_lm_text_embeddings`"""
+    mask = attention_mask.to(hidden.dtype)
+    if mode == 'mean':
+        return (hidden * mask[..., None]).sum(1) / mask.sum(1, keepdim=True)
+    rows = torch.arange(hidden.shape[0], device=hidden.device)
+    if mode == 'cls':
+        return hidden[rows, attention_mask.argmax(1)]
+    if mode == 'last':
+        T = attention_mask.shape[1]
+        return hidden[rows, T - 1 - attention_mask.flip(1).argmax(1)]
+    raise ValueError(f'unknown pooling {mode!r}')
+
+def embed_texts(model, tokenizer, texts, pooling='mean', batch_size=64,
+                max_len=512, normalize=True, prefix='', padding_side=None,
+                device=None):
+    """Vectors (N, m), float32 on the CPU, of prefix + text for each text:
+    pooled last hidden states of an encoder, unit length if normalize.
+    Batches hold texts of similar length; the output is in input order.
+
+    Defined in :numref:`sec_lm_text_embeddings`"""
+    device = device or next(model.parameters()).device
+    side = padding_side or tokenizer.padding_side
+    pad = tokenizer.pad_token_id
+    ids = tokenizer([prefix + t for t in texts], truncation=True,
+                    max_length=max_len)['input_ids']
+    full = tokenizer([prefix + t for t in texts])['input_ids']
+    n_cut = sum(len(a) < len(b) for a, b in zip(ids, full))
+    if n_cut:
+        print(f'{n_cut} of {len(texts)} texts truncated to {max_len} tokens')
+    order = sorted(range(len(ids)), key=lambda i: -len(ids[i]))
+    out = torch.empty(len(ids), model.config.hidden_size)
+    for j in range(0, len(order), batch_size):
+        rows = [ids[i] for i in order[j:j + batch_size]]
+        T = max(len(r) for r in rows)
+        fill = lambda r, v: ([v] * (T - len(r)) + r if side == 'left'
+                             else r + [v] * (T - len(r)))
+        X = torch.tensor([fill(r, pad) for r in rows], device=device)
+        mask = torch.tensor([fill([1] * len(r), 0) for r in rows],
+                            device=device)
+        with torch.inference_mode():
+            h = model(input_ids=X, attention_mask=mask).last_hidden_state
+            z = d2l.pool_hidden(h.float(), mask, pooling)
+            if normalize:
+                z = F.normalize(z, dim=-1)
+        out[order[j:j + batch_size]] = z.cpu()
+    return out
+
+def retrieval_metrics(ranked_ids, gold_ids, ks=(1, 5, 10, 100)):
+    """Per-query metrics of ranked lists against gold sets (binary
+    relevance): recall@k is 1 if a relevant id is among the first k (the
+    question is answerable from what was retrieved), mrr@10 the reciprocal
+    rank of the first relevant id within 10, ndcg@10 the discounted gain
+    over the ideal ordering. NaN for a query with an empty gold set.
+
+    Defined in :numref:`sec_lm_text_embeddings`"""
+    out = {f'recall@{k}': [] for k in ks} | {'mrr@10': [], 'ndcg@10': []}
+    for ranked, gold in zip(ranked_ids, gold_ids):
+        gold = set(gold)
+        if not gold:
+            for v in out.values():
+                v.append(np.nan)
+            continue
+        rel = np.array([i in gold for i in ranked], dtype=float)
+        for k in ks:
+            out[f'recall@{k}'].append(float(rel[:k].any()))
+        hits = np.flatnonzero(rel[:10])
+        out['mrr@10'].append(1 / (hits[0] + 1) if len(hits) else 0.0)
+        disc = 1 / np.log2(np.arange(2, 12))
+        idcg = disc[:min(len(gold), 10)].sum()
+        out['ndcg@10'].append((rel[:10] * disc[:len(rel[:10])]).sum() / idcg)
+    return {k: np.array(v) for k, v in out.items()}
+
+def anisotropy(Z, n_pairs=200_000, seed=0):
+    """Mean cosine similarity between distinct rows of Z, over n_pairs
+    random pairs, or over all pairs if n_pairs is None or covers them.
+
+    Defined in :numref:`sec_lm_text_embeddings`"""
+    Z = F.normalize(torch.as_tensor(Z, dtype=torch.float64), dim=-1)
+    n = len(Z)
+    if n_pairs is None or n_pairs >= n * (n - 1) // 2:
+        G = Z @ Z.T
+        return float((G.sum() - G.diagonal().sum()) / (n * (n - 1)))
+    rng = np.random.default_rng(seed)
+    i, j = rng.integers(n, size=n_pairs), rng.integers(n - 1, size=n_pairs)
+    j = j + (j >= i)  # a partner other than i, uniformly
+    return float((Z[i] * Z[j]).sum(-1).mean())
+
+def align_uniform(Zx, Zy, t=2.0, Zu=None):
+    """Wang and Isola's alignment, the mean squared distance between the
+    unit vectors of positive pairs (rows of Zx and Zy), and uniformity,
+    the log of the mean of exp(-t ||z - z'||^2) over the distinct pairs
+    of the rows of Zu, or of all rows of Zx and Zy if Zu is None.
+
+    Defined in :numref:`sec_lm_text_embeddings`"""
+    Zx, Zy = (F.normalize(torch.as_tensor(Z, dtype=torch.float64), dim=-1)
+              for Z in (Zx, Zy))
+    Zu = (torch.cat([Zx, Zy]) if Zu is None else F.normalize(
+        torch.as_tensor(Zu, dtype=torch.float64), dim=-1))
+    sq = torch.pdist(Zu) ** 2
+    uniformity = torch.logsumexp(-t * sq, 0) - math.log(len(sq))
+    return float(((Zx - Zy) ** 2).sum(-1).mean()), float(uniformity)
+
+def info_nce_loss(q, d, tau=0.05, hard_neg=None, symmetric=False):
+    """InfoNCE with in-batch negatives for unit vectors q, d (B, m), row i
+    of d the positive passage of query i: the cross-entropy of the scores
+    q_i . d_j / tau over all d_j, and over all hard_neg_j too if given.
+    symmetric averages in the passage-to-query direction (each d_i
+    against all q_j). Returns the loss and the share of queries whose
+    positive scores highest.
+
+    Defined in :numref:`sec_lm_text_embeddings`"""
+    S = q @ (d if hard_neg is None else torch.cat([d, hard_neg])).T / tau
+    labels = torch.arange(len(q), device=q.device)
+    loss = F.cross_entropy(S, labels)
+    if symmetric:
+        loss = (loss + F.cross_entropy(S[:, :len(q)].T, labels)) / 2
+    return loss, (S.argmax(1) == labels).float().mean()
+
+def no_duplicate_batches(queries, passages, batch_size, seed=0,
+                         negatives=None):
+    """Batches of indices into the pairs (queries[i], passages[i]), in a
+    seeded random order, none holding a query text twice or a passage text
+    twice (with negatives[i], an extra passage per pair, counted among the
+    passages): a duplicate would be a negative of its own query. A pair
+    that would repeat a text waits for a later batch.
+
+    Defined in :numref:`sec_lm_text_embeddings`"""
+    pending = collections.deque(
+        np.random.default_rng(seed).permutation(len(queries)).tolist())
+    batches = []
+    while pending:
+        batch, seen, waiting = [], set(), []
+        while pending and len(batch) < batch_size:
+            i = pending.popleft()
+            texts = {('q', queries[i]), ('p', passages[i])}
+            if negatives is not None:
+                texts.add(('p', negatives[i]))
+            if texts & seen:
+                waiting.append(i)
+            else:
+                batch.append(i)
+                seen |= texts
+        pending.extendleft(reversed(waiting))
+        batches.append(batch)
+    return batches
+
+def train_embedder(model, tokenizer, pairs, *, pooling='mean', tau=0.05,
+                   batch_size=64, lr=3e-5, steps=None, epochs=1,
+                   hard_negs=None, mrl_dims=None, q_prefix='query: ',
+                   d_prefix='passage: ', max_len_q=48, max_len_d=160,
+                   seed=0):
+    """Train an encoder in place on (query, passage) pairs: InfoNCE with
+    in-batch negatives at temperature tau, plus hard_negs[i] as one more
+    candidate per pair if given; with mrl_dims, the mean of the losses on
+    the leading mrl_dims coordinates (Matryoshka). Batches from
+    no_duplicate_batches; AdamW (weight decay 0.01 on matrices), linear
+    warmup over the first 10% of the steps then linear decay, gradients
+    clipped to norm 1, bf16 autocast on a GPU. Returns the loss per step,
+    the steps, the training seconds and the peak GPU memory in GiB."""
+    device = next(model.parameters()).device
+    cuda = device.type == 'cuda'
+    qs, ds = [q for q, _ in pairs], [d for _, d in pairs]
+    plan = [b for e in range(epochs) for b in d2l.no_duplicate_batches(
+        qs, ds, batch_size, seed + e, hard_negs)]
+    steps = steps or len(plan)
+
+    def embed(texts, prefix, max_len):  # pooled, not yet unit length
+        ids = tokenizer([prefix + t for t in texts], truncation=True,
+                        max_length=max_len)['input_ids']
+        T = max(map(len, ids))
+        X = torch.tensor([r + [tokenizer.pad_token_id] * (T - len(r))
+                          for r in ids], device=device)
+        M = torch.tensor([[1] * len(r) + [0] * (T - len(r)) for r in ids],
+                         device=device)
+        with torch.autocast(device.type, torch.bfloat16, enabled=cuda):
+            h = model(input_ids=X, attention_mask=M).last_hidden_state
+        return d2l.pool_hidden(h.float(), M, pooling)
+
+    def loss_fn(b):
+        q, d = embed([qs[i] for i in b], q_prefix, max_len_q), embed(
+            [ds[i] for i in b], d_prefix, max_len_d)
+        h = (None if hard_negs is None else
+             embed([hard_negs[i] for i in b], d_prefix, max_len_d))
+        cut = lambda Z, k: None if Z is None else F.normalize(Z[:, :k], dim=-1)
+        dims = mrl_dims or (q.shape[1],)
+        return sum(d2l.info_nce_loss(cut(q, k), cut(d, k), tau, cut(h, k))[0]
+                   for k in dims) / len(dims)
+
+    model.train()
+    torch.manual_seed(seed)
+    params = [p for p in model.parameters() if p.requires_grad]
+    opt = torch.optim.AdamW([
+        {'params': [p for p in params if p.ndim >= 2], 'weight_decay': 0.01},
+        {'params': [p for p in params if p.ndim < 2], 'weight_decay': 0.0}],
+        lr=lr)
+    n_warm = max(1, round(0.1 * steps))
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: (
+        (s + 1) / n_warm if s < n_warm else
+        max(0.0, (steps - s) / max(1, steps - n_warm))))
+    if cuda:
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+    t0, losses = time.perf_counter(), []
+    for s in range(steps):
+        loss = loss_fn(plan[s % len(plan)])
+        loss.backward()
+        nn.utils.clip_grad_norm_(params, 1.0)
+        opt.step()
+        sched.step()
+        opt.zero_grad(set_to_none=True)
+        losses.append(loss.detach())
+    if cuda:
+        torch.cuda.synchronize(device)
+    model.eval()
+    return dict(loss=torch.stack(losses).tolist(), steps=steps,
+                seconds=time.perf_counter() - t0,
+                peak_gib=(torch.cuda.max_memory_allocated(device) / 2**30
+                          if cuda else float('nan')))
+
+def truncate_embeddings(Z, dim):
+    """The first dim coordinates of each row of Z, rescaled to unit length.
+
+    Defined in :numref:`sec_lm_text_embeddings`"""
+    return F.normalize(Z[:, :dim], dim=-1)
+
+def binarize(Z):
+    """The signs of Z (N, m) as bits, eight per byte: uint8 (N, m / 8).
+
+    Defined in :numref:`sec_lm_text_embeddings`"""
+    return np.packbits(np.asarray(Z) > 0, axis=1)
+
+def hamming_scores(Qbits, Dbits):
+    """The number of equal bits of each packed query and each packed
+    document (m minus their Hamming distance): int32 (nq, nd).
+
+    Defined in :numref:`sec_lm_text_embeddings`"""
+    pop = np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).sum(
+        1, dtype=np.uint8)  # set bits per byte value
+    out = np.empty((len(Qbits), len(Dbits)), np.int32)
+    for i in range(0, len(Qbits), 16):
+        out[i:i + 16] = 8 * Qbits.shape[1] - pop[
+            Qbits[i:i + 16, None] ^ Dbits[None]].sum(-1, dtype=np.int32)
+    return out
+
+d2l.DATA_HUB['lm-book-r3-v1'] = (  # book commit 098bf463, corpus r3.1
+    d2l.LM_DATA_URL + 'lm-book-r3-v1.zip',
+    '0b7f11e044a4838139ac02dffb6e2d7eb32b48b8')
+d2l.DATA_HUB['lm-enc-r3-emb-qwen3emb06b-sec512-v1'] = (  # float16, dense view
+    d2l.LM_DATA_URL + 'lm-enc-r3-emb-qwen3emb06b-sec512-v1.npy',
+    '5bf63b97609399841b4fcd925734b98327634b91')
+d2l.DATA_HUB['lm-enc-r3-stress-emb-v1'] = (  # D2L_RERUN=ret-stress-emb
+    d2l.LM_DATA_URL + 'lm-enc-r3-stress-emb-v1.npz',
+    'f9fbf41eba47b50a034ee5d7f0a6fa33f28c26a1')
+d2l.DATA_HUB['lm-enc-ret-rerank-v1'] = (  # D2L_RERUN=ret-rerank
+    d2l.LM_DATA_URL + 'lm-enc-ret-rerank-v1.json',
+    '93299ee93a052d3e21f4ed49d8b259400382dc81')
+d2l.DATA_HUB['lm-enc-ret-rerank-v2'] = (  # v1 with the model card's task
+    d2l.LM_DATA_URL + 'lm-enc-ret-rerank-v2.json',
+    '4ff13c3c0493e15313feda407b0dc20680539014')
+d2l.DATA_HUB['lm-enc-ann-v1'] = (  # D2L_RERUN=ret-ann, AMD EPYC 7502
+    d2l.LM_DATA_URL + 'lm-enc-ann-v1.json',
+    'aadf07c143fa936ca556c105644c35052c30bf18')
+
+def book_corpus(chunking='sections', *, size=256, overlap=0, source='hub',
+                root=os.path.join('..', 'data', 'lm')):
+    """The book corpus (artifact lm-book-r3-v1) under one chunking:
+    'sections' (structure-aware, up to 512 tokens) or 'fixed' (windows of
+    size tokens sharing overlap tokens: 256 and 0 or 64 are shipped). With
+    source='local' it is rebuilt in memory from the git checkout named by
+    the environment variable D2L_BOOK_ROOT.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    tag = 'sec512' if chunking == 'sections' else f'fix{size}o{overlap}'
+    if tag not in ('sec512', 'fix256o0', 'fix256o64'):
+        raise ValueError(f'no shipped chunking {chunking!r} with size '
+                         f'{size} and overlap {overlap}')
+    if source == 'local':
+        import transformers
+        rev = d2l.HF_REVISIONS[d2l.R3_TOKENIZER]
+        tok = transformers.AutoTokenizer.from_pretrained(d2l.R3_TOKENIZER,
+                                                         revision=rev)
+        manifest, docs, chunks = d2l._r3_local(os.environ['D2L_BOOK_ROOT'],
+                                                tok, rev)
+        if 'lm-book-r3-v1' in d2l.DATA_HUB:  # what changed since the release
+            shipped = d2l._r3_read_zip(d2l.download_keyed(
+                'lm-book-r3-v1', root), ())[0]['files']
+            drift = sorted(set(shipped.items()) ^ set(
+                manifest['files'].items()))
+            if drift:
+                print(f'warning: {len({d for d, _ in drift})} files differ '
+                      f'from the registered corpus')
+        chunks = chunks[tag]
+    else:
+        path = d2l.download_keyed('lm-book-r3-v1', root)
+        manifest, docs, chunks = d2l._r3_read_zip(path, (tag,))
+        chunks = chunks[tag]
+    if manifest['corpus_version'] != d2l.R3_VERSION:
+        raise ValueError(
+            f'{manifest["corpus_version"]} is not corpus version '
+            f'{d2l.R3_VERSION}: delete {root}/lm-book-r3-v1 and download again')
+    return d2l.BookCorpus(manifest, docs, chunks, tag)
+
+def bm25_tokenize(text, split_identifiers=True):
+    """Lower-cased words and numbers of text; an identifier such as
+    d2l.book_corpus or BookRetriever also gives its parts (d2l, book,
+    corpus; book, retriever) when split_identifiers is set.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    out = []
+    for tok in re.findall(r'\w+(?:\.\w+)*', text):
+        out.append(tok.lower())
+        if not split_identifiers or re.fullmatch(r'[\d.]+', tok):
+            continue
+        parts = []
+        for p in re.split(r'[._]+', tok):
+            if re.search(r'[a-z][A-Z]|[A-Z][A-Z][a-z]', p):  # camelCase
+                parts += re.findall(r'[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+|\d+', p)
+            elif p:
+                parts.append(p)
+        if len(parts) > 1:
+            out += [p.lower() for p in parts]
+    return out
+
+class BM25Index:
+    """BM25 over tokenized documents: W[t, d] = idf(t) tf / (tf + k1 (1 - b
+    + b |d| / avgdl)) with Lucene's idf log(1 + (N - df + 0.5) / (df +
+    0.5)), stored as a sparse matrix; a query's scores are the sum of the
+    rows of its tokens.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    def __init__(self, docs_tokens, k1=1.2, b=0.75, idf='lucene'):
+        from scipy import sparse
+        if idf != 'lucene':
+            raise ValueError("only idf='lucene' is implemented")
+        self.k1, self.b, self.vocab = k1, b, {}
+        rows, cols = [], []
+        for d, toks in enumerate(docs_tokens):
+            for t in toks:
+                rows.append(self.vocab.setdefault(t, len(self.vocab)))
+                cols.append(d)
+        N, V = len(docs_tokens), len(self.vocab)
+        tf = sparse.csr_matrix((np.ones(len(rows)), (rows, cols)),
+                               shape=(V, N))  # duplicates are summed
+        tf.sum_duplicates()
+        self.doc_len = np.array([len(t) for t in docs_tokens], dtype=float)
+        df = np.diff(tf.indptr)
+        self.idf = np.log1p((N - df + 0.5) / (df + 0.5))
+        norm = k1 * (1 - b + b * self.doc_len / self.doc_len.mean())
+        tf.data = (np.repeat(self.idf, df) * tf.data
+                   / (tf.data + norm[tf.indices]))
+        self.W = tf  # (vocabulary, documents)
+
+    def scores(self, query_tokens):
+        """BM25 score of every document (a repeated token counts twice)."""
+        ids = [self.vocab[t] for t in query_tokens if t in self.vocab]
+        if not ids:
+            return np.zeros(self.W.shape[1])
+        return np.asarray(self.W[ids].sum(axis=0)).ravel()
+
+    def search(self, query_tokens, k):
+        """Indices and scores of the k best documents, best first."""
+        s = self.scores(query_tokens)
+        ids = np.argsort(-s, kind='stable')[:k]
+        return ids, s[ids]
+
+def rrf_fuse(rankings, k=60, weights=None):
+    """Reciprocal-rank fusion: each id scores sum_r w_r / (k + rank_r) over
+    the rankings (lists of ids, best first) that contain it. Returns
+    [(id, score)], best first, ties in order of first appearance.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    weights = [1.0] * len(rankings) if weights is None else weights
+    score, first = {}, {}
+    for w, ranking in zip(weights, rankings):
+        for r, i in enumerate(ranking, start=1):
+            score[i] = score.get(i, 0.0) + w / (k + r)
+            first.setdefault(i, len(first))
+    return sorted(score.items(), key=lambda x: (-x[1], first[x[0]]))
+
+def rerank_yes_no(model, tokenizer, query, docs, instruction=None,
+                  batch_size=16, max_len=1024):
+    """P(yes) of a yes/no reranker (Qwen3-Reranker) that each document
+    meets the query: the model card's prompt with the document cut to fit
+    max_len tokens, scored by the normalized probability of 'yes' against
+    'no' as the next token.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    instruction = instruction or ('Given a web search query, retrieve '
+                                  'relevant passages that answer the query')
+    head = ('<|im_start|>system\nJudge whether the Document meets the '
+            'requirements based on the Query and the Instruct provided. '
+            'Note that the answer can only be "yes" or "no".<|im_end|>\n'
+            f'<|im_start|>user\n<Instruct>: {instruction}\n'
+            f'<Query>: {query}\n<Document>: ')
+    tail = '<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n'
+    enc = lambda s: tokenizer(s, add_special_tokens=False)['input_ids']
+    room = max_len - len(enc(head)) - len(enc(tail))
+    prompts = [head + tokenizer.decode(enc(d)[:room]) + tail for d in docs]
+    lp = d2l.label_logprobs(model, tokenizer, prompts, ['yes', 'no'],
+                            sep='', batch_size=batch_size)
+    return torch.exp(lp[:, 0]).numpy()
+
+def kmeans(X, n_clusters, n_iter=20, seed=0):
+    """Lloyd's k-means of the rows of X from a seeded k-means++ start:
+    (centroids (n_clusters, d), assign (N,)) as tensors on X's device,
+    assign naming each row's nearest centroid. A cluster that loses all
+    its rows keeps its centroid.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    X = torch.as_tensor(X, dtype=torch.float32)
+    x2, gen = (X ** 2).sum(1), torch.Generator().manual_seed(seed)
+
+    def nearest(C):  # ||x||^2 is the same for every centroid: left out
+        c2 = (C ** 2).sum(1)
+        return torch.cat([(c2 - 2 * Xb @ C.T).argmin(1)
+                          for Xb in X.split(8192)])
+
+    def pick(d2):  # a row drawn with probability proportional to d2
+        w = d2.double().cpu().clamp(min=0)
+        if w.sum() == 0:
+            return torch.randint(len(X), (1,), generator=gen).item()
+        return torch.multinomial(w, 1, generator=gen).item()
+
+    C = [X[pick(torch.ones(len(X)))]]
+    d2 = x2 - 2 * X @ C[0] + C[0] @ C[0]
+    for _ in range(1, n_clusters):  # k-means++: far rows are likelier
+        C.append(X[pick(d2)])
+        d2 = torch.minimum(d2, x2 - 2 * X @ C[-1] + C[-1] @ C[-1])
+    C = torch.stack(C)
+    for _ in range(n_iter):
+        assign = nearest(C)
+        counts = torch.bincount(assign, minlength=n_clusters)
+        sums = torch.zeros_like(C).index_add_(0, assign, X)
+        keep = counts > 0
+        C[keep] = sums[keep] / counts[keep, None]
+    return C, nearest(C)
+
+class IVFIndex:
+    """Inverted file index: the k-means cells of the training vectors; a
+    query scans the vectors of its nprobe nearest cells exactly, by
+    squared Euclidean distance (for unit vectors, the cosine order).
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    def __init__(self, nlist, nprobe=1):
+        self.nlist, self.nprobe = nlist, nprobe
+
+    def train(self, X, n_iter=20, seed=0):
+        self.centroids = d2l.kmeans(X, self.nlist, n_iter, seed)[0]
+
+    def _cells(self, X, n):
+        """The n nearest cells of each row of X."""
+        d = (self.centroids ** 2).sum(1) - 2 * X @ self.centroids.T
+        return d.topk(n, dim=1, largest=False).indices
+
+    def add(self, X):
+        """Store the rows of X (ids 0, 1, ...) grouped by cell."""
+        X = torch.as_tensor(X, dtype=torch.float32)
+        cell = self._cells(X, 1)[:, 0]
+        self.ids = torch.argsort(cell, stable=True)
+        self.X = X[self.ids]
+        sizes = torch.bincount(cell, minlength=self.nlist)
+        self.start = torch.cat([torch.zeros(1, dtype=torch.long),
+                                sizes.cumsum(0)])  # cell c: start[c:c + 2]
+
+    def search(self, Q, k):
+        """(distances, ids) of the k nearest stored rows per query, nearest
+        first, among the probed cells; id -1 where they hold fewer."""
+        Q = torch.as_tensor(Q, dtype=torch.float32)
+        D = torch.full((len(Q), k), torch.inf)
+        I = torch.full((len(Q), k), -1, dtype=torch.long)
+        for j, cells in enumerate(self._cells(Q, self.nprobe).tolist()):
+            rows = torch.cat([torch.arange(self.start[c], self.start[c + 1])
+                              for c in cells])
+            top = ((self.X[rows] - Q[j]) ** 2).sum(1).topk(
+                min(k, len(rows)), largest=False)
+            n = len(top.values)
+            D[j, :n], I[j, :n] = top.values, self.ids[rows[top.indices]]
+        return D, I
+
+class ProductQuantizer:
+    """Product quantization: a vector of d coordinates is cut into m
+    sub-vectors, each replaced by the index of the nearest of 2^nbits
+    centroids of its own k-means codebook (one byte per sub-vector here).
+    A query's squared distances to all codes are sums of m entries of a
+    table computed once per query: the asymmetric distance.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    def __init__(self, m, nbits=8):
+        if not 1 <= nbits <= 8:
+            raise ValueError('codes are stored as one byte per sub-vector')
+        self.m, self.nbits = m, nbits
+
+    def _split(self, X):  # (..., d) -> (..., m, d / m)
+        X = torch.as_tensor(X, dtype=torch.float32)
+        if X.shape[-1] % self.m:
+            raise ValueError(f'{X.shape[-1]} coordinates in {self.m} parts')
+        return X.reshape(*X.shape[:-1], self.m, X.shape[-1] // self.m)
+
+    def fit(self, X, n_iter=20, seed=0):
+        S = self._split(X)
+        self.codebooks = torch.stack([d2l.kmeans(  # (m, 2^nbits, d / m)
+            S[:, j], 2 ** self.nbits, n_iter, seed)[0] for j in range(self.m)])
+        return self
+
+    def encode(self, X):
+        """Codes (N, m), uint8: the nearest centroid of each sub-vector."""
+        S, c2 = self._split(X), (self.codebooks ** 2).sum(-1)
+        return torch.cat([(c2 - 2 * torch.einsum(
+            'nmd,mkd->nmk', block, self.codebooks)).argmin(-1)
+                          for block in S.split(1024)]).to(torch.uint8)
+
+    def decode(self, codes):
+        """The reconstructions x-hat (N, d) of codes."""
+        codes = torch.as_tensor(codes).long()
+        return self.codebooks[torch.arange(self.m), codes].flatten(1)
+
+    def adc_table(self, q):
+        """(m, 2^nbits) squared distances of q's sub-vectors to the
+        centroids."""
+        return ((self._split(q)[:, None, :] - self.codebooks) ** 2).sum(-1)
+
+    def adc_search(self, q, codes, k):
+        """(distances, ids) of the k codes nearest to the query q, or to
+        each row of q, by m table look-ups per code."""
+        q = torch.as_tensor(q, dtype=torch.float32)
+        codes = torch.as_tensor(codes).long()  # a no-op if already int64
+        if q.ndim == 2:
+            out = [self.adc_search(row, codes, k) for row in q]
+            return tuple(torch.stack(t) for t in zip(*out))
+        d = self.adc_table(q)[torch.arange(self.m), codes].sum(1)
+        top = d.topk(min(k, len(d)), largest=False)
+        return top.values, top.indices
+
+# The embedder that the retriever, this chapter and later chapters use
+DEFAULT_EMBEDDER = 'Qwen/Qwen3-Embedding-0.6B'
+
+Hit = collections.namedtuple('Hit',
+                             'chunk_id score rank text heading_path scores')
+
+class BookRetriever:
+    """Hybrid retrieval over the book corpus: BM25 over the 'sparse' view
+    and a dense embedder over the 'dense' view, fused by reciprocal rank,
+    optionally reranked by a yes/no reranker (which reads the 'dense' view
+    with the embedder's instruction, BOOK_TASK). dense=None gives a
+    BM25-only retriever; index 'flat' scans all chunk vectors, 'hnsw' and
+    'ivfpq' build Faiss indexes on first use.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    # BM25 parameters chosen on the book's training questions
+    BM25_PARAMS = dict(k1=1.2, b=0.9, split_identifiers=True)
+
+    def __init__(self, corpus=None, dense=DEFAULT_EMBEDDER, index='flat',
+                 reranker=None, fusion='rrf', rrf_k=60, device=None,
+                 cache=True, bm25_params=None):
+        if fusion != 'rrf' or index not in ('flat', 'hnsw', 'ivfpq'):
+            raise ValueError(f'fusion {fusion!r} or index {index!r}')
+        self.corpus = d2l.book_corpus() if corpus is None else corpus
+        self.bm25_params = dict(self.BM25_PARAMS if bm25_params is None
+                                else bm25_params)
+        p = self.bm25_params
+        self.bm25 = d2l.BM25Index(
+            [d2l.bm25_tokenize(t, p['split_identifiers'])
+             for t in self.corpus.texts('sparse')], k1=p['k1'], b=p['b'])
+        self.dense, self.index, self.reranker = dense, index, reranker
+        self.rrf_k, self.cache = rrf_k, cache
+        self.device = device or ('cuda' if torch.cuda.is_available()
+                                 else 'cpu')
+        self._X = self._ann = self._enc = self._rr = self._texts = None
+
+    def _encoder(self):
+        if self._enc is None:
+            dtype = torch.bfloat16 if self.device != 'cpu' else torch.float32
+            self._enc = d2l.load_encoder(
+                self.dense, padding_side=d2l._EMBEDDERS[self.dense][
+                    'padding_side'], dtype=dtype, device=self.device)
+        return self._enc
+
+    def chunk_vectors(self):
+        """Unit vectors of the chunks (N, m), float16: the registered set
+        for this embedder if there is one, else the local cache, else
+        encoded now (and cached)."""
+        if self._X is None:
+            spec, c = d2l._EMBEDDERS[self.dense], self.corpus
+            rev = d2l.HF_ENCODER_REVISIONS[self.dense]
+            key = d2l._emb_cache_key(c.version, c.tag, 'dense', self.dense,
+                                     rev, 1024, spec['pooling'], '')
+            reg = d2l._R3_EMB_KEYS.get(self.dense)
+            X = (np.load(d2l.download_keyed(reg)) if c.tag == 'sec512'
+                 and reg in d2l.DATA_HUB else
+                 d2l._emb_cache_load(key) if self.cache else None)
+            if X is None:
+                model, tok = self._encoder()
+                X = d2l.embed_texts(model, tok, c.texts('dense'),
+                                    pooling=spec['pooling'], max_len=1024,
+                                    batch_size=16).half().numpy()
+                if self.cache:
+                    d2l._emb_cache_save(key, X)
+            assert X.shape[0] == len(c), 'chunk vectors do not match corpus'
+            self._X = torch.tensor(X, device=self.device)
+        return self._X
+
+    def _dense_search(self, queries, depth):
+        spec = d2l._EMBEDDERS[self.dense]
+        model, tok = self._encoder()
+        Q = d2l.embed_texts(model, tok, [spec['query_format'].format(
+            task=d2l.BOOK_TASK, query=q) for q in queries],
+            pooling=spec['pooling'], max_len=512)
+        X = self.chunk_vectors()
+        if self.index == 'flat':
+            S = (Q.to(X.device, X.dtype) @ X.T).float().cpu()
+            s, i = S.topk(min(depth, len(X)), dim=1)
+            return i.numpy(), s.numpy(), S.numpy()
+        if self._ann is None:
+            import faiss
+            Xf = np.ascontiguousarray(X.float().cpu().numpy())
+            m = Xf.shape[1]
+            if self.index == 'hnsw':
+                self._ann = faiss.IndexHNSWFlat(m, 32,
+                                                faiss.METRIC_INNER_PRODUCT)
+                self._ann.hnsw.efConstruction, self._ann.hnsw.efSearch = (
+                    200, 128)
+            else:
+                nlist = max(1, len(Xf) // 64)
+                self._ann = faiss.index_factory(
+                    m, f'IVF{nlist},PQ64', faiss.METRIC_INNER_PRODUCT)
+                if len(Xf) < 256 * 39:  # below what Faiss asks per codebook
+                    print(f'IVF-PQ: codebooks of 256 centroids trained on '
+                          f'{len(Xf):,} vectors')
+                    self._ann.pq.cp.min_points_per_centroid = 1
+                self._ann.train(Xf)
+                self._ann.nprobe = 16
+            self._ann.add(Xf)
+        s, i = self._ann.search(np.ascontiguousarray(Q.numpy()), depth)
+        keep = i >= 0  # Faiss pads with id -1 when it finds fewer
+        return [r[k] for r, k in zip(i, keep)], [
+            r[k] for r, k in zip(s, keep)], None
+
+    def search_batch(self, queries, k=10, mode='hybrid', rerank_k=None):
+        """search for each of several queries."""
+        if mode not in ('bm25', 'dense', 'hybrid'):
+            raise ValueError(f'mode {mode!r}')
+        if self.dense is None:
+            if mode == 'dense':
+                raise ValueError('a BM25-only retriever has no dense mode')
+            mode = 'bm25'
+        if rerank_k and not self.reranker:
+            raise ValueError('rerank_k needs a retriever with a reranker')
+        depth = max(100, k, rerank_k or 0)
+        p, ids = self.bm25_params, self.corpus.ids
+        bm25 = [self.bm25.scores(d2l.bm25_tokenize(q, p['split_identifiers']))
+                for q in queries]
+        if mode != 'bm25':
+            di, ds, dense_all = self._dense_search(queries, depth)
+        out = []
+        for j, q in enumerate(queries):
+            stages = {'bm25': bm25[j]}
+            bm_rank = np.argsort(-bm25[j], kind='stable')[:depth]
+            if mode == 'bm25':
+                ranked = [(int(i), float(bm25[j][i])) for i in bm_rank]
+            else:
+                dense_s = (dense_all[j] if dense_all is not None else
+                           dict(zip(di[j].tolist(), ds[j].tolist())))
+                stages['dense'] = dense_s
+                if mode == 'dense':
+                    ranked = list(zip(di[j].tolist(), ds[j].tolist()))
+                else:
+                    ranked = d2l.rrf_fuse([bm_rank.tolist(), di[j].tolist()],
+                                          k=self.rrf_k)[:depth]
+                    stages['rrf'] = dict(ranked)
+            if rerank_k:
+                if self._texts is None:
+                    self._texts = self.corpus.texts('dense')
+                top = [i for i, _ in ranked[:rerank_k]]
+                pr = d2l.rerank_yes_no(*self._reranker(), q,
+                                       [self._texts[i] for i in top],
+                                       instruction=d2l.BOOK_TASK)
+                stages['rerank'] = dict(zip(top, pr.tolist()))
+                order = np.argsort(-pr, kind='stable')
+                ranked = ([(top[o], float(pr[o])) for o in order]
+                          + ranked[rerank_k:])  # the rest as fused
+            hits = []
+            for r, (i, s) in enumerate(ranked[:k], start=1):
+                c = self.corpus.chunks[i]
+                hits.append(d2l.Hit(c['id'], s, r, c['text'],
+                                    c['heading_path'], {
+                    name: float(v[i]) if not isinstance(v, dict)
+                    else v.get(i) for name, v in stages.items()}))
+            out.append(hits)
+        return out
+
+    def search(self, query, k=10, mode='hybrid', rerank_k=None):
+        """The k best chunks for query as a list of Hit, best first; with
+        rerank_k, the reranker reorders the first rerank_k of the fused
+        ranking."""
+        return self.search_batch([query], k, mode, rerank_k)[0]
+
+    def _reranker(self):
+        if self._rr is None:
+            self._rr = d2l.load_hf(
+                self.reranker,
+                revision=d2l.HF_ENCODER_REVISIONS[self.reranker],
+                device_map={'': self.device})
+        return self._rr
+
+    def release(self):
+        """Free the GPU models (query encoder, reranker); a later search
+        loads them again."""
+        self._enc = self._rr = None
+        d2l.lm_free()
+
+d2l.DATA_HUB['lm-book-qa-v1'] = (  # corpus r3.1; 5,865 train, 240 dev, 240 test
+    d2l.LM_DATA_URL + 'lm-book-qa-v1.zip',
+    '3b8dba5ceae43c88274e52ce6ae7525884ea4168')
+d2l.DATA_HUB['lm-book-qa-api-cache-v1'] = (  # its drafts, checks, verdicts
+    d2l.LM_DATA_URL + 'lm-book-qa-api-cache-v1.zip',
+    '962322fd53b3573daeaa50a92d3f53f25a25572d')
+d2l.DATA_HUB['lm-book-qa-v2'] = (  # v1, closed-book flag by the 27B judge
+    d2l.LM_DATA_URL + 'lm-book-qa-v2.zip',
+    '65a524857b50dfdffa4e75f217b5af66256bd025')
+d2l.DATA_HUB['lm-rag-judge-labels-v1'] = (  # 200 pairs, frontier labels
+    d2l.LM_DATA_URL + 'lm-rag-judge-labels-v1.zip',
+    '2f10e6f4314644e7ebdf7ac7a8c1b3e7182f98d8')
+d2l.DATA_HUB['lm-rag-gen-base-v1'] = (  # closed, base, oracle, base-repeat
+    d2l.LM_DATA_URL + 'lm-rag-gen-base-v1.jsonl',
+    '78065bff472577631de5d7cac287323e77427e7f')
+d2l.DATA_HUB['lm-rag-gen-base-v2'] = (  # v1 with the model card's task
+    d2l.LM_DATA_URL + 'lm-rag-gen-base-v2.jsonl',
+    '9701221a6ec07e4c524b1ebd063af3dbdf5101f4')
+d2l.DATA_HUB['lm-rag-gen-stages-v1'] = (  # the five stage changes, dev
+    d2l.LM_DATA_URL + 'lm-rag-gen-stages-v1.jsonl',
+    '7c08b175e12fe3138742f46e14720df1ab45e277')
+d2l.DATA_HUB['lm-rag-gen-stages-v2'] = (  # v1 and the control fixed-over
+    d2l.LM_DATA_URL + 'lm-rag-gen-stages-v2.jsonl',
+    'bfd5ba324efcc683b06ded6d96c04b56ca806cb0')
+d2l.DATA_HUB['lm-rag-gen-stages-v3'] = (  # v2 with the model card's task
+    d2l.LM_DATA_URL + 'lm-rag-gen-stages-v3.jsonl',
+    '350230216f0f4a43c34b55bf6af720e537392b61')
+d2l.DATA_HUB['lm-rag-gen-fix-v1'] = (  # dev: fix; test: base, fix, stage
+    d2l.LM_DATA_URL + 'lm-rag-gen-fix-v1.jsonl',
+    'd94ed6b1f942ea5ca0df0292c5e7cc81bd834d50')
+d2l.DATA_HUB['lm-rag-gen-fix-v2'] = (  # card's task: fix-unsupported
+    d2l.LM_DATA_URL + 'lm-rag-gen-fix-v2.jsonl',
+    '2a980b4961883ecdd3eac2a4a31b8de2d621f004')
+d2l.DATA_HUB['lm-rag-gen-fix-v3'] = (  # v2 and the fix the rule picks with
+    d2l.LM_DATA_URL + 'lm-rag-gen-fix-v3.jsonl',  # the 4-bit judge, dev only
+    '7ffa13c3cf4b5d28a7f420c6b247dda1d176b379')
+d2l.DATA_HUB['lm-rag-cards-v1'] = (  # 31 base failures, labelled by a model
+    d2l.LM_DATA_URL + 'lm-rag-cards-v1.jsonl',
+    'dd66f91cc44070f7e2256c63d5e5caf912c4054e')
+d2l.DATA_HUB['lm-rag-cards-v2'] = (  # 26 base failures with the card's task
+    d2l.LM_DATA_URL + 'lm-rag-cards-v2.jsonl',
+    'ed510addb6e39fe5c54cab40a6283be4d908a80d')
+d2l.DATA_HUB['lm-rag-cards-v3'] = (  # 21 base failures by the 4-bit judge
+    d2l.LM_DATA_URL + 'lm-rag-cards-v3.jsonl',
+    '75b61c6e9ddf0563d9f4bda766dbee22f7b9f2ab')
+d2l.DATA_HUB['lm-rag-judge-v1'] = (  # verdicts on the base and stage answers
+    d2l.LM_DATA_URL + 'lm-rag-judge-v1.jsonl',
+    '8e128dbe149cf3f22b3d0979368c679c5d43c371')
+d2l.DATA_HUB['lm-rag-judge-cache-v1'] = (  # the judge's recorded replies
+    d2l.LM_DATA_URL + 'lm-rag-judge-cache-v1.zip',
+    '12402e3f6d7675bcd3f2667743607677129abd4e')
+d2l.DATA_HUB['lm-rag-judge-v2'] = (  # v1 and the verdicts on the fix run
+    d2l.LM_DATA_URL + 'lm-rag-judge-v2.jsonl',
+    '8e8ad8b9f63e000005e40f060c4e926e66c3312f')
+d2l.DATA_HUB['lm-rag-judge-cache-v2'] = (  # every recorded reply
+    d2l.LM_DATA_URL + 'lm-rag-judge-cache-v2.zip',
+    '9b68fb8b52733e7909000165121512892f4b022c')
+d2l.DATA_HUB['lm-rag-judge-v3'] = (  # v2, missing verdicts judged again
+    d2l.LM_DATA_URL + 'lm-rag-judge-v3.jsonl',  # with 6,000 new tokens
+    '28d257ee9b9545e7035917e6612d978faf8d259d')
+d2l.DATA_HUB['lm-rag-judge-cache-v3'] = (  # v2 and those longer replies
+    d2l.LM_DATA_URL + 'lm-rag-judge-cache-v3.zip',
+    '8711571c3c94646d17215c522aec15d7a3cd269c')
+d2l.DATA_HUB['lm-rag-judge-v4'] = (  # v3 and the verdicts on fixed-over
+    d2l.LM_DATA_URL + 'lm-rag-judge-v4.jsonl',
+    '0169be597e978728e6559cd191c91cb8e30281c5')
+d2l.DATA_HUB['lm-rag-judge-cache-v4'] = (  # v3 and those replies
+    d2l.LM_DATA_URL + 'lm-rag-judge-cache-v4.zip',
+    'cf57712b285710ee87c0a7c56aab0600d13dac7a')
+d2l.DATA_HUB['lm-rag-judge-v5'] = (  # card's task: base and stages
+    d2l.LM_DATA_URL + 'lm-rag-judge-v5.jsonl',
+    '664337072badcb67b147684cd7935c77b4169ab0')
+d2l.DATA_HUB['lm-rag-judge-v6'] = (  # v5 and the verdicts on the fix run
+    d2l.LM_DATA_URL + 'lm-rag-judge-v6.jsonl',
+    '16fe5b4040697906e84fc99476e42c151fc93dd7')
+d2l.DATA_HUB['lm-rag-judge-cache-v6'] = (  # every reply with the card's task
+    d2l.LM_DATA_URL + 'lm-rag-judge-cache-v6.zip',
+    '3f6a32485e092cb233ab4fc5dec761843c8ba68a')
+d2l.DATA_HUB['lm-rag-judge-labels-v2'] = (  # 100 pairs of Qwen3.5-9B,
+    d2l.LM_DATA_URL + 'lm-rag-judge-labels-v2.zip',  # frontier labels
+    'c798cfd7faa27664a77c0ec895ec6d3ab7608166')
+d2l.DATA_HUB['lm-rag-judge-v7'] = (  # the 4-bit judge, 12,000 new tokens:
+    d2l.LM_DATA_URL + 'lm-rag-judge-v7.jsonl',  # every arm judged again
+    '3305609e58fbce4dea8a302cb038f653d6edd503')
+d2l.DATA_HUB['lm-rag-judge-cache-v7'] = (  # its replies, one file per GPU
+    d2l.LM_DATA_URL + 'lm-rag-judge-cache-v7.zip',
+    '09cd4f7b0e363d60528ddb0ff1bb33416fd9fb66')
+d2l.DATA_HUB['lm-rag-judge-v8'] = (  # v7 and the verdicts on fix-ignored
+    d2l.LM_DATA_URL + 'lm-rag-judge-v8.jsonl',
+    '41b154d29b97ebc8394108fc71812f2998aa8965')
+d2l.DATA_HUB['lm-rag-judge-cache-v8'] = (  # v7 and those replies
+    d2l.LM_DATA_URL + 'lm-rag-judge-cache-v8.zip',
+    '1894f3cced3bacc29bfe38cf45b92a3dce9eca8f')
+d2l.DATA_HUB['lm-rag-judge-v1cal-v1'] = (  # the 4-bit judge on the 198
+    d2l.LM_DATA_URL + 'lm-rag-judge-v1cal-v1.zip',  # labeled Qwen3-4B answers
+    'dd6f34de4b95b45e43bea58a03b769a30badd6d3')
+
+def book_qa(split='dev', answerable=None, types=None, n=None, seed=0,
+            root=os.path.join('..', 'data', 'lm')):
+    """The book's question set (artifact lm-book-qa-v2), one split: a
+    BookQA (a list of item dicts), optionally only answerable (or only
+    unanswerable) items, only some question types, and a stratified
+    sample of n items.
+
+    Defined in :numref:`sec_lm_rag`"""
+    items = d2l._book_qa_read(split, root)
+    if answerable is not None:
+        items = [q for q in items if q['answerable'] == answerable]
+    if types is not None:
+        items = [q for q in items if q['type'] in types]
+    qa = d2l.BookQA(items, split)
+    return qa if n is None else qa.subset(n, seed)
+
+def gold_chunk_ids(item, corpus, min_overlap=0.5, include_alt=True):
+    """Ids of the chunks of corpus relevant to a question: those that
+    overlap one of its gold spans (and, with include_alt, the passages
+    judged to answer it as well) by at least min_overlap of the span's or
+    of the chunk's characters."""
+    spans = item['gold_spans'] + (item.get('alt_spans', []) if include_alt
+                                  else [])
+    return {i for s in spans for i in corpus.span_to_chunk_ids(
+        s['doc_id'], s['char_start'], s['char_end'], min_overlap)}
+
+def cov_at_budget(ranked_chunk_ids, item, corpus, budget_tokens):
+    """Whether the chunks of corpus taken in rank order until the next one
+    would pass budget_tokens tokens cover at least half the characters of
+    one of the item's gold spans (or alternative spans).
+
+    Defined in :numref:`sec_lm_rag`"""
+    taken, used = collections.defaultdict(list), 0
+    for cid in ranked_chunk_ids:
+        c = corpus[cid]
+        if used + c['n_tokens'] > budget_tokens:
+            break
+        used += c['n_tokens']
+        taken[c['doc_id']].append((c['char_start'], c['char_end']))
+    for s in item['gold_spans'] + item.get('alt_spans', []):
+        a, b = s['char_start'], s['char_end']
+        covered = np.zeros(b - a, dtype=bool)
+        for lo, hi in taken.get(s['doc_id'], ()):
+            covered[max(lo, a) - a:max(min(hi, b) - a, 0)] = True
+        if b > a and covered.mean() >= 0.5:
+            return True
+    return False
+
+def assemble_context(hits, budget_tokens=3000, order='rank', dedup_cos=0.95,
+                     embed=None, k=None):
+    """The passages for the prompt: hits (chunk dicts with n_tokens, best
+    first) taken in rank order, skipping a near duplicate of one already
+    taken (cosine above dedup_cos between the unit vectors that embed(hits)
+    returns; no check without embed), until k are taken or the next would
+    pass budget_tokens; then ordered 'rank' (best first), 'reverse' (best
+    last, next to the question) or 'edges' (the best at both ends, the
+    weakest in the middle). Returns (passages, tokens used)."""
+    if order not in ('rank', 'reverse', 'edges'):
+        raise ValueError(f'unknown order {order!r}')
+    hits = list(hits)
+    V = (torch.as_tensor(embed(hits)).float()
+         if embed is not None and hits else None)
+    keep, used = [], 0
+    for i, h in enumerate(hits):
+        if (k is not None and len(keep) == k
+                or used + h['n_tokens'] > budget_tokens):
+            break
+        if V is not None and keep and (V[keep] @ V[i]).max() > dedup_cos:
+            continue  # a near duplicate of a passage already taken
+        keep.append(i)
+        used += h['n_tokens']
+    out = [hits[i] for i in keep]
+    if order == 'reverse':
+        out = out[::-1]
+    elif order == 'edges':  # ranks 1, 3, 5, ..., then ..., 4, 2
+        out = out[0::2] + out[1::2][::-1]
+    return out, used
+
+ABSTAIN = 'I cannot answer this from the provided passages.'
+
+def rag_prompt(question, hits, abstain=ABSTAIN):
+    """Chat messages asking for an answer from numbered passages (hits: Hit
+    records or dicts with heading_path and text), each statement citing
+    them as [n], or the abstention string; hits=None gives the closed-book
+    prompt (no passages, no citations).
+
+    Defined in :numref:`sec_lm_rag`"""
+    if hits is None:
+        system = ('You answer questions about the textbook Dive into Deep '
+                  'Learning. If you do not know the answer, reply exactly: '
+                  + abstain)
+        user = f'Question: {question}\nAnswer in at most four sentences.'
+    else:
+        system = ('You answer questions about the textbook Dive into Deep '
+                  'Learning using only the numbered passages. After each '
+                  'statement, cite the passage numbers that support it, for '
+                  'example [2]. If the passages do not contain the answer, '
+                  'reply exactly: ' + abstain)
+        get = lambda h, k: h[k] if isinstance(h, dict) else getattr(h, k)
+        passages = '\n\n'.join(
+            f'[{n}] {" > ".join(get(h, "heading_path"))}\n{get(h, "text")}'
+            for n, h in enumerate(hits, start=1))
+        user = (f'Passages:\n{passages}\n\nQuestion: {question}\n'
+                f'Answer in at most four sentences.')
+    return [{'role': 'system', 'content': system},
+            {'role': 'user', 'content': user}]
+
+def parse_citations(answer, n_chunks):
+    """The passage numbers an answer cites ([1], [1][3], [1, 3]), in order
+    of first mention, without numbers outside 1..n_chunks."""
+    out = []
+    for group in re.findall(r'\[(\d+(?:\s*,\s*\d+)*)\]', answer):
+        for n in map(int, group.split(',')):
+            if 1 <= n <= n_chunks and n not in out:
+                out.append(n)
+    return out
+
+RAGResult = collections.namedtuple('RAGResult', [
+    'qid', 'question', 'query_used', 'ranked_ids', 'context_ids', 'answer',
+    'cited_ids', 'abstained', 'n_prompt_tokens', 'n_new_tokens',
+    'latency_s'])
+
+class RAGPipeline:
+    """Retrieval-augmented generation over the book corpus. The question,
+    or a query the generator writes (rewrite='generator'), goes to the
+    retriever; rewrite='fuse' adds the query's ranking to the question's
+    in RRF, hyde embeds a passage the generator writes on the dense side,
+    decompose fuses the rankings of up to two sub-questions. The reranker
+    may reorder the first rerank_k chunks; assemble_context packs at most
+    k of them (k=None: as many as fit) into budget_tokens; the generator
+    answers with the fixed grounded prompt (or a variant of a
+    pre-registered fix), greedily, in batches. verify drops sentences
+    whose citations the generator finds unsupportive; abstain_below
+    abstains when the reranker's best score for the context is lower.
+
+    Defined in :numref:`sec_lm_rag`"""
+    def __init__(self, retriever, model, tokenizer, k=5, budget_tokens=3000,
+                 order='rank', rewrite=None, hyde=False, decompose=False,
+                 rerank_k=None, max_new_tokens=300, *, depth=50,
+                 dedup_cos=0.95, prompt='fixed', verify=False,
+                 abstain_below=None):
+        if rewrite not in (None, 'generator', 'fuse'):
+            raise ValueError(f'unknown rewrite {rewrite!r}')
+        if (rerank_k or abstain_below is not None) and not retriever.reranker:
+            raise ValueError('reranking needs a retriever with a reranker')
+        self.retriever, self.model, self.tokenizer = (retriever, model,
+                                                      tokenizer)
+        self.k, self.budget_tokens, self.order = k, budget_tokens, order
+        self.rewrite, self.hyde, self.decompose = rewrite, hyde, decompose
+        self.rerank_k, self.max_new_tokens = rerank_k, max_new_tokens
+        self.depth, self.dedup_cos, self.prompt = depth, dedup_cos, prompt
+        self.verify, self.abstain_below = verify, abstain_below
+        self._dense = self._pos = None
+
+    def prepare(self, questions, budgets=None):
+        """Phases 1 and 2. Per question (a string or an item dict): the
+        query used, the first-stage ranking (depth chunk ids), the context
+        (chunk dicts in prompt order) and its tokens, the reranker's best
+        score (None without one) and whether to abstain unasked."""
+        R, t0 = self.retriever, time.time()
+        qs = [self._question(q) for q in questions]
+        query = qs  # phase 1: the generator writes queries
+        if self.rewrite:
+            query = self._write([d2l._rag_rewrite_prompt(q) for q in qs], 20)
+        dense = (self._write([d2l._rag_hyde_prompt(q) for q in qs], 120)
+                 if self.hyde else qs)
+        extra = [[r] if self.rewrite == 'fuse' else [] for r in query]
+        if self.decompose:
+            subs = self._write([d2l._rag_decompose_prompt(q) for q in qs], 60)
+            extra = [e + [l.strip() for l in s.splitlines() if l.strip()][:2]
+                     for e, s in zip(extra, subs)]
+        main = query if self.rewrite == 'generator' else qs
+        ids = lambda H: [[h.chunk_id for h in hs] for hs in H]
+        pool = max(100, self.depth, self.rerank_k or 0)  # phase 2
+        if not (self.hyde or any(extra)):  # the retriever's own fusion
+            ranked = ids(R.search_batch(main, k=pool))
+        else:  # BM25 of the question, dense of `dense`, more rankings: RRF
+            bm = ids(R.search_batch(main, k=pool, mode='bm25'))
+            de = (ids(R.search_batch(dense, k=pool, mode='dense'))
+                  if R.dense else [[] for _ in qs])
+            flat = [e for es in extra for e in es]
+            more = iter(ids(R.search_batch(flat, k=pool)) if flat else [])
+            ranked = [[i for i, _ in d2l.rrf_fuse(
+                [b, d] + [next(more) for _ in es], k=R.rrf_k)][:pool]
+                for b, d, es in zip(bm, de, extra)]
+        cand, top = ranked, [None] * len(qs)
+        if self.rerank_k:
+            rr = self._rerank(qs, [r[:self.rerank_k] for r in ranked])
+            cand = [[c for c, _ in r] for r in rr]
+            top = [r[0][1] if r else None for r in rr]
+        budgets = budgets or [self.budget_tokens] * len(qs)
+        embed = self._embed if self.dedup_cos and R.dense else None
+        out = []
+        for j in range(len(qs)):
+            ctx, used = d2l.assemble_context(
+                [R.corpus[c] for c in cand[j]], budgets[j], self.order,
+                self.dedup_cos, embed, self.k)
+            out.append(dict(query_used=query[j], context=ctx,
+                            ranked_ids=ranked[j][:self.depth],
+                            n_context_tokens=used, top_score=top[j],
+                            abstain=False))
+        if self.abstain_below is not None:
+            need = [j for j, o in enumerate(out)
+                    if o['top_score'] is None and o['context']]
+            rr = self._rerank([qs[j] for j in need], [
+                [c['id'] for c in out[j]['context']] for j in need])
+            for j, r in zip(need, rr):
+                out[j]['top_score'] = r[0][1]
+            for o in out:
+                o['abstain'] = (o['top_score'] is not None and
+                                o['top_score'] < self.abstain_below)
+        for o in out:
+            o['seconds'] = (time.time() - t0) / max(len(qs), 1)
+        return out
+
+    def answer(self, questions, batch_size=8, contexts=None):
+        """Phase 3 after prepare (or with the contexts given; a context of
+        None is the closed-book prompt): the retriever's models leave the
+        GPU, then batched greedy generation. One RAGResult per question."""
+        prep = self.prepare(questions) if contexts is None else contexts
+        self.retriever.release()
+        go = [j for j, p in enumerate(prep) if not p.get('abstain')]
+        gen = dict(zip(go, self._generate(
+            [d2l._rag_fix_prompt(self._question(questions[j]),
+                                 prep[j]['context'], self.prompt)
+             for j in go], self.max_new_tokens, batch_size) if go else []))
+        answers = {j: (d2l._rag_quoted_answer(g[0]) if self.prompt == 'quote'
+                       else g[0]) for j, g in gen.items()}
+        if self.verify:
+            answers = self._verified(answers, prep, batch_size)
+        out = []
+        for j, q in enumerate(questions):
+            ctx = prep[j]['context'] or []
+            text = answers.get(j, d2l.ABSTAIN)
+            _, n_prompt, n_new, secs = gen.get(j, ('', 0, 0, 0.0))
+            out.append(d2l.RAGResult(
+                q.get('qid') if isinstance(q, dict) else None,
+                self._question(q), prep[j].get('query_used'),
+                list(prep[j].get('ranked_ids') or []),
+                [c['id'] for c in ctx], text,
+                d2l.parse_citations(text, len(ctx)), d2l._rag_abstained(text),
+                n_prompt, n_new, round(prep[j].get('seconds', 0) + secs, 4)))
+        return out
+
+    @staticmethod
+    def _question(q):
+        return q['question'] if isinstance(q, dict) else q
+
+    def _generate(self, messages, max_new_tokens, batch_size):
+        """(text, prompt tokens, new tokens, seconds) per chat: greedy,
+        thinking off, left padding; Transformers' generate keeps only the
+        last position's logits at the prefill (logits_to_keep=1)."""
+        tok, model = self.tokenizer, self.model
+        texts = [tok.apply_chat_template(m, tokenize=False,
+                                         add_generation_prompt=True,
+                                         enable_thinking=False)
+                 for m in messages]
+        eos = model.generation_config.eos_token_id
+        eos = set(eos if isinstance(eos, (list, tuple)) else [eos])
+        out = []
+        for b in range(0, len(texts), batch_size):
+            enc = tok(texts[b:b + batch_size], return_tensors='pt',
+                      padding=True, padding_side='left',
+                      add_special_tokens=False).to(model.device)
+            t = time.time()
+            with torch.no_grad():
+                ids = model.generate(
+                    **enc, max_new_tokens=max_new_tokens, do_sample=False,
+                    temperature=None, top_p=None, top_k=None,
+                    pad_token_id=tok.pad_token_id)
+            secs = (time.time() - t) / len(enc['input_ids'])
+            new = ids[:, enc['input_ids'].shape[1]:].tolist()
+            for row, n_prompt in zip(new, enc['attention_mask'].sum(1)):
+                n = next((i + 1 for i, x in enumerate(row) if x in eos),
+                         len(row))
+                out.append((tok.decode(row[:n], skip_special_tokens=True)
+                            .strip(), int(n_prompt), n, secs))
+        return out
+
+    def _write(self, messages, max_new_tokens):
+        """The generator's short replies (queries, passages)."""
+        return [t for t, *_ in self._generate(messages, max_new_tokens, 8)]
+
+    def _rerank(self, queries, id_lists):
+        """Per query, (chunk id, P(yes)) pairs of its chunks, best first."""
+        R = self.retriever
+        if self._dense is None:
+            self._dense = dict(zip(R.corpus.ids, R.corpus.texts('dense')))
+        model, tok = R._reranker()
+        out = []
+        for q, ids in zip(queries, id_lists):
+            p = (d2l.rerank_yes_no(model, tok, q, [self._dense[i] for i in
+                                                   ids],
+                                   instruction=d2l.BOOK_TASK)
+                 if ids else np.zeros(0))
+            out.append([(ids[i], float(p[i]))
+                        for i in np.argsort(-p, kind='stable')])
+        return out
+
+    def _embed(self, hits):
+        """Unit vectors of chunk dicts, from the retriever's chunk vectors."""
+        R = self.retriever
+        if self._pos is None:
+            self._pos = {c: i for i, c in enumerate(R.corpus.ids)}
+        return R.chunk_vectors()[[self._pos[h['id']] for h in hits]].float(
+            ).cpu()
+
+    def _verified(self, answers, prep, batch_size):
+        """answers without the sentences whose cited passages the generator
+        says do not support them (P(yes) below P(no)); a sentence without
+        a citation goes too, and an answer left empty abstains."""
+        jobs, sents = [], {}
+        for j, a in answers.items():
+            ctx = prep[j]['context'] or []
+            sents[j] = re.split(r'(?<=[.!?])\s+', a.strip())
+            for i, s in enumerate(sents[j]):
+                cited = d2l.parse_citations(s, len(ctx))
+                if cited and not d2l._rag_abstained(a):
+                    jobs.append((j, i, d2l._rag_verify_prompt(
+                        s, [ctx[c - 1] for c in cited])))
+        keep = set()
+        if jobs:
+            lp = d2l.label_logprobs(self.model, self.tokenizer,
+                                    [m for *_, m in jobs], ['yes', 'no'],
+                                    chat=True, enable_thinking=False,
+                                    batch_size=batch_size)
+            keep = {(j, i) for (j, i, _), l in zip(jobs, lp) if l[0] > l[1]}
+        return {j: a if d2l._rag_abstained(a) else ' '.join(
+            s for i, s in enumerate(sents[j]) if (j, i) in keep) or d2l.ABSTAIN
+                for j, a in answers.items()}
+
+def rag_judge(judge, tokenizer, item, result, context_texts, batch_size=8,
+              thinking=None, max_new_tokens=None):
+    """The judge's verdicts on an answer: 'correct' (every key fact stated,
+    nothing contradicting the reference), 'faithful' (every statement
+    supported by the passages given) and 'supported' (the cited passages
+    alone support it). result is a RAGResult or a dict with answer and
+    cited_ids (1-based passage numbers). An abstention (the abstention
+    sentence in the answer, d2l._rag_abstained) is decided without the
+    judge: it is correct exactly for an unanswerable item.
+    Without passages only 'correct' is judged. item, result and
+    context_texts may also be lists (a list of verdicts comes back, judged
+    in batches). judge is a d2l.ChatAPI (tokenizer None; batch_size
+    requests in flight; its client sets the thinking switch, records and
+    replays) or a Transformers model with its tokenizer. With thinking
+    (default: on for a d2l.ChatAPI, off for a model) the judge reasons
+    first and its verdict is read after the reasoning; a reply cut off at
+    max_new_tokens (default 3,000 with thinking, 64 without) counts as
+    malformed. A verdict missing from the judge's JSON after one retry is
+    None. A request that fails in transport twice (the server is down, an
+    error status) is not a verdict: rag_judge raises, and a recording
+    client keeps the replies that did arrive.
+
+    Defined in :numref:`sec_lm_rag`"""
+    single = isinstance(item, dict)
+    items, results, contexts = (([item], [result], [context_texts])
+                                if single else (item, result, context_texts))
+    api = hasattr(judge, 'achat')
+    thinking = api if thinking is None else thinking
+    max_new_tokens = max_new_tokens or (3000 if thinking else 64)
+    verdicts, jobs = [], []
+    for i, (q, r, ctx) in enumerate(zip(items, results, contexts)):
+        r = r._asdict() if hasattr(r, '_asdict') else r
+        answer, ctx = r['answer'].strip(), list(ctx or [])
+        abstained = d2l._rag_abstained(answer)
+        v = {'correct': None, 'faithful': None, 'supported': None}
+        if abstained or not q['answerable']:
+            v['correct'] = abstained and not q['answerable']
+        if abstained:
+            v['faithful'] = True  # an abstention states nothing
+        verdicts.append(v)
+        keys = [] if abstained else [
+            k for k in ('correct', 'faithful', 'supported')
+            if v[k] is None and (k == 'correct' or ctx)]
+        if keys:
+            cited = r.get('cited_ids') or []
+            jobs.append((i, keys, d2l._rag_judge_messages(
+                q, answer, ctx, cited)))
+    failed = []
+    for attempt in range(2):  # one retry, with the malformed reply shown
+        if not jobs:
+            break
+        replies = d2l._rag_judge_replies(
+            judge, tokenizer, [m for _, _, m in jobs], thinking,
+            max_new_tokens, batch_size)
+        retry = []
+        for (i, keys, messages), reply in zip(jobs, replies):
+            if isinstance(reply, BaseException):  # no reply: ask again
+                if attempt == 0:
+                    retry.append((i, keys, messages))
+                else:
+                    failed.append(reply)
+                continue
+            parsed = (None if reply is None else
+                      d2l._rag_parse_json(reply, keys))
+            if parsed is None and attempt == 0:
+                retry.append((i, keys, messages + [
+                    {'role': 'assistant', 'content': reply or ''},
+                    {'role': 'user', 'content': d2l.RAG_JUDGE_V1['retry']}]))
+            for k in keys:
+                verdicts[i][k] = None if parsed is None else parsed[k]
+        jobs = retry
+    if failed:
+        raise RuntimeError(f'{len(failed)} judge requests failed twice, '
+                           f'first: {failed[0]!r}') from failed[0]
+    return verdicts[0] if single else verdicts
+
+def citation_metrics(results, items, corpus):
+    """Per item, from gold ids: precision (the share of the cited passages
+    that are relevant), recall (the share of the relevant passages in the
+    context that are cited) and n_cited; NaN where a share has nothing to
+    divide by. results are RAGResults or mappings with context_ids and
+    cited_ids (1-based passage numbers)."""
+    rows = []
+    for r, q in zip(results, items):
+        r = r._asdict() if hasattr(r, '_asdict') else r
+        rel, ctx = d2l.gold_chunk_ids(q, corpus), list(r['context_ids'])
+        cited = [ctx[n - 1] for n in r['cited_ids'] if 1 <= n <= len(ctx)]
+        found = [c for c in ctx if c in rel]
+        rows.append(dict(
+            qid=q['qid'], n_cited=len(cited),
+            precision=np.mean([c in rel for c in cited]) if cited else np.nan,
+            recall=np.mean([c in cited for c in found]) if found else np.nan))
+    return pd.DataFrame(rows)
+
+def classify_failure(result, item, judge_out, corpus, depth=50):
+    """The stage at which an answer failed: 'correct'; an unanswerable item
+    answered: 'false_answer'; an answerable one: 'not_retrieved' (no
+    relevant chunk in the first-stage top depth), 'ranked_low' (one there,
+    none in the context), 'false_abstain' (one in the context, yet the
+    answer abstains), 'ignored' (faithful to the context, not correct) or
+    'unsupported' (not faithful). 'unjudged' when the judge gave no
+    verdict that the class depends on: such an answer has no class.
+
+    Defined in :numref:`sec_lm_rag_fixes`"""
+    r = result._asdict() if hasattr(result, '_asdict') else result
+    true = lambda v: isinstance(v, (bool, np.bool_)) and bool(v)
+    given = lambda v: isinstance(v, (bool, np.bool_))
+    if not given(judge_out['correct']):
+        return 'unjudged'
+    if true(judge_out['correct']):
+        return 'correct'
+    if not item['answerable']:
+        return 'false_answer'
+    rel = d2l.gold_chunk_ids(item, corpus)
+    if not rel & set(r['context_ids']):
+        return ('ranked_low' if rel & set(list(r['ranked_ids'])[:depth])
+                else 'not_retrieved')
+    if d2l._rag_abstained(r['answer']):
+        return 'false_abstain'
+    if not given(judge_out.get('faithful')):
+        return 'unjudged'
+    return 'ignored' if true(judge_out['faithful']) else 'unsupported'
+
+d2l.DATA_HUB['lm-cc-warc-256m-v1'] = (  # pin only: URLs, sizes, SHA-256s
+    d2l.LM_DATA_URL + 'lm-cc-warc-256m-v1.pin.json',
+    '9444225da3dd569d00b801ad9ae1455431dc1b01')
+d2l.DATA_HUB['lid.176.ftz'] = (  # fastText, 176 languages, CC BY-SA 3.0
+    'https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz',
+    '86d1b630ba55a5040231eda9fe24a7befdc411f2')
+d2l.DATA_HUB['lm-data-fineweb-ref-v1'] = (  # FineWeb rows of the range, ODC-By
+    d2l.LM_DATA_URL + 'lm-data-fineweb-ref-v1.parquet',
+    '45d4bbfee8c77d9f7d8955de9d03933254c77aaf')
+d2l.DATA_HUB['lm-c0-docs-v1'] = (  # c0 rows: ids, offsets, hashes; no text
+    d2l.LM_DATA_URL + 'lm-c0-docs-v1.jsonl.gz',
+    '90120ce99b35b51e0e77da6f2c94f2a5f3e5f24c')
+d2l.DATA_HUB['lm-data-crawl-results-v1'] = (  # the section's measured values
+    d2l.LM_DATA_URL + 'lm-data-crawl-results-v1.json',
+    '92c91643a63f00e8e1cd666cad58e22c18eeb43c')
+
+LM_DATA_SOURCES = {  # name: (kind, Hub repository, revision, licence)
+    'fineweb': ('dataset', 'HuggingFaceFW/fineweb',
+                '9bb295ddab0e05d785b879661af7260fed5140fc', 'odc-by'),
+    'fineweb-edu': ('dataset', 'HuggingFaceFW/fineweb-edu',
+                    '87f09149ef4734204d70ed1d046ddc9ca3f2b8f9', 'odc-by'),
+    'fineweb-2': ('dataset', 'HuggingFaceFW/fineweb-2',
+                  'af9c13333eb981300149d5ca60a8e9d659b276b9', 'odc-by'),
+    'edu-annotations': ('dataset', 'HuggingFaceFW/fineweb-edu-llama3-annotations',
+                        '72df4c92fb1b48beceb16016e8f695ec40a6c3a5', 'odc-by'),
+    'finemath': ('dataset', 'HuggingFaceTB/finemath',
+                 'e92b25a616738fe95dc186b64dfb19f9c8525594', 'odc-by'),
+    'codeparrot-clean': ('dataset', 'codeparrot/codeparrot-clean',
+                         '35a59fb025bc0a102f7d96eac09d145b896d487b', 'per-file'),
+    'belebele': ('dataset', 'facebook/belebele',
+                 '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2', 'cc-by-sa-4.0'),
+    'cosmopedia': ('dataset', 'HuggingFaceTB/cosmopedia',
+                   '0ae6ec63f91742bd2d1eaef4f02232c55d719385', 'apache-2.0'),
+    'mmlu': ('dataset', 'cais/mmlu',
+             'c30699e8356da336a370243923dbaf21066bb9fe', 'mit'),
+    'fineweb-edu-classifier': ('model', 'HuggingFaceFW/fineweb-edu-classifier',
+                               '284663cbb2dabf9bda30d8f8cc49601251ee1631',
+                               'apache-2.0')}
+
+WarcRecord = collections.namedtuple(
+    'WarcRecord', 'id type url date status mime offset length headers body')
+
+def iter_warc(source, n_bytes=None, types=('response',), *, stats=None):
+    """Yield the WARC records of the given types (None: all) from a local
+    path or a URL, reading only the first n_bytes (a Range request for a
+    URL). Each gzip member is decompressed on its own; offset and length
+    are the member's compressed byte range. A member cut off by the end of
+    the input is not yielded: it is counted in stats['truncated'], beside
+    one count per record type (stats is a dict the caller passes).
+
+    Defined in :numref:`sec_lm_crawl`"""
+    for offset, length, raw in d2l._gzip_members(
+            d2l._warc_chunks(source, n_bytes)):
+        if raw is None:
+            if stats is not None:
+                stats['truncated'] = stats.get('truncated', 0) + 1
+            continue
+        rec = d2l._warc_parse(raw, offset, length)
+        if stats is not None:
+            stats[rec.type] = stats.get(rec.type, 0) + 1
+        if types is None or rec.type in types:
+            yield rec
+
+def fetch_warc_range(pin='lm-cc-warc-256m-v1', n_bytes=None, cache_dir=None,
+                     *, which='warc'):
+    """Local path of the pinned Common Crawl bytes: which='warc' gives the
+    first n_bytes of the pinned range (a multiple of the 16 MiB block; None
+    for the whole range), fetched with Range requests and checked block by
+    block against the pin's SHA-256s; which='wet' gives the whole WET file
+    of the same segment, checked as one file. With D2L_OFFLINE=1 only a
+    verified local copy is used. The bytes stay in cache_dir (default
+    ../data/lm/cc); they are never committed or uploaded.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import pathlib
+    with open(d2l.download_keyed(pin)) as f:
+        spec = json.load(f)
+    cache = pathlib.Path(cache_dir or os.path.join('..', 'data', 'lm', 'cc'))
+    cache.mkdir(parents=True, exist_ok=True)
+    offline = os.environ.get('D2L_OFFLINE') == '1'
+    if which == 'wet':
+        if n_bytes is not None:
+            raise ValueError('the WET file is fetched and checked whole')
+        return d2l._fetch_whole(spec['wet'], cache, offline)
+    if which != 'warc':
+        raise ValueError(f"which is 'warc' or 'wet', not {which!r}")
+    warc, block = spec['warc'], spec['warc']['block_bytes']
+    n_bytes = warc['n_bytes'] if n_bytes is None else n_bytes
+    if n_bytes % block or not 0 < n_bytes <= warc['n_bytes']:
+        raise ValueError(f'n_bytes must be a multiple of {block} up to '
+                         f'{warc["n_bytes"]}')
+    path = cache / f'{pin}.warc.gz'
+    have = d2l._verified_blocks(path, warc['block_sha256'], block,
+                                n_bytes // block)
+    if have * block < n_bytes:
+        if offline:
+            raise RuntimeError(
+                f'D2L_OFFLINE=1 and {path} holds {have} verified blocks of '
+                f'{n_bytes // block}: run once with network access, or fetch '
+                f'bytes 0-{n_bytes - 1} of {warc["url"]} into {path}')
+        d2l._fetch_blocks(warc, path, have, n_bytes // block)
+    return path
+
+NAIVE_BLOCK_TAGS = {'p', 'div', 'li', 'td', 'th', 'tr', 'pre', 'h1', 'h2',
+                    'h3', 'h4', 'h5', 'h6', 'section', 'article', 'main',
+                    'blockquote', 'ul', 'ol', 'table', 'header', 'footer',
+                    'nav', 'aside', 'form'}
+
+def naive_blocks(page):
+    """The text blocks of a page, split at block-level tags, as (text,
+    characters of link text) pairs; a <pre> block keeps its lines.
+    Comments, <head>, scripts and styles are removed first.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import html
+    page = re.sub(r'<!--.*?-->|<(head|script|style|noscript|template)\b'
+                  r'.*?</\1\s*>', ' ', page, flags=re.S | re.I)
+    blocks, parts, in_a, pre = [], [], 0, 0  # parts: (string, in a link)
+
+    def flush():
+        raw = ''.join(s for s, _ in parts)
+        text = ('\n'.join(l.rstrip() for l in raw.strip('\n').splitlines())
+                if pre else ' '.join(raw.split()))
+        links = sum(len(s.strip()) for s, link in parts if link)
+        if text:
+            blocks.append((text, min(links, len(text))))
+        parts.clear()
+
+    for m in re.finditer(r'<(/?)([A-Za-z][\w:-]*)[^>]*>|(<|[^<]+)', page):
+        close, tag, data = m.group(1), (m.group(2) or '').lower(), m.group(3)
+        if data is not None:
+            parts.append((html.unescape(data), in_a > 0))
+        elif tag in d2l.NAIVE_BLOCK_TAGS:
+            flush()  # a block tag, opening or closing, ends a block
+            pre = max(0, pre + (tag == 'pre') * (-1 if close else 1))
+        elif tag == 'a':
+            in_a = max(0, in_a + (-1 if close else 1))
+        elif tag == 'br':
+            parts.append(('\n', False))
+    flush()
+    return blocks
+
+def extract_text(html, method='trafilatura', url=None):
+    """The main text of a page, or None. 'naive': blocks with at least 40
+    characters of which at most a third is link text, plus their
+    neighbours within two blocks that have at least 15 characters and pass
+    the same link-density test; 'trafilatura' and 'resiliparse': the two
+    libraries' main-content extraction.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import logging
+    if method == 'naive':
+        blocks = d2l.naive_blocks(html)
+        dense = [len(t) >= 15 and l <= 0.33 * len(t) for t, l in blocks]
+        core = [i for i, (t, l) in enumerate(blocks)
+                if len(t) >= 40 and dense[i]]
+        keep = sorted({j for i in core for j in range(i - 2, i + 3)
+                       if 0 <= j < len(blocks) and dense[j]})
+        text = '\n'.join(blocks[j][0] for j in keep)
+    elif method == 'trafilatura':
+        import trafilatura
+        logging.getLogger('trafilatura').setLevel(logging.CRITICAL)
+        text = trafilatura.extract(html, url=url, include_tables=True,
+                                   favor_precision=False)
+    elif method == 'resiliparse':
+        from resiliparse.extract.html2text import extract_plain_text
+        text = extract_plain_text(html, main_content=True)
+    else:
+        raise ValueError(f'unknown method {method!r}')
+    return text if text and text.strip() else None
+
+NAIVE_FIXTURES = {  # name: (HTML, the naive extractor's expected output)
+    'article with sidebar': (
+        '<html><body><nav><a href="/">Home</a> <a href="/news">News</a> '
+        '<a href="/about">About us</a></nav><article><h1>Rain returns to '
+        'the valley</h1><p>After eleven dry months the first storm of the '
+        'season reached the valley on Tuesday night.</p><p>Farmers said '
+        'the rain came too late for the barley but in time for the '
+        'vines.</p></article><aside><ul><li><a href="/a">Most read: the '
+        'new bridge opens</a></li><li><a href="/b">Weather for the '
+        'weekend ahead</a></li></ul></aside></body></html>',
+        'Rain returns to the valley\nAfter eleven dry months the first '
+        'storm of the season reached the valley on Tuesday night.\nFarmers '
+        'said the rain came too late for the barley but in time for the '
+        'vines.'),
+    'forum': (
+        '<html><body><div class="post"><div class="user"><a href="/u/7">'
+        'mira_k</a></div><div class="msg">Has anyone managed to compile '
+        'the driver on the new kernel? It fails at the linking step for '
+        'me.</div></div><div class="post"><div class="user"><a href="/u/9">'
+        'ole</a></div><div class="msg">Yes, you need the headers package '
+        'for your exact kernel version, then rebuild.</div></div>'
+        '</body></html>',
+        'Has anyone managed to compile the driver on the new kernel? It '
+        'fails at the linking step for me.\nYes, you need the headers '
+        'package for your exact kernel version, then rebuild.'),
+    'table': (
+        '<html><body><p>Monthly rainfall at the station, in millimetres, '
+        'for the first quarter:</p><table><tr><th>Month</th><th>Rain</th>'
+        '</tr><tr><td>January</td><td>82</td></tr><tr><td>February</td>'
+        '<td>61</td></tr></table></body></html>',
+        'Monthly rainfall at the station, in millimetres, for the first '
+        'quarter:'),  # the cells are too short: the table is lost
+    'pre': (
+        '<html><body><p>The loop below sums the first hundred integers '
+        'and prints the result:</p><pre>total = 0\nfor i in range(100):\n'
+        '    total += i\nprint(total)</pre></body></html>',
+        'The loop below sums the first hundred integers and prints the '
+        'result:\ntotal = 0\nfor i in range(100):\n    total += i\n'
+        'print(total)'),
+    'empty': ('<html><head><title>x</title></head><body></body></html>',
+              None)}
+
+def structure_recall(html, text):
+    """Recall of a page's structural content in an extracted text: the
+    share of code lines, table cells and mathematics strings found in it,
+    the character-5-gram recall of the <p> text ('prose'), and a precision
+    proxy, the share of the text's characters on lines found in the page's
+    content elements. html is a page or its html_structure; a class absent
+    from the page gives None, and an empty text recalls nothing.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    s = html if isinstance(html, dict) else d2l.html_structure(html)
+    text = text or ''
+    flat, nows = d2l._ws(text), d2l._nows(text)
+    out = {}
+    out['code'] = (np.mean([l in flat for l in s['code']])
+                   if s['code'] else None)
+    for c in ('table', 'math'):
+        out[c] = np.mean([x in nows for x in s[c]]) if s[c] else None
+    grams = lambda t: {t[i:i + 5] for i in range(len(t) - 4)}
+    P = grams(s['prose'].replace('\n', ''))
+    out['prose'] = len(P & grams(nows)) / len(P) if P else None
+    lines = [d2l._nows(l) for l in text.splitlines()]
+    total = sum(map(len, lines))
+    out['precision'] = (sum(len(l) for l in lines if l in s['content'])
+                        / total if total else None)
+    return {k: (None if v is None else float(v)) for k, v in out.items()}
+
+_LID_MODEL = []  # the fastText model, loaded once per process
+
+def detect_lang(text, k=1):
+    """The top k (language, score) pairs of fastText's 176-language
+    identifier (lid.176.ftz) for a text; newlines become spaces first, as
+    fastText reads one line.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    if not d2l._LID_MODEL:
+        import fasttext
+        fasttext.FastText.eprint = lambda *args, **kwargs: None  # quiet load
+        d2l._LID_MODEL.append(fasttext.load_model(
+            str(d2l.download_keyed('lid.176.ftz'))))
+    labels, scores = d2l._LID_MODEL[0].predict(text.replace('\n', ' '), k=k)
+    return [(l.removeprefix('__label__'), min(float(s), 1.0))
+            for l, s in zip(labels, scores)]
+
+PII_PATTERNS = {
+    'email': re.compile(r'\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+'
+                        r'[A-Za-z]{2,}\b'),
+    'ip': re.compile(r'(?<![\w.:])(?:(?:\d{1,3}\.){3}\d{1,3}|'
+                     r'(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|'
+                     r'(?:[0-9A-Fa-f]{1,4}:){1,6}:'
+                     r'(?:[0-9A-Fa-f]{1,4}:){0,5}[0-9A-Fa-f]{1,4})'
+                     r'(?![\w:]|\.\d)')}  # a sentence may end in a dot
+
+def scrub_pii(text):
+    """Replace email addresses by <EMAIL> and public IPv4 and IPv6
+    addresses by <IP> (an address must parse; private, loopback,
+    documentation and multicast ranges are kept); returns the text and
+    the counts.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import ipaddress
+    counts = {'email': 0, 'ip': 0}
+
+    def email(m):
+        counts['email'] += 1
+        return '<EMAIL>'
+
+    def ip(m):
+        try:
+            a = ipaddress.ip_address(m.group())
+            public = a.is_global and not a.is_multicast
+        except ValueError:
+            return m.group()
+        counts['ip'] += public
+        return '<IP>' if public else m.group()
+
+    text = d2l.PII_PATTERNS['email'].sub(email, text)
+    return d2l.PII_PATTERNS['ip'].sub(ip, text), counts
+
+PII_FIXTURE = [  # (string, kind it holds: 'email', 'ip' or None)
+    ('write to anna.berg@example.org for the slides', 'email'),
+    ('Contact: j.smith+news@mail.example.co.uk', 'email'),
+    ('send it to OPS@EXAMPLE.COM today', 'email'),
+    ('reach me at li_wei99@uni-example.edu.cn', 'email'),
+    ('Fragen an info@beispiel.de bitte', 'email'),
+    ('(maria.garcia@correo.example.es)', 'email'),
+    ('mailto:help-desk@example.net', 'email'),
+    ('cc: bob@sub.domain.example.io, alice@example.ai', 'email'),
+    ('Author: k.tanaka@example.jp', 'email'),
+    ('reply to noreply@notifications.example.com', 'email'),
+    ('email: first.last@company-example.com.', 'email'),
+    ('<a href="mailto:press@example.org">press</a>', 'email'),
+    ('orders: sales@shop.example.store', 'email'),
+    ('my address is pat_2001@example.travel', 'email'),
+    ('Ping x@example.dev if the build breaks', 'email'),
+    ('Webmaster - webmaster@example.museum', 'email'),
+    ('send CVs to jobs@example.careers', 'email'),
+    ('Report abuse: abuse@isp.example.net', 'email'),
+    ('questions -> q.and.a@forum.example.org', 'email'),
+    ('Kontakt: m.mueller@firma-beispiel.at', 'email'),
+    ('his email (tom.o@example.ie) was on the poster', 'email'),
+    ('chair: prof.chen@cs.example.edu', 'email'),
+    ('Email:support@example.com', 'email'),
+    ('a.b.c.d@example.co', 'email'),
+    ('Subscribe: list-request@lists.example.org', 'email'),
+    ('billing@example.biz handles refunds', 'email'),
+    ('user%host@example.com is an old relay form', 'email'),
+    ('Send photos to editor@news.example.com.au', 'email'),
+    ('Tel. 555-0100, mail: office@example.fr', 'email'),
+    ('Questions? Ask ivan.petrov@example.ru', 'email'),
+    ('server at 8.8.8.8 answered', 'ip'),
+    ('Client IP: 203.0.114.7', 'ip'),
+    ('ssh root@93.184.216.34', 'ip'),
+    ('blocked 45.33.32.156 after 5 tries', 'ip'),
+    ('origin=151.101.1.69;', 'ip'),
+    ('ping 1.1.1.1 -c 4', 'ip'),
+    ('from host 81.2.69.160 port 443', 'ip'),
+    ('X-Forwarded-For: 66.249.66.1', 'ip'),
+    ('the attack came from 185.220.101.4.', 'ip'),
+    ('[23.45.67.89]', 'ip'),
+    ('IP 104.16.132.229 resolved', 'ip'),
+    ('nameserver 9.9.9.9', 'ip'),
+    ('allowlist: 52.95.110.1', 'ip'),
+    ('log line 17.253.144.10 - - [26/Jan/2025]', 'ip'),
+    ('192.30.255.112 is listed', 'ip'),
+    ('visit http://200.147.67.142/index', 'ip'),
+    ('my VPS is 139.59.21.43', 'ip'),
+    ('peer: 77.88.55.60', 'ip'),
+    ('gateway (31.13.71.36)', 'ip'),
+    ('upstream 140.82.112.3', 'ip'),
+    ('AAAA 2a00:1450:4001:82a::200e', 'ip'),
+    ('v6: 2606:4700:4700::1111', 'ip'),
+    ('host 2620:fe::fe answers', 'ip'),
+    ('2a03:2880:f12f:83:face:b00c:0:25de', 'ip'),
+    ('from 2001:4860:4860::8888', 'ip'),
+    ('addr 2a01:4f8:c17:1234::1', 'ip'),
+    ('[2400:cb00:2048:1::c629:d7a2]', 'ip'),
+    ('client 2a02:6b8::2:242 connected', 'ip'),
+    ('route via 2600:1f18:6a3:4b00::12', 'ip'),
+    ('ns 2001:500:2f::f', 'ip'),
+    ('our router is at 192.168.1.1', None),
+    ('the cluster uses 10.0.0.0/8 internally', None),
+    ('localhost is 127.0.0.1', None),
+    ('documentation range 192.0.2.15', None),
+    ('link-local fe80::1ff:fe23:4567:890a', None),
+    ('test net 198.51.100.7', None),
+    ('private 172.16.254.3', None),
+    ('loopback ::1 only', None),
+    ('unique local fd12:3456:789a:1::1', None),
+    ('example 2001:db8::ff00:42:8329', None),
+    ('Upgrade to version 4.2.1.0 now', None),
+    ('Changelog for 1.2.3.4 (stable)', None),
+    ('build 5.15.0.91 of the kernel', None),
+    ('SNMP OID 1.3.6.1.4.1.2021', None),
+    ('section 3.4.1.2 of the standard', None),
+    ('ISBN 978-0-306-40615-7', None),
+    ('ISBN 0-306-40615-2 (paperback)', None),
+    ('phone +1 555 0100 222', None),
+    ('the score was 3.14.15.92 in the puzzle', None),
+    ('logo@2x.png in the assets folder', None),
+    ('icon@3x.webp for retina screens', None),
+    ('follow @d2l_ai for updates', None),
+    ('write to anna dot berg at example dot org', None),
+    ('the domain example.com hosts it', None),
+    ('price 1.299,00 EUR', None),
+    ('coordinates 52.5200, 13.4050', None),
+    ('date 2025.01.26', None),
+    ('time 13:54:02', None),
+    ('MAC 00:1A:2B:3C:4D:5E', None),
+    ('C++ uses std::vector<int>', None),
+    ('the ratio 16:9 screen', None),
+    ('PEP 8 says @decorator first', None),
+    ('the user name is root', None),
+    ('256.300.1.2 is not an address', None),
+    ('999.1.1.1 overflows', None),
+    ('vector 1:2:3 notation', None),
+    ('npm i pkg@1.2.3', None),
+    ('git@github.com:org/repo.git', None),
+    ('the hash a3f2:9c1e', None),
+    ('Bible verse John 3:16', None),
+    ('temperature 21.5 C', None),
+    ('a.b@c', None),
+    ('foo@bar', None),
+    ('10.10.10.10 on the lab switch', None),
+    ('the meeting is at 10.30', None),
+    ('patent US 7,654,321 B2', None),
+    ('IPv4 has 4.3 billion addresses', None),
+    ('the CIDR 0.0.0.0/0 means everything', None),
+    ('multicast 224.0.0.251 for mDNS', None),
+    ('broadcast 255.255.255.255', None),
+    ('shared address space 100.64.0.1', None),
+    ('benchmark range 198.18.0.1', None),
+    ('version v2.0.0.1-beta', None),
+    ('model 7.1.2.3 of the router firmware', None),
+    ('ISSN 0317-8471', None),
+    ('the regex \\d+@\\w+', None),
+    ('emoji :smile: in chat', None),
+    ('call 0800 123 4567 for help', None),
+    ('IBAN DE89 3704 0044 0532 0130 00', None),
+    ('ISBN-13 978.3.16.148410.0', None)]
+
+Doc = collections.namedtuple(
+    'Doc', 'id url date text lang lang_score src log flags')
+
+def write_docs(path, docs):
+    """Write documents (Doc or dicts with Doc's fields) as gzip-compressed
+    JSON lines, keys sorted and no time stamp in the gzip header, so equal
+    documents give equal bytes.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    with open(path, 'wb') as raw, gzip.GzipFile(
+            filename='', mode='wb', fileobj=raw, mtime=0) as f:
+        for d in docs:
+            row = d._asdict() if hasattr(d, '_asdict') else dict(d)
+            f.write((json.dumps(row, ensure_ascii=False, sort_keys=True)
+                     + '\n').encode('utf-8'))
+
+def read_docs(path):
+    """The documents of a file written by write_docs, as a list of Doc
+    (fields missing from a row are None).
+
+    Defined in :numref:`sec_lm_crawl`"""
+    with gzip.open(path, 'rt', encoding='utf-8') as f:
+        rows = [json.loads(line) for line in f]
+    return [d2l.Doc(**{k: r.get(k) for k in d2l.Doc._fields}) for r in rows]
+
+def docs_hash(docs):
+    """SHA-256 over the sorted (id, SHA-256 of the text) pairs: the content
+    of a document set, independent of its order. Takes Doc-like objects,
+    dicts or (id, text) pairs.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    def pair(d):
+        if isinstance(d, dict):
+            return d['id'], d['text']
+        if hasattr(d, 'text'):
+            return d.id, d.text
+        return d[0], d[1]
+    keys = sorted((str(i), hashlib.sha256((t or '').encode('utf-8'))
+                   .hexdigest()) for i, t in map(pair, docs))
+    h = hashlib.sha256()
+    for i, t in keys:
+        h.update(f'{i}\t{t}\n'.encode('utf-8'))
+    return h.hexdigest()
+
+class CorpusManifest:
+    """The provenance of a corpus (schema d2l-corpus/1): its sources, the
+    stages that turned them into documents, and, once tokenized, the
+    tokenizer, the shard format and the splits. Each stage satisfies
+    n_in == n_out + sum(drops), a document being charged to the first rule
+    that drops it. The canonical JSON has sorted keys, no spaces, floats
+    rounded to 4 decimals and no absolute paths; sha256() hashes it.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    SCHEMA = 'd2l-corpus/1'
+
+    def __init__(self, name, sources=None, stages=None, tokenizer=None,
+                 format=None, splits=None):
+        self.name, self.tokenizer, self.format = name, tokenizer, format
+        self.sources, self.stages = list(sources or []), list(stages or [])
+        self.splits = splits
+
+    def add_source(self, id, uri, revision=None, license=None, n_docs=None,
+                   bytes=None, **extra):
+        self.sources.append(dict(id=id, uri=uri, revision=revision,
+                                 license=license, n_docs=n_docs,
+                                 bytes=bytes, **extra))
+        return self
+
+    def add_stage(self, name, params, n_in, n_out, drops, in_hash, out_hash,
+                  *, impl=None, version=None, tokens_out=None):
+        drops = {str(k): int(v) for k, v in (drops or {}).items()}
+        if n_in != n_out + sum(drops.values()):
+            raise ValueError(f'stage {name}: n_in {n_in} != n_out {n_out} '
+                             f'+ drops {sum(drops.values())}')
+        self.stages.append(dict(
+            name=name, impl=impl, version=version, params=params,
+            n_in=int(n_in), n_out=int(n_out), tokens_out=tokens_out,
+            drops=drops, in_hash=in_hash, out_hash=out_hash))
+        return self
+
+    def to_dict(self):
+        return dict(schema=self.SCHEMA, name=self.name, sources=self.sources,
+                    stages=self.stages, tokenizer=self.tokenizer,
+                    format=self.format, splits=self.splits)
+
+    def canonical_json(self):
+        def clean(x, where):
+            if isinstance(x, float):
+                if x != x or x in (float('inf'), float('-inf')):
+                    raise ValueError(f'{where}: {x} has no JSON form')
+                return round(x, 4)
+            if isinstance(x, (np.integer, np.floating, np.bool_)):
+                return clean(x.item(), where)
+            if isinstance(x, str) and (x.startswith('/') or
+                                       re.match(r'[A-Za-z]:\\', x)):
+                raise ValueError(f'{where}: absolute path {x!r}')
+            if isinstance(x, dict):
+                return {str(k): clean(v, f'{where}.{k}')
+                        for k, v in x.items()}
+            if isinstance(x, (list, tuple)):
+                return [clean(v, f'{where}[{i}]') for i, v in enumerate(x)]
+            return x
+        return json.dumps(clean(self.to_dict(), 'manifest'), sort_keys=True,
+                          separators=(',', ':'), ensure_ascii=False)
+
+    def sha256(self):
+        return hashlib.sha256(self.canonical_json().encode('utf-8')
+                              ).hexdigest()
+
+    def save(self, path):
+        """Write the canonical JSON, so the file's SHA-256 is sha256()."""
+        with open(path, 'wb') as f:
+            f.write(self.canonical_json().encode('utf-8'))
+        return path
+
+    @classmethod
+    def load(cls, path):
+        with open(path, encoding='utf-8') as f:
+            d = json.load(f)
+        if d.get('schema') != cls.SCHEMA:
+            raise ValueError(f'{path}: schema {d.get("schema")!r}, '
+                             f'expected {cls.SCHEMA}')
+        return cls(d['name'], d.get('sources'), d.get('stages'),
+                   d.get('tokenizer'), d.get('format'), d.get('splits'))
+
+    def to_card(self):
+        """A Markdown dataset card generated from the manifest alone."""
+        lines = [f'# Dataset card: {self.name}', '',
+                 f'Schema `{self.SCHEMA}`, manifest SHA-256 '
+                 f'`{self.sha256()[:16]}…`.', '', '## Sources', '',
+                 '| id | uri | revision | license | documents | bytes |',
+                 '|---|---|---|---|---|---|']
+        for s in self.sources:
+            lines.append('| ' + ' | '.join(str(s.get(k, '')) for k in (
+                'id', 'uri', 'revision', 'license', 'n_docs', 'bytes')) + ' |')
+        lines += ['', '## Processing stages', '',
+                  '| stage | implementation | in | out | dropped (reason: count) |',
+                  '|---|---|---|---|---|']
+        for s in self.stages:
+            impl = ' '.join(str(v) for v in (s.get('impl'), s.get('version'))
+                            if v)
+            drops = ', '.join(f'{k}: {v}' for k, v in s['drops'].items()
+                              ) or '—'
+            lines.append(f'| {s["name"]} | {impl or "—"} | {s["n_in"]} | '
+                         f'{s["n_out"]} | {drops} |')
+        if self.tokenizer:
+            lines += ['', '## Tokenizer', '', '```',
+                      json.dumps(self.tokenizer, sort_keys=True), '```']
+        if self.format:
+            lines += ['', '## Format', '', '```',
+                      json.dumps(self.format, sort_keys=True), '```']
+        if self.splits:
+            lines += ['', '## Splits', '', '| split | documents | tokens | shards |',
+                      '|---|---|---|---|']
+            for k, v in sorted(self.splits.items()):
+                lines.append(f'| {k} | {v.get("n_docs")} | {v.get("n_tokens")}'
+                             f' | {len(v.get("shards", []))} |')
+        return '\n'.join(lines) + '\n'
+
+def rebuild_c0(manifest='lm-c0-docs-v1', warc_path=None, *, cache_dir=None,
+               workers=None):
+    """Rebuild the c0 documents from their manifest rows (a DATA_HUB key or
+    a path): each record is read from the verified WARC range by offset
+    and length and passed through the recorded stages again. A document is
+    kept only if its text hashes to the recorded text_sha256; the others
+    are listed in .mismatches (extractor drift), never kept. The texts are
+    written to cache_dir (default ../data/lm/c0), never uploaded.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import concurrent.futures
+    import multiprocessing
+    import pathlib
+    path = (d2l.download_keyed(manifest) if manifest in d2l.DATA_HUB
+            else manifest)
+    with gzip.open(path, 'rt', encoding='utf-8') as f:
+        rows = [json.loads(line) for line in f]
+    warc_path = str(warc_path or d2l.fetch_warc_range())
+    d2l.download_keyed('lid.176.ftz')  # once, before the workers
+    with concurrent.futures.ProcessPoolExecutor(
+            workers or min(8, os.cpu_count()),
+            mp_context=multiprocessing.get_context('spawn')) as ex:
+        outs = list(ex.map(d2l._c0_rebuild_one,
+                           [(warc_path, r) for r in rows], chunksize=200))
+    docs = d2l.DocList()
+    docs.mismatches = []
+    for row, out in zip(rows, outs):
+        got = out['row']
+        if out['drop'] or got['text_sha256'] != row['text_sha256']:
+            docs.mismatches.append(dict(
+                id=row['id'], drop=out['drop'], recorded=row['text_sha256'],
+                rebuilt=got['text_sha256'],
+                versions=(row['extractor_version'],
+                          got['extractor_version'])))
+        else:
+            docs.append(d2l.Doc(row['id'], row['url'], row['date'],
+                                out['text'], row['lang'], row['lang_score'],
+                                row['src'], row['log'], None))
+    cache = pathlib.Path(cache_dir or os.path.join('..', 'data', 'lm', 'c0'))
+    cache.mkdir(parents=True, exist_ok=True)
+    d2l.write_docs(cache / 'c0-docs.jsonl.gz', docs)
+    return docs
+
+d2l.DATA_HUB['lm-data-audit-stream-v1'] = (  # FineWeb text, ODC-By: the
+    # audit stream, six FineWeb-2 slices, same-host documents (20.3);
+    # tools/build_lm_data_sources.py audit-stream
+    d2l.LM_DATA_URL + 'lm-data-audit-stream-v1.parquet',
+    '231fc997824464048a579b133d235f6103dbf957')
+d2l.DATA_HUB['lm-edu-annot-22k-v1'] = (  # FineWeb text, ODC-By: 22,000
+    # documents with Llama-3-70B's and Qwen3.8-27B's scores (20.2)
+    d2l.LM_DATA_URL + 'lm-edu-annot-22k-v1.parquet',
+    '4a1c7d61d13569c381eacf0421c9be071c06b201')
+d2l.DATA_HUB['lm-data-emb-qwen3emb-v1'] = (  # embeddings and released
+    # classifier scores of the annotations and the stream (20.2)
+    d2l.LM_DATA_URL + 'lm-data-emb-qwen3emb-v1.npz',
+    'dbd67d20099a04c590c1cfaaa7f19a9ea2256550')
+d2l.DATA_HUB['lm-data-quality-results-v1'] = (  # 20.2's numbers
+    d2l.LM_DATA_URL + 'lm-data-quality-results-v1.json',
+    'e7bb769dcf59c793d5a45b586fa4fcd7c798bef2')
+d2l.DATA_HUB['lm-quality-head-v1'] = (  # the regression head (20.2)
+    d2l.LM_DATA_URL + 'lm-quality-head-v1.npz',
+    '4f646fc8adb2503267b2904ecdff2521604e06fd')
+d2l.DATA_HUB['lm-c1-docs-v1'] = (  # c0 ids with rule codes and edu_score,
+    # no text (20.2)
+    d2l.LM_DATA_URL + 'lm-c1-docs-v1.jsonl.gz',
+    'd820ecb7bebfbcc9ca5e88e4e7f9edca8a4432de')
+d2l.DATA_HUB['lm-data-removal-labels-v1'] = (  # Qwen3.8-27B's keep or drop
+    # on 200 removed stream documents, ids and rationales (20.2)
+    d2l.LM_DATA_URL + 'lm-data-removal-labels-v1.jsonl',
+    '5d9dcdb686c6747538cbd512f2e1dfb881805f1c')
+
+GOPHER_CFG = {  # reason code: thresholds, in the order FineWeb applies them
+    # Gopher repetition (Rae et al., 2021, Table A1)
+    'gopher_dup_text': dict(para=0.3, para_chars=0.2, line=0.3,
+                            line_chars=0.2),
+    'gopher_top_ngram': dict(top={2: 0.2, 3: 0.18, 4: 0.16}),
+    'gopher_dup_ngram': dict(dup={5: 0.15, 6: 0.14, 7: 0.13, 8: 0.12,
+                                  9: 0.11, 10: 0.10}),
+    # Gopher quality
+    'gopher_words': dict(min=50, max=100_000),  # words with a letter or digit
+    'gopher_word_len': dict(min=3, max=10),     # their mean length
+    'gopher_symbols': dict(max=0.1),     # '#' or ellipses per token
+    'gopher_bullets': dict(max=0.9),     # lines starting with a bullet
+    'gopher_ellipsis': dict(max=0.3),    # lines ending with an ellipsis
+    'gopher_alpha': dict(min=0.8),       # tokens with a letter
+    'gopher_stop_words': dict(min=2, words=('the', 'be', 'to', 'of', 'and',
+                                            'that', 'have', 'with')),
+    # C4 (Raffel et al., 2020) as FineWeb ran it: no line-punctuation rule
+    'c4_quality': dict(min_sentences=5, min_line_words=3, max_word_len=1000),
+    # FineWeb's own rules (Penedo et al., 2024; datatrove 0.10.1 values)
+    'fw_line_punct': dict(min=0.12),     # lines ending in . ! ? (and CJK)
+    'fw_short_lines': dict(max=0.67, chars=30),
+    'fw_dup_chars': dict(max=0.01),      # characters in repeated lines
+    'fw_list_ratio': dict(max=0.3)}      # newlines per token
+
+def heuristic_filters(text, cfg=None):
+    """The reason codes of the rules in cfg (default GOPHER_CFG) that fire
+    on text, in cfg's order; an empty list keeps the document. Thresholds
+    and their direction follow datatrove's filters; words are word and
+    punctuation tokens (d2l._rule_words), so an unspaced script has few,
+    very long words.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    cfg = d2l.GOPHER_CFG if cfg is None else cfg
+    words = d2l._rule_words(text)
+    alnum = [w for w in words if not d2l._rule_is_symbol(w)]
+    n_tok, n_chr = max(len(words), 1), max(len(text), 1)
+    all_lines = text.splitlines() or ['']
+    lines = [l for l in text.split('\n') if l.strip()] or ['']
+    paras = re.split(r'\n{2,}', text.strip())
+    breaks = re.split(r'\n+', text)
+    stops = lambda c: len(set(words) & set(c['words']))
+    checks = {
+        'gopher_dup_text': lambda c: (
+            d2l._rule_dups(paras)[0] / len(paras) > c['para'] or
+            d2l._rule_dups(paras)[1] / n_chr > c['para_chars'] or
+            d2l._rule_dups(breaks)[0] / len(breaks) > c['line'] or
+            d2l._rule_dups(breaks)[1] / n_chr > c['line_chars']),
+        'gopher_top_ngram': lambda c: any(
+            d2l._rule_top_ngram(words, n) / n_chr > f
+            for n, f in c['top'].items()),
+        'gopher_dup_ngram': lambda c: any(
+            d2l._rule_dup_ngram(words, n) / n_chr > f
+            for n, f in c['dup'].items()),
+        'gopher_words': lambda c: not c['min'] <= len(alnum) <= c['max'],
+        'gopher_word_len': lambda c: bool(alnum) and not (
+            c['min'] <= np.mean([len(w) for w in alnum]) <= c['max']),
+        'gopher_symbols': lambda c: max(
+            text.count('#'), text.count('...') + text.count('…')
+        ) / n_tok > c['max'],
+        'gopher_bullets': lambda c: np.mean([
+            l.lstrip().startswith(('•', '-')) for l in all_lines]) > c['max'],
+        'gopher_ellipsis': lambda c: np.mean([
+            l.rstrip().endswith(('...', '…')) for l in all_lines]) > c['max'],
+        'gopher_alpha': lambda c: np.mean([
+            any(ch.isalpha() for ch in w) for w in words or ['']]) < c['min'],
+        'gopher_stop_words': lambda c: stops(c) < c['min'],
+        'c4_quality': lambda c: d2l._rule_c4(text, c),
+        'fw_line_punct': lambda c: np.mean([
+            l.endswith(d2l._TERMINAL_PUNCT) for l in lines]) < c['min'],
+        'fw_short_lines': lambda c: np.mean([
+            len(l) <= c['chars'] for l in lines]) > c['max'],
+        'fw_dup_chars': lambda c: d2l._rule_dups(lines)[1] / max(
+            len(text.replace('\n', '')), 1) > c['max'],
+        'fw_list_ratio': lambda c: text.count('\n') / n_tok > c['max']}
+    return [code for code, c in cfg.items() if checks[code](c)]
+
+_FIXTURE_BASE = (  # a plain paragraph that every rule keeps
+    'The river rises in the hills to the north and flows south through '
+    'the valley for about forty kilometres.\nFarmers along its banks have '
+    'used the water to irrigate their fields of wheat and barley for '
+    'centuries.\nIn spring the snow melts and the river floods the low '
+    'meadows, which is why the old villages stand on higher ground.\nToday '
+    'a small dam near the town holds back some of that water, and the lake '
+    'behind it is popular with anglers and families with children.\nThe '
+    'local museum has a fine exhibition that explains how the valley '
+    'changed over the last two hundred years.')
+
+QUALITY_FIXTURES = {  # reason code: a document that fires exactly that code
+    'keep': _FIXTURE_BASE,
+    'gopher_dup_text': '\n\n*\n\n'.join(_FIXTURE_BASE.split('\n')),
+    'gopher_top_ngram': _FIXTURE_BASE.replace(
+        'about forty kilometres.', 'about forty kilometres. ' +
+        'cheap flights cheap flights cheap flights cheap flights '
+        'cheap flights to the coast.'),
+    'gopher_dup_ngram': _FIXTURE_BASE.replace(
+        'centuries.', 'centuries. ' + ' '.join(
+            ['Each autumn they store the grain in wooden barns near the '
+             'mill.'] * 4)),
+    'gopher_words': (
+        'Rain fell on the hills overnight.\nThe river rose by morning.\n'
+        'Farmers moved their sheep uphill.\nSchools stayed open as usual.\nBy '
+        'noon the water began to drop.'),
+    'gopher_word_len': (
+        'Telecommunications infrastructure modernization necessitates '
+        'comprehensive interdisciplinary collaboration.\nInternationalization '
+        'requirements complicate straightforward implementation strategies '
+        'considerably.\nSophisticated electromechanical instrumentation '
+        'guarantees extraordinarily reproducible measurements.\nUnprecedented '
+        'computational capabilities revolutionized pharmaceutical development '
+        'methodologies.\nEnvironmental sustainability considerations '
+        'increasingly influence architectural decisionmaking.\nParliamentary '
+        'representatives overwhelmingly supported comprehensive '
+        'transportation legislation.\nMicroelectronics manufacturers '
+        'anticipate extraordinary semiconductor shortages throughout '
+        'Southeast Asia.\nThe '
+        'characteristically understated documentation and the '
+        'multidisciplinary acknowledgements impressed reviewers.'),
+    'gopher_symbols': _FIXTURE_BASE.replace(
+        'centuries.', 'centuries. ' + ' '.join(
+            '#' + t for t in ('farm wheat barley water valley river spring '
+                              'snow flood dam lake museum anglers families '
+                              'meadows villages hills history fishing').split()
+        ) + '.'),
+    'gopher_bullets': '\n'.join(
+        '- ' + s.strip() + '.' for s in _FIXTURE_BASE.split('.') if s.strip()),
+    'gopher_ellipsis': _FIXTURE_BASE.replace('.\n', ' and more...\n'),
+    'gopher_alpha': _FIXTURE_BASE.replace(
+        'centuries.', 'centuries. Yearly yields were ' +
+        ' '.join(str(v) for v in range(1903, 1990, 2)) + '.'),
+    'gopher_stop_words': (
+        'Fresh bread comes out from our ovens every morning at six.\nOur '
+        'bakers use stone mills for whole grain rye flour.\nCustomers love '
+        'almond croissants filled from pastry cream made in house.\nWe bake '
+        'wedding cakes for small or large parties on request.\nGluten free '
+        'loaves are available on Fridays at both shops.\nGift vouchers make '
+        'great presents for friends who enjoy good food.\nPlease ask staff '
+        'about seasonal specials before you order online.'),
+    'c4_quality': _FIXTURE_BASE.replace(
+        'centuries.', 'centuries. Lorem ipsum dolor sit amet, consectetur.'),
+    'fw_line_punct': _FIXTURE_BASE.replace('.\n', '\n').replace(
+        'years.', 'years'),
+    'fw_short_lines': (
+        'The river rises in the hills\nto the north and flows south\nthrough '
+        'the valley for about\nforty kilometres.\nFarmers along its banks '
+        'have\nused the water to irrigate\ntheir fields of wheat and\nbarley '
+        'for centuries.\nIn spring the snow melts and\nthe river floods the '
+        'low\nmeadows, which is why the\nold villages stand on higher\n'
+        'ground.\nToday a small dam near the\ntown holds back some of that\n'
+        'water, and the lake behind\nit is popular with anglers\nand '
+        'families with children.\nThe local museum has a fine\nexhibition '
+        'that explains how\nthe valley changed over the\nlast two hundred '
+        'years.'),
+    'fw_dup_chars': _FIXTURE_BASE + '\nRead more about the valley.\n'
+                    'Read more about the valley.',
+    'fw_list_ratio': (
+        'Blacksmiths tapestries fishermen\nOld town\nCathedrals architects '
+        'musicians\nWaterfalls farmhouses sculptors\nNew bridge\nCarpenters '
+        'woodcarvers gardeners\nStorytellers travellers lanterns.\nQuiet '
+        'lanes\nMonasteries shepherdess chestnuts\nInnkeepers fishermen '
+        'surveyors\nRiver mills\nTapestries musicians engineers\nArchitects '
+        'sculptors vineyards\nStone walls\nFarmhouses gardeners orchards.\n'
+        'Woodcarvers lanterns pilgrims\nOver the hills and\nTravellers '
+        'chestnuts blacksmiths\nShepherdess surveyors cathedrals\nGreen '
+        'fields\nFishermen engineers waterfalls\nMusicians vineyards '
+        'carpenters.\nBright mornings\nSculptors orchards storytellers\n'
+        'Gardeners pilgrims monasteries\nCold winters\nLanterns blacksmiths '
+        'innkeepers\nChestnuts cathedrals tapestries\nLong summers\nSurveyors '
+        'waterfalls architects.')}
+
+EDU_RUBRIC = (  # the released annotation prompt (HuggingFaceFW/fineweb-edu-
+    # llama3-annotations, ODC-By); the extract is the text's first 1,500
+    # characters (the released prompts hold such a cut)
+    'Below is an extract from a web page. Evaluate whether the page has a '
+    'high educational value and could be useful in an educational setting '
+    'for teaching from primary school to grade school levels using the '
+    'additive 5-point scoring system described below. Points are '
+    'accumulated based on the satisfaction of each criterion:\n\n'
+    '- Add 1 point if the extract provides some basic information relevant '
+    'to educational topics, even if it includes some irrelevant or '
+    'non-academic content like advertisements and promotional material.\n'
+    '- Add another point if the extract addresses certain elements '
+    'pertinent to education but does not align closely with educational '
+    'standards. It might mix educational content with non-educational '
+    'material, offering a superficial overview of potentially useful '
+    'topics, or presenting information in a disorganized manner and '
+    'incoherent writing style.\n'
+    '- Award a third point if the extract is appropriate for educational '
+    'use and introduces key concepts relevant to school curricula. It is '
+    'coherent though it may not be comprehensive or could include some '
+    'extraneous information. It may resemble an introductory section of a '
+    'textbook or a basic tutorial that is suitable for learning but has '
+    'notable limitations like treating concepts that are too complex for '
+    'grade school students. \n'
+    '- Grant a fourth point if the extract highly relevant and beneficial '
+    'for educational purposes for a level not higher than grade school, '
+    'exhibiting a clear and consistent writing style. It could be similar '
+    'to a chapter from a textbook or a tutorial, offering substantial '
+    'educational content, including exercises and solutions, with minimal '
+    'irrelevant information, and the concepts aren\'t too advanced for '
+    'grade school students. The content is coherent, focused, and valuable '
+    'for structured learning.\n'
+    '- Bestow a fifth point if the extract is outstanding in its '
+    'educational value, perfectly suited for teaching either at primary '
+    'school or grade school. It follows detailed reasoning, the writing '
+    'style is easy to follow and offers profound and thorough insights '
+    'into the subject matter, devoid of any non-educational or complex '
+    'content.\n\nThe extract:\n{extract}\n\nAfter examining the extract: \n'
+    '- Briefly justify your total score, up to 100 words.\n'
+    '- Conclude with the score using the format: “Educational score:  '
+    '<total points>”\n\nRemember to assess from the AI Assistant '
+    'perspective, utilizing web search knowledge as necessary. To evaluate '
+    'the response in alignment with this additive scoring model, we’ll '
+    'systematically attribute points based on the outlined criteria.')
+
+def edu_label_scores(model, tokenizer, prompts, batch_size=16, *,
+                     max_batch_tokens=24_576, prefix='Educational score: ',
+                     extra_space=False):
+    """(len(prompts), 6) float64: the probabilities of the next tokens
+    '0' ... '5' after each prompt as a user turn of the chat template
+    (non-thinking), the assistant's answer started with prefix. Prompts are
+    sorted by length and left-padded into batches of at most batch_size
+    rows and max_batch_tokens tokens with padding (a longer prompt runs
+    alone); only the last position's logits are computed; rows come back
+    in input order. The prompt is tokenized as if the digit followed the
+    prefix, so a prefix ending in spaces splits as in the model's own text.
+    With extra_space, the probability of digit d also counts the answers
+    that write one more space first: p(d) + p(space) p(d | space). The six
+    probabilities need not sum to one: the rest is what the model puts on
+    other tokens.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    ids, digits, space = d2l._edu_label_ids(tokenizer, prompts, prefix,
+                                            extra_space)
+    want = digits + ([space] if extra_space else [])
+    pad = tokenizer.pad_token_id
+    pad = tokenizer.eos_token_id if pad is None else pad
+    device = next(model.parameters()).device
+
+    def last_probs(ids):
+        out = np.empty((len(ids), len(want)))
+        for b in d2l._edu_batches([len(r) for r in ids], batch_size,
+                                  max_batch_tokens):
+            T = len(ids[b[0]])
+            X = torch.tensor([[pad] * (T - len(ids[i])) + ids[i] for i in b],
+                             device=device)
+            mask = torch.tensor([[0] * (T - len(ids[i])) + [1] * len(ids[i])
+                                 for i in b], device=device)
+            pos = (mask.cumsum(-1) - 1).clamp(min=0)
+            with torch.inference_mode():
+                z = model(input_ids=X, attention_mask=mask, position_ids=pos,
+                          use_cache=False, logits_to_keep=1).logits[:, -1]
+                out[b] = z.float().log_softmax(-1)[:, want].exp().cpu().numpy()
+        return out
+
+    P = last_probs(ids)
+    if not extra_space:
+        return P
+    Q = last_probs([x + [space] for x in ids])
+    return P[:, :6] + P[:, 6:7] * Q[:, :6]
+
+def embed_docs(texts, model_id='Qwen/Qwen3-Embedding-0.6B', max_len=512,
+               batch=64, pool='last', device=None):
+    """(len(texts), d) float16 unit vectors of documents under a frozen
+    embedder, in input order: d2l.load_encoder and d2l.embed_texts with
+    the model's padding side (left for last-token pooling), the first
+    max_len tokens, batches of similar length; bf16 on a GPU, fp32 on the
+    CPU.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+    side = d2l._EMBEDDERS.get(model_id, {}).get(
+        'padding_side', 'left' if pool == 'last' else 'right')
+    model, tok = d2l.load_encoder(
+        model_id, dtype=torch.bfloat16 if device == 'cuda' else torch.float32,
+        device=device, padding_side=side)
+    Z = d2l.embed_texts(model, tok, list(texts), pooling=pool,
+                        batch_size=batch, max_len=max_len, padding_side=side)
+    del model
+    d2l.lm_free()
+    return Z.numpy().astype(np.float16)
+
+def fit_quality_head(X, y, kind='regression', epochs=200, lr=1e-3,
+                     weight_decay=0.0, seed=0):
+    """A linear head on fixed features, full-batch AdamW: kind='regression'
+    fits the score by squared error, kind='logistic' a 0/1 label by
+    logistic loss. Starts at zero weights and the best constant; returns
+    the nn.Linear and the loss per epoch.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    if kind not in ('regression', 'logistic'):
+        raise ValueError(f'kind is regression or logistic, not {kind!r}')
+    torch.manual_seed(seed)
+    X = torch.as_tensor(np.array(X, dtype=np.float32))
+    y = torch.as_tensor(np.array(y, dtype=np.float32))
+    head = nn.Linear(X.shape[1], 1)
+    with torch.no_grad():
+        head.weight.zero_()
+        m = y.mean()
+        head.bias.fill_(m if kind == 'regression' else
+                        torch.logit(m.clamp(1e-6, 1 - 1e-6)))
+    loss_fn = (nn.MSELoss() if kind == 'regression'
+               else nn.BCEWithLogitsLoss())
+    opt = torch.optim.AdamW(head.parameters(), lr=lr,
+                            weight_decay=weight_decay)
+    losses = []
+    for _ in range(epochs):
+        opt.zero_grad()
+        loss = loss_fn(head(X)[:, 0], y)
+        loss.backward()
+        opt.step()
+        losses.append(loss.item())
+    return head, losses
+
+class HashedBagClassifier(nn.Module):
+    """fastText's classifier: word n-grams of the lower-cased,
+    whitespace-split text, hashed into num_buckets rows (zlib.crc32) of an
+    embedding table, averaged, and mapped to num_outputs logits.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    def __init__(self, num_buckets=2**20, dim=64, ngrams=(1, 2),
+                 num_outputs=1):
+        super().__init__()
+        self.num_buckets, self.ngrams = num_buckets, tuple(ngrams)
+        self.bag = nn.EmbeddingBag(num_buckets, dim, mode='mean',
+                                   sparse=True)
+        self.out = nn.Linear(dim, num_outputs)
+        nn.init.uniform_(self.bag.weight, -1 / dim, 1 / dim)  # as fastText
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+
+    def hash_ids(self, text):
+        import zlib
+        w = text.lower().split()
+        return [zlib.crc32(' '.join(w[i:i + n]).encode('utf-8'))
+                % self.num_buckets for n in self.ngrams
+                for i in range(len(w) - n + 1)]
+
+    def featurize(self, texts):
+        """(ids, offsets) of a batch of texts for nn.EmbeddingBag."""
+        ids = [self.hash_ids(t) for t in texts]
+        offsets = np.cumsum([0] + [len(x) for x in ids[:-1]])
+        return (torch.tensor([i for x in ids for i in x], dtype=torch.long),
+                torch.tensor(offsets, dtype=torch.long))
+
+    def forward(self, ids, offsets):
+        return self.out(self.bag(ids, offsets))
+
+def audit_removals(df, keep, by, ref=None, n_boot=2000, cluster=None,
+                   seed=0):
+    """Removal rate per group of df[by] with a 95% percentile bootstrap
+    interval, resampling whole clusters (df[cluster], e.g. the registered
+    domain; each row its own cluster if None) within each group; with ref,
+    the difference of each group's rate to ref's and its interval. keep is
+    a boolean array or a column name. Groups with fewer than 100 rows or
+    10 clusters are marked too_few.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    removed = ~np.asarray(df[keep] if isinstance(keep, str) else keep,
+                          dtype=bool)
+    groups = df[by].to_numpy()
+    clusters = (df[cluster].to_numpy() if cluster is not None
+                else np.arange(len(df)))
+    rng, reps, rows = np.random.default_rng(seed), {}, []
+    for g in sorted(set(groups)):
+        m = groups == g
+        cl = pd.factorize(clusters[m])[0]
+        G = cl.max() + 1
+        r = np.bincount(cl, removed[m], G)
+        n = np.bincount(cl, minlength=G)
+        draws = rng.integers(G, size=(n_boot, G))
+        reps[g] = r[draws].sum(1) / n[draws].sum(1)
+        lo, hi = np.quantile(reps[g], [0.025, 0.975])
+        rows.append(dict(group=g, n=int(m.sum()), n_clusters=int(G),
+                         removal=r.sum() / n.sum(), lo=lo, hi=hi))
+    out = pd.DataFrame(rows)
+    if ref is not None:
+        base = out.set_index('group').removal[ref]
+        out['diff'] = out.removal - base
+        d = np.array([np.quantile(reps[g] - reps[ref], [0.025, 0.975])
+                      for g in out.group])
+        out['diff_lo'], out['diff_hi'] = d[:, 0], d[:, 1]
+    out['too_few'] = (out.n < 100) | (out.n_clusters < 10)
+    return out
+
+d2l.DATA_HUB['lm-contam-plant-v1'] = (  # 100 GSM8K, ARC-Challenge and
+    # MMLU test items each, verbatim, reformatted and paraphrased by
+    # Qwen3.5-4B, with FineWeb ids and offsets (20.3); MIT, CC BY-SA 4.0
+    d2l.LM_DATA_URL + 'lm-contam-plant-v1.jsonl',
+    '54e171c603a7133729715881267efb4e2f35a503')
+d2l.DATA_HUB['lm-dedup-pairs-v1'] = (  # 12,000 labelled pairs as ids and
+    # edit parameters, no text (20.3)
+    d2l.LM_DATA_URL + 'lm-dedup-pairs-v1.jsonl.gz',
+    '366ff9d4242d86faffa6796c1af130cb022c8860')
+d2l.DATA_HUB['lm-data-dedup-emb-v1'] = (  # Qwen3-Embedding vectors of the
+    # benchmark items and of 128-word windows of FineWeb documents (20.3)
+    d2l.LM_DATA_URL + 'lm-data-dedup-emb-v1.npz',
+    'a1d73933ad4fa3a34b53427802c003962d2c0532')
+d2l.DATA_HUB['lm-c2-docs-v1'] = (  # keep or drop, stage and reason for
+    # every c0 document, no text (20.3)
+    d2l.LM_DATA_URL + 'lm-c2-docs-v1.jsonl.gz',
+    '9bb87a9e2572038a42f64fcd921ab8661f26b0d4')
+d2l.DATA_HUB['lm-corpus-manifest-v1'] = (  # the nine-stage manifest of
+    # lm-corpus-v1 (20.3)
+    d2l.LM_DATA_URL + 'lm-corpus-manifest-v1.json',
+    '4c2ff314b12af6863aadf776801939e2853637e2')
+d2l.DATA_HUB['lm-data-dedup-results-v1'] = (  # 20.3's numbers
+    d2l.LM_DATA_URL + 'lm-data-dedup-results-v1.json',
+    '90e8d6b236630aad59762b8d13824acf35492f5d')
+
+def shingles(text, n=5):
+    """The word n-grams of text as strings (the MinHash specification):
+    NFC, lowercase, the regex \\w+ tokens, n consecutive tokens joined by
+    one space. Empty if text has fewer than n words.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    import unicodedata
+    import regex
+    words = regex.findall(r'\w+', unicodedata.normalize('NFC', text).lower())
+    return [' '.join(words[i:i + n]) for i in range(len(words) - n + 1)]
+
+def jaccard_exact(a, b):
+    """The resemblance |A & B| / |A | B| of two shingle collections taken
+    as sets; 0 if both are empty.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    a = a if isinstance(a, (set, frozenset)) else set(a)
+    b = b if isinstance(b, (set, frozenset)) else set(b)
+    inter = len(a & b)
+    union = len(a) + len(b) - inter
+    return inter / union if union else 0.0
+
+def containment(a, b):
+    """The containment |A & B| / |A| of A in B (Broder); 0 if A is empty.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    a = a if isinstance(a, (set, frozenset)) else set(a)
+    b = b if isinstance(b, (set, frozenset)) else set(b)
+    return len(a & b) / len(a) if a else 0.0
+
+MINHASH_PRIME = (1 << 61) - 1  # the Mersenne prime 2^61 - 1
+
+def minhash_signature(shingle_list, k=128, seed=0xD2):
+    """The MinHash signature, a (k,) uint64 array, of a shingle collection:
+    row i is the minimum over shingles of (a_i x + c_i) mod p, where x is
+    the shingle's blake2b hash (8 bytes, little-endian) mod p, p = 2^61 - 1
+    and (a, c) are drawn from numpy.random.default_rng(seed). None for an
+    empty collection (fewer words than the shingle size): such a document
+    never matches.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    if not shingle_list:
+        return None
+    x = np.unique(d2l._shingle_hashes(shingle_list)) % np.uint64(
+        d2l.MINHASH_PRIME)
+    a, c = d2l._minhash_params(k, seed)
+    return d2l._minhash_rows(x, a, c)  # exact mulmod: 32-bit halves
+
+MINHASH_FIXTURE = (  # five strings whose signatures the library pins
+    'The quick brown fox jumps over the lazy dog.',
+    'Deduplication keeps one copy of every document in the corpus.',
+    'Café crème: une boisson chaude, servie le matin avec du pain.',
+    'ONE two Three four FIVE six seven, eight; nine: ten!',
+    'Near-duplicate pages differ only by a date or a sidebar.')
+MINHASH_FIXTURE_SHA256 = (  # of their k = 128, seed 0xD2 signatures' bytes
+    'b9b07bf416ce76f2b5cf1ae3d12fc617bdfa5bc7e464230c6bca1ada3bda0195')
+
+def scurve(s, b, r):
+    """The probability that a pair of Jaccard s becomes a candidate under b
+    bands of r rows: 1 - (1 - s^r)^b.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    return 1 - (1 - np.asarray(s, dtype=float) ** r) ** b
+
+def _br_error(b, r, tau, w_fp=1.0, w_fn=1.0, n_grid=20_001):
+    """The weighted error areas of an S-curve against the step at tau:
+    w_fp times the area under P on [0, tau] (pairs below the threshold that
+    become candidates) plus w_fn times the area above P on [tau, 1]
+    (trapezoid rule on n_grid points).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    s = np.linspace(0, 1, n_grid)
+    P = d2l.scurve(s, b, r)
+    lo, hi = s <= tau, s >= tau
+    return (w_fp * np.trapezoid(P[lo], s[lo])
+            + w_fn * np.trapezoid(1 - P[hi], s[hi]))
+
+def best_br(k, tau, w_fp=1.0, w_fn=1.0):
+    """The (b, r) with b = k // r that minimizes the weighted error areas
+    of its S-curve against the step at tau (the smallest r on a tie).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    errors = {(k // r, r): d2l._br_error(k // r, r, tau, w_fp, w_fn)
+              for r in range(1, k + 1)}
+    return min(errors, key=errors.get)
+
+def lsh_candidates(sigs, b, r, *, max_bucket=1000, seed=0):
+    """Candidate pairs (i, j), i < j, of signatures (a sequence of arrays,
+    None for an empty document) that agree in all r rows of at least one of
+    b bands; the bucket key of band j is blake2b (8 bytes) of its rows'
+    bytes. A bucket with more than max_bucket members (templated pages) is
+    cut to max_bucket members drawn with default_rng((seed, j)). Returns
+    (set of pairs, report of bucket sizes and the cut buckets).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    import itertools
+    pairs, sizes, cut = set(), collections.Counter(), []
+    rows = [i for i, s in enumerate(sigs) if s is not None]
+    for j in range(b):
+        buckets = collections.defaultdict(list)
+        for i in rows:
+            band = sigs[i][j * r:(j + 1) * r].astype('<u8')
+            buckets[hashlib.blake2b(band.tobytes(), digest_size=8)
+                    .digest()].append(i)
+        for members in buckets.values():
+            if len(members) < 2:
+                continue
+            sizes[len(members)] += 1
+            if max_bucket and len(members) > max_bucket:
+                cut.append((j, len(members)))
+                members = sorted(np.random.default_rng((seed, j)).choice(
+                    members, max_bucket, replace=False).tolist())
+            pairs.update(itertools.combinations(members, 2))
+    return pairs, dict(n_pairs=len(pairs), bucket_sizes=dict(sizes),
+                       largest=max(sizes, default=0), cut=cut)
+
+def union_find_clusters(n, pairs):
+    """Connected components of n items under pairs, by union-find (path
+    compression, union by size); each item's label is the smallest index
+    of its component, so the result does not depend on the pair order.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    parent, size = list(range(n)), [1] * n
+    def find(i):
+        root = i
+        while parent[root] != root:
+            root = parent[root]
+        while parent[i] != root:
+            parent[i], i = root, parent[i]
+        return root
+    for i, j in pairs:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            if size[ri] < size[rj]:
+                ri, rj = rj, ri
+            parent[rj] = ri
+            size[ri] += size[rj]
+    roots = np.array([find(i) for i in range(n)], dtype=np.int64)
+    low = np.full(n, n, dtype=np.int64)
+    np.minimum.at(low, roots, np.arange(n))
+    return low[roots]
+
+def near_dedup(texts, threshold=0.8, ngram=5, num_perm=128, seed=0, *,
+               workers=1):
+    """The indices of texts to keep after near-duplicate removal: MinHash
+    signatures (hash seed 0xD2 + seed), banding at best_br(num_perm,
+    threshold), union-find clusters; each cluster keeps its lowest index.
+    workers > 1 computes the signatures in separate processes.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    sigs = d2l._minhash_texts(texts, num_perm, (0xD2 + seed,), ngram,
+                              workers)[0xD2 + seed]
+    pairs, _ = d2l.lsh_candidates(sigs, *d2l.best_br(num_perm, threshold))
+    labels = d2l.union_find_clusters(len(sigs), pairs)
+    return [i for i in range(len(sigs)) if labels[i] == i]
+
+DUP_PAIRS_SPEC = dict(  # the labelled pair set lm-dedup-pairs-v1
+    n_base=2000, variants=3, min_words=50,
+    ops=('sub', 'del', 'boiler', 'shuffle', 'trunc'),
+    rates=(0.01, 0.02, 0.05, 0.1, 0.2, 0.3),  # of the words, sub and del
+    boiler_words=(20, 200), trunc=(0.3, 0.9),
+    n_neg_host=3000, n_neg_random=3000, ngram=5, tau=0.8)
+
+def pair_texts(row, texts, vocab=None):
+    """The two texts of a labelled pair: texts[a] and texts[b], or texts[a]
+    and its perturbed copy by row['op'] and row['params'] (vocab: the
+    substitution words, needed for 'sub').
+
+    Defined in :numref:`sec_lm_dedup`"""
+    a = texts[row['a']]
+    if row['b'] is not None:
+        return a, texts[row['b']]
+    return a, d2l._dup_perturb(a, row['op'], row['params'], vocab)
+
+def make_dup_pairs(docs, spec, seed=0):
+    """The labelled pairs of spec from docs (a DataFrame with id, url, text
+    and role 'stream' or 'host_pair'): spec['variants'] perturbed copies of
+    each of spec['n_base'] stream documents (the first of a seeded
+    permutation with at least spec['min_words'] words), pairs of different
+    documents of one host (neg_host) and random stream pairs (neg_random).
+    Each row: pair_id, a, b (None for a copy), op, params (with the copy's
+    seed), J, C (containment of the smaller shingle set in the larger),
+    label (J >= tau) and split (train or test by the SHA-256 of a).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    import itertools
+    import regex
+    rng = np.random.default_rng(seed)
+    texts = dict(zip(docs.id, docs.text))
+    stream = docs.id[docs.role == 'stream'].tolist()
+    vocab = d2l._dup_vocab(texts[i] for i in stream)
+    long_enough = (stream[i] for i in rng.permutation(len(stream))
+                   if len(regex.findall(r'\w+', texts[stream[i]]))
+                   >= spec['min_words'])
+    todo = []
+    for a in itertools.islice(long_enough, spec['n_base']):
+        for _ in range(spec['variants']):
+            op = str(rng.choice(spec['ops']))
+            params = dict(seed=int(rng.integers(2**31)))
+            if op in ('sub', 'del'):
+                params['rate'] = float(rng.choice(spec['rates']))
+            elif op == 'boiler':
+                lo, hi = spec['boiler_words']
+                params['words'] = int(rng.integers(lo, hi + 1))
+            elif op == 'trunc':
+                params['frac'] = round(float(rng.uniform(*spec['trunc'])), 4)
+            todo.append((a, None, op, params))
+    hosts = docs[docs.role == 'host_pair'].assign(
+        host=[d2l._url_host(u) for u in docs.url[docs.role == 'host_pair']])
+    same = [p for ids in hosts.groupby('host').id.apply(list)
+            for p in itertools.combinations(ids, 2)]
+    for k in sorted(rng.choice(len(same), spec['n_neg_host'],
+                               replace=False).tolist()):
+        todo.append((*same[k], 'neg_host', {}))
+    seen = set()
+    while len(seen) < spec['n_neg_random']:
+        i, j = sorted(rng.choice(len(stream), 2, replace=False).tolist())
+        if (i, j) not in seen:
+            seen.add((i, j))
+            todo.append((stream[i], stream[j], 'neg_random', {}))
+    rows = []
+    for n, (a, b, op, params) in enumerate(todo):
+        row = dict(pair_id=f'p{n:05d}', a=a, b=b, op=op, params=params)
+        sa, sb = (set(d2l.shingles(t, spec['ngram']))
+                  for t in d2l.pair_texts(row, texts, vocab))
+        small, large = (sa, sb) if len(sa) <= len(sb) else (sb, sa)
+        J = d2l.jaccard_exact(sa, sb)
+        half = int(hashlib.sha256(a.encode('utf-8')).hexdigest(), 16) % 2
+        rows.append(dict(row, J=J, C=d2l.containment(small, large),
+                         label=bool(J >= spec['tau']),
+                         split=('train', 'test')[half]))
+    return rows
+
+def suffix_array(ids):
+    """The suffix array of an integer sequence by prefix doubling: sa[i] is
+    the start of the i-th smallest suffix (a suffix that is a prefix of
+    another sorts first). Ranks by the first 2^k tokens, sorted with
+    np.lexsort, until all ranks differ: O(n log^2 n).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    ids = np.asarray(ids, dtype=np.int64)
+    n = len(ids)
+    if n == 0:
+        return np.zeros(0, dtype=np.int64)
+    rank = np.unique(ids, return_inverse=True)[1].astype(np.int64)
+    k = 1
+    while True:
+        second = np.full(n, -1, dtype=np.int64)
+        second[:n - k] = rank[k:] if k < n else second[:0]
+        sa = np.lexsort((second, rank))
+        r1, r2 = rank[sa], second[sa]
+        new = np.empty(n, dtype=np.int64)
+        new[sa] = np.concatenate([[0], np.cumsum(
+            (r1[1:] != r1[:-1]) | (r2[1:] != r2[:-1]))])
+        rank = new
+        if rank[sa[-1]] == n - 1 or k >= n:
+            return sa
+        k *= 2
+
+def lcp_array(ids, sa):
+    """lcp[i] = the length of the longest common prefix of the suffixes
+    sa[i - 1] and sa[i] (lcp[0] = 0), by Kasai's algorithm in O(n).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    s, sa = [int(v) for v in ids], [int(v) for v in sa]
+    n = len(s)
+    rank = [0] * n
+    for i, p in enumerate(sa):
+        rank[p] = i
+    lcp, h = [0] * n, 0
+    for i in range(n):
+        if rank[i] > 0:
+            j = sa[rank[i] - 1]
+            while i + h < n and j + h < n and s[i + h] == s[j + h]:
+                h += 1
+            lcp[rank[i]] = h
+            h = max(h - 1, 0)
+        else:
+            h = 0
+    return np.array(lcp, dtype=np.int64)
+
+def repeated_spans(ids, sa, lcp, min_len):
+    """The maximal repeats of at least min_len tokens, as (start, length,
+    count): every interval of the suffix array whose suffixes share a
+    prefix of that length (found with a stack over lcp), kept if extending
+    it one token to the left would not keep all its occurrences equal.
+    start is the first position of an occurrence; longest first.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    n, out, stack = len(sa), [], [(0, 0)]  # (lcp value, left bound)
+    for i in range(1, n + 1):
+        cur, lb = (int(lcp[i]) if i < n else 0), i - 1
+        while cur < stack[-1][0]:
+            length, lb = stack.pop()
+            if length >= min_len:
+                occ = sa[lb:i]
+                left = {int(ids[p - 1]) if p > 0 else None for p in occ}
+                if len(left) > 1 or None in left:
+                    out.append((int(occ.min()), length, len(occ)))
+        if cur > stack[-1][0]:
+            stack.append((cur, lb))
+    return sorted(out, key=lambda t: (-t[1], -t[2], t[0]))
+
+class NgramIndex:
+    """Hashed word n-grams of indexed texts, for decontamination: a key is
+    blake2b (8 bytes) of n consecutive NFC-lowercased \\w+ words joined by
+    one space, so casing, punctuation and spacing do not matter.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    def __init__(self, n=13):
+        self.n, self.keys = n, {}
+
+    def _grams(self, text):
+        w = d2l.shingles(text, 1)  # the words, as the shingles see them
+        return {hashlib.blake2b(' '.join(w[i:i + self.n]).encode('utf-8'),
+                                digest_size=8).digest()
+                for i in range(len(w) - self.n + 1)}
+
+    def add(self, text, tag):
+        for g in self._grams(text):
+            self.keys.setdefault(g, set()).add(tag)
+        return self
+
+    def query(self, text):
+        """[(tag, number of the text's distinct n-grams in tag's text)],
+        most hits first."""
+        hits = collections.Counter()
+        for g in self._grams(text):
+            hits.update(self.keys.get(g, ()))
+        return sorted(hits.items(), key=lambda t: (-t[1], str(t[0])))
+
+MIX_DOMAINS = ('web', 'code', 'math')
+
+MIX_TARGETS = {  # target weights over MIX_DOMAINS, fixed before any run
+    't_avg': (1 / 3, 1 / 3, 1 / 3), 't_dep': (0.7, 0.15, 0.15)}
+
+d2l.DATA_HUB['lm-mix-web-20m-v1'] = (  # 20M reference-tokenizer tokens of
+    # FineWeb-Edu's side buckets 1-7 (20.4); ODC-By
+    d2l.LM_DATA_URL + 'lm-mix-web-20m-v1.tar',
+    '02e073e66edbf4a7a83fa0936e4222a1ce3eab2f')
+d2l.DATA_HUB['lm-mix-math-20m-v1'] = (  # 20M tokens of FineMath 4+ (20.4);
+    # ODC-By
+    d2l.LM_DATA_URL + 'lm-mix-math-20m-v1.tar',
+    'aa1d5bf776548da1610d06148d339b33a57eb026')
+d2l.DATA_HUB['lm-mix-val-1m-v1'] = (  # the web and mathematics validation
+    # sets, 1M tokens each (20.4); ODC-By
+    d2l.LM_DATA_URL + 'lm-mix-val-1m-v1.tar',
+    '3b3aeb6a0b35c756b15d7fe05ea6a22ded3efd74')
+d2l.DATA_HUB['lm-mix-code-meta-v1'] = (  # the code pool's meta and per-file
+    # attribution, no code: CodeParrot's files are built locally (20.4)
+    d2l.LM_DATA_URL + 'lm-mix-code-meta-v1.tar',
+    '15ad995f32fb085771f2be54c5fd65b392c974c7')
+d2l.DATA_HUB['lm-mix-web-150m-v1'] = (  # the T2 pools: 150M tokens of
+    # FineWeb-Edu's side buckets 1-7 (20.4); ODC-By
+    d2l.LM_DATA_URL + 'lm-mix-web-150m-v1.tar',
+    'e38535606a46743f4d255d90cfab169f6f186297')
+d2l.DATA_HUB['lm-mix-math-150m-v1'] = (  # 150M tokens of FineMath 4+
+    # (20.4); ODC-By
+    d2l.LM_DATA_URL + 'lm-mix-math-150m-v1.tar',
+    '0b55675617bbd88e8cea96b99947e62a5ca76ddf')
+d2l.DATA_HUB['lm-mix-val-2m-v1'] = (  # the T2 web and mathematics
+    # validation sets, 2M tokens each (20.4); ODC-By
+    d2l.LM_DATA_URL + 'lm-mix-val-2m-v1.tar',
+    'dc2deae77f8ebc37a599d04c46b97ae229961edb')
+d2l.DATA_HUB['lm-mix-code150-meta-v1'] = (  # the T2 code pool's meta and
+    # attribution, no code (20.4)
+    d2l.LM_DATA_URL + 'lm-mix-code150-meta-v1.tar',
+    '139d6b2a3d463867cab48cd0b64986d7c0466996')
+d2l.DATA_HUB['lm-mix-runs-t1-v1'] = (  # the 41 T1 runs, the selection,
+    # DoReMi's weights and the T2 smoke (mix-t1 regeneration, 20.4)
+    d2l.LM_DATA_URL + 'lm-mix-runs-t1-v1.json',
+    '92abf76a5e9891ba3efe5c5daa5f2a021f05c9e4')
+d2l.DATA_HUB['lm-mix-runs-t1-v2'] = (  # v1's runs without the staged arm,
+    # plus the 27 runs of the v2 design (20.4)
+    d2l.LM_DATA_URL + 'lm-mix-runs-t1-v2.json',
+    '8b44a65a466ac5a938dcbe58eef6a89a130a7249')
+d2l.DATA_HUB['lm-mix-runs-t2s-v1'] = (  # a small-scale test of the T2 code
+    # path on four RTX 4090s: the T2 design at half its tokens (20.4)
+    d2l.LM_DATA_URL + 'lm-mix-runs-t2s-v1.json',
+    'dac131e52de0e8b0d8ae883f5005eee6c3dcf60d')
+
+ProxyCfg = collections.namedtuple('ProxyCfg', (
+    'num_hiddens num_heads num_blks seq_len batch micro_batch lr '
+    'warmup_frac schedule decay_frac final_lr_frac weight_decay betas dtype '
+    'vocab_size'), defaults=(1024, 64, 16, 1e-3, 0.02, 'cosine', 0.2, 0.1,
+                             0.1, (0.9, 0.95), 'bfloat16', 32768))
+
+MIX_EDGES = (  # seed-free training mixtures near the corners of the simplex
+    (0.8, 0.1, 0.1), (0.1, 0.8, 0.1), (0.1, 0.1, 0.8))
+
+MIX_CONFIGS = {  # the study's two tiers, fixed before any run
+    't1': dict(  # one RTX 4090
+        name='t1', domains=MIX_DOMAINS, targets=MIX_TARGETS, target='t_dep',
+        proxy=ProxyCfg(num_hiddens=128, num_heads=2, num_blks=2),
+        tokens=2**24, pool='20m', val='1m', pool_tokens=20_000_000,
+        val_tokens=1_000_000, keys={
+            'web-20m': 'lm-mix-web-20m-v1', 'math-20m': 'lm-mix-math-20m-v1',
+            'web-val-1m': 'lm-mix-val-1m-v1',
+            'math-val-1m': 'lm-mix-val-1m-v1'},
+        code_meta='lm-mix-code-meta-v1', runs_key='lm-mix-runs-t1-v2',
+        train=((1.0, 6), (0.3, 6)), edges=MIX_EDGES, held=4,
+        design_seeds=(0, 1), cos_seeds=(1, 2, 3, 4), arm_seeds=(0, 1, 2),
+        max_weight=0.9, lr_grid=(5e-4, 1e-3, 2e-3, 4e-3), lr_tokens=2**23,
+        lr_tie=1e-3, eval_at=tuple(k / 8 for k in range(1, 9)),
+        arm_eval_at=tuple(k / 20 for k in range(1, 21)), curve_windows=256,
+        log_every=10, ckpt_every=256, stage_frac=0.8, select='mixlaw',
+        compile=False, doremi=dict(eta=1.0, smooth=1e-3),
+        pure_seeds=(1, 2),  # added in v2, with the three entries below
+        lr_check=dict(lr=1e-3, seeds=(0, 1, 2), mixtures={
+            'web': (1.0, 0.0, 0.0), 'edge': MIX_EDGES[0],
+            'uniform': (1 / 3, 1 / 3, 1 / 3)}),
+        anneal=dict(weights=MIX_EDGES[2], recency_frac=0.9),
+        horizon=dict(factor=4, seeds=(0, 1), max_epochs=2)),
+    't2': dict(  # the campaign package: run on a faster node
+        name='t2', domains=MIX_DOMAINS, targets=MIX_TARGETS, target='t_dep',
+        proxy=ProxyCfg(num_hiddens=320, num_heads=5, num_blks=8),
+        tokens=2**27, pool='150m', val='2m', pool_tokens=150_000_000,
+        val_tokens=2_000_000, keys={
+            'web-150m': 'lm-mix-web-150m-v1',
+            'math-150m': 'lm-mix-math-150m-v1',
+            'web-val-2m': 'lm-mix-val-2m-v1',
+            'math-val-2m': 'lm-mix-val-2m-v1'},
+        code_meta='lm-mix-code150-meta-v1', runs_key='lm-mix-runs-t2-v1',
+        train=((1.0, 8), (0.3, 8)), edges=MIX_EDGES, held=8,
+        design_seeds=(0, 1), cos_seeds=(1, 2), arm_seeds=(0, 1, 2),
+        max_weight=0.9, lr_grid=(5e-4, 1e-3, 2e-3, 4e-3), lr_tokens=2**25,
+        lr_tie=1e-3, eval_at=tuple(k / 8 for k in range(1, 9)),
+        arm_eval_at=tuple(k / 20 for k in range(1, 21)), curve_windows=256,
+        log_every=10, ckpt_every=256, stage_frac=0.8, select='mixlaw',
+        compile=True, doremi=dict(eta=1.0, smooth=1e-3))}
+
+def fwedu_bucket(doc_id):
+    """The bucket (0-255) of a FineWeb-Edu document: the first 32 bits of
+    the SHA-256 of its id string (as released, <urn:uuid:...>) mod 256.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    return int(hashlib.sha256(doc_id.encode('utf-8')).hexdigest()[:8],
+               16) % 256
+
+FWEDU_BUCKETS = {  # bucket ranges of the chapter's FineWeb-Edu splits
+    'val': range(0, 1),         # the reference model's validation set
+    'side': range(1, 8),        # side pool: 20.4's and 20.5's web training text
+    'side_val': range(8, 9),    # side validation
+    'train': range(9, 256)}     # the reference model's training shards
+
+def temperature_weights(sizes, alpha):
+    """Sampling probabilities p_i proportional to n_i ** alpha: alpha = 1
+    samples in proportion to size, alpha = 0 uniformly. sizes is a dict or
+    a sequence; the result has the same form.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    n = np.array(list(sizes.values()) if isinstance(sizes, dict) else sizes,
+                 dtype=float)
+    p = np.exp(alpha * np.log(n) - (alpha * np.log(n)).max())
+    p = p / p.sum()
+    return dict(zip(sizes, p)) if isinstance(sizes, dict) else p
+
+def effective_tokens(unique, epochs, r_star=15.4):
+    """Effective data D' = U + U R* (1 - exp(-R / R*)) of `epochs` passes
+    over `unique` tokens (R = epochs - 1 repeats): the data-constrained law
+    of Muennighoff et al. with their fitted R*. Less than one epoch counts
+    what was read.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    E = np.asarray(epochs, dtype=float)
+    R = np.maximum(E - 1, 0)
+    return unique * np.minimum(E, 1) + unique * r_star * (1 - np.exp(
+        -R / r_star))
+
+def sample_mixtures(n, domains, concentration, seed, max_weight=0.9,
+                    min_weight=0.0):
+    """n mixtures over the domains, (n, m), drawn from the symmetric
+    Dirichlet(concentration) and kept only when every weight lies in
+    [min_weight, max_weight] (rejection), in the order drawn.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    rng, m, out = np.random.default_rng(seed), len(domains), []
+    while len(out) < n:
+        w = rng.dirichlet(np.full(m, concentration))
+        if min_weight <= w.min() and w.max() <= max_weight:
+            out.append(w)
+    return np.array(out)
+
+def bpb_from_nll(sum_nll_nats, n_bytes):
+    """Bits per byte from a summed negative log-likelihood in nats and the
+    number of UTF-8 bytes the scored tokens stand for.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    return float(sum_nll_nats) / (math.log(2) * n_bytes)
+
+def train_proxy_lm(pools, weights, tokens, cfg, seed=0, eval_sets=None,
+                   stages=None, log_every=50, *, max_epochs=1,
+                   stop_tokens=None, eval_at=(0.25, 0.5, 0.75, 1.0),
+                   curve_windows=None, byte_lengths=None, ckpt=None,
+                   ckpt_every=256, resume=None, compile=False, device=None):
+    """Train a proxy d2l.GPT on `tokens` tokens of the mixture `weights`
+    ({domain: weight}) of token pools, switching to the weights of each
+    (fraction, weights) of `stages` at that fraction of the run. Returns
+    the log [step, tokens, loss, seconds], the evaluations at the
+    fractions eval_at (per domain of eval_sets, on the first curve_windows
+    windows), the final evaluation on all windows, the epochs each pool was
+    read, throughput, parameter count and peak memory. stop_tokens ends the
+    run early on the same schedule and stream; ckpt/resume save and restore
+    a checkpoint every ckpt_every steps."""
+    device = device or d2l.try_gpu()
+    stream = d2l._ProxyStream(pools, weights, tokens, cfg.seq_len, cfg.batch,
+                              seed, stages, max_epochs)
+    steps, per_step = stream.steps, cfg.batch * cfg.seq_len
+    stop = steps if stop_tokens is None else min(steps,
+                                                 stop_tokens // per_step)
+    model = d2l._proxy_model(cfg, seed).to(device)
+    opt = d2l._proxy_optimizer(model, cfg)
+    if eval_sets and byte_lengths is None:
+        byte_lengths = d2l.token_byte_lengths(d2l.r2_tokenizer())
+    evaluate = lambda n: {d: d2l._proxy_eval(model, getattr(v, 'ids', v), cfg,
+                                             byte_lengths, n)
+                          for d, v in (eval_sets or {}).items()}
+    key = d2l._proxy_fingerprint(weights, stages, tokens, seed, cfg)
+    start, out = 0, dict(log=[], evals=[], final=None, seconds=0.0)
+    if resume is not None:
+        start, out = d2l._proxy_load(resume, model, opt, key)
+    fwd = torch.compile(model) if compile else model
+    at = {max(1, round(f * steps)): f for f in eval_at}
+    if device.type == 'cuda':
+        torch.cuda.reset_peak_memory_stats(device)
+    seconds = seconds0 = out['seconds']
+    for step in range(start, stop):
+        t0 = time.perf_counter()
+        for g in opt.param_groups:
+            g['lr'] = cfg.lr * d2l._lr_at(step, steps, cfg)
+        X = torch.from_numpy(stream.batch(step)[0]).to(device)
+        loss = 0.0
+        for Xm in X.split(cfg.micro_batch):  # gradient accumulation
+            l = d2l._per_token_nll(fwd, Xm, cfg).mean() * len(Xm) / len(X)
+            l.backward()
+            loss = loss + l.detach()
+        nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        opt.step()
+        opt.zero_grad(set_to_none=True)
+        if ((step + 1) % log_every == 0 or step + 1 in at or step + 1 == stop
+                or ckpt and (step + 1) % ckpt_every == 0):
+            loss = float(loss)  # waits for the GPU, so the clock is right
+            seconds += time.perf_counter() - t0
+            out['log'].append([step + 1, (step + 1) * per_step, loss,
+                               round(seconds, 3)])
+        else:
+            seconds += time.perf_counter() - t0
+        if step + 1 in at and eval_sets:
+            out['evals'].append(dict(frac=at[step + 1], step=step + 1,
+                                     tokens=(step + 1) * per_step,
+                                     domains=evaluate(curve_windows)))
+        if ckpt and ((step + 1) % ckpt_every == 0 or step + 1 == stop):
+            out['seconds'] = seconds
+            d2l._proxy_save(ckpt, model, opt, step + 1, out, key)
+    if stop == steps and eval_sets:
+        out['final'] = evaluate(None)
+    out.update(steps=steps, stopped_at=stop, n_params=d2l.num_params(model),
+               epochs=stream.epochs, epoch_starts=stream.epoch_starts,
+               seconds=seconds, throughput=(stop - start) * per_step / max(
+                   seconds - seconds0, 1e-9),
+               peak_mem=(torch.cuda.max_memory_allocated(device) / 2**30
+                         if device.type == 'cuda' else None))
+    return out
+
+def fit_mixture_regression(W, L, kind='ridge', **kw):
+    """A predictor f(w) -> per-domain losses fitted on mixtures W (n, m)
+    and their losses L (n, k): 'ridge' on the first m - 1 weights and an
+    intercept (alpha=1e-3, intercept not shrunk), 'gbm' (scikit-learn
+    gradient boosting per output, seed 0) or 'mixlaw' (L_i = c_i + k_i
+    exp(sum_j t_ij w_j) per output, least squares from `starts` seeded
+    starts, default 8; init=params of an earlier fit is tried first).
+    f takes (m,) or (n', m); f.params holds the fitted parameters.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    W, L = np.asarray(W, dtype=float), np.asarray(L, dtype=float)
+    design = lambda w: np.hstack([np.ones((len(w), 1)), w[:, :-1]])
+    if kind == 'ridge':
+        X = design(W)
+        P = kw.get('alpha', 1e-3) * np.eye(X.shape[1])
+        P[0, 0] = 0
+        params = np.linalg.solve(X.T @ X + P, X.T @ L)
+        predict = lambda w: design(w) @ params
+    elif kind == 'gbm':
+        from sklearn.ensemble import GradientBoostingRegressor
+        opts = dict(n_estimators=200, learning_rate=0.05, max_depth=2)
+        models = [GradientBoostingRegressor(random_state=0, **{**opts, **kw})
+                  .fit(W, L[:, i]) for i in range(L.shape[1])]
+        params = None
+        predict = lambda w: np.stack([g.predict(w) for g in models], -1)
+    elif kind == 'mixlaw':
+        from scipy.optimize import least_squares
+        rng, params = np.random.default_rng(0), []
+        law = lambda p, w: p[0] + p[1] * np.exp(w @ p[2:])
+        init, starts = kw.get('init'), kw.get('starts', 8)
+        for i, y in enumerate(L.T):
+            x0 = [] if init is None else [np.asarray(init[i], dtype=float)]
+            x0 += [np.concatenate([[rng.uniform(0, y.min())],
+                                   [rng.uniform(0.1, 2)],
+                                   rng.normal(0, 1, W.shape[1])])
+                   for _ in range(starts - len(x0))]
+            fits = [least_squares(lambda p: law(p, W) - y, x, xtol=1e-15,
+                                  ftol=1e-15, gtol=1e-15, max_nfev=5000)
+                    for x in x0]
+            params.append(min(fits, key=lambda r: r.cost).x)
+        params = np.array(params)
+        predict = lambda w: np.stack([law(p, w) for p in params], -1)
+    else:
+        raise ValueError(f'unknown kind {kind!r}')
+    def f(w):
+        w = np.asarray(w, dtype=float)
+        return predict(w[None])[0] if w.ndim == 1 else predict(w)
+    f.params = params
+    return f
+
+def choose_mixture(f, target, n_grid=5000, seed=0, max_weight=0.9,
+                   within=None):
+    """The mixture w with no weight above max_weight that minimizes the
+    fitted target loss target @ f(w): the best of n_grid Dirichlet(1)
+    points, polished by Nelder-Mead on w = softmax(z). within (n, m), if
+    given, bounds the choice to the convex hull of those mixtures (where
+    f was fitted, so the choice never rests on extrapolation). Returns
+    (w, the predicted target loss).
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    from scipy.optimize import minimize
+    from scipy.spatial import Delaunay
+    t = np.asarray(target, dtype=float)
+    hull = None if within is None else Delaunay(np.asarray(within)[:, :-1])
+    inside = lambda w: (np.ones(len(w), bool) if hull is None else
+                        hull.find_simplex(w[:, :-1]) >= 0)
+    G = d2l.sample_mixtures(n_grid, t, 1.0, seed, max_weight)
+    G = G[inside(G)]
+    vals = f(G) @ t
+    softmax = lambda z: np.exp(z - z.max()) / np.exp(z - z.max()).sum()
+    def loss(z):
+        w = softmax(z)
+        if w.max() > max_weight or not inside(w[None])[0]:
+            return np.inf
+        return float(f(w) @ t)
+    res = minimize(loss, np.log(G[vals.argmin()]), method='Nelder-Mead',
+                   options=dict(xatol=1e-8, fatol=1e-10, maxiter=4000))
+    if res.fun < vals.min():
+        return softmax(res.x), float(res.fun)
+    return G[vals.argmin()], float(vals.min())
+
+def doremi_weights(ref_model, proxy_model, domain_batches, steps, cfg,
+                   eta=1.0, smooth=1e-3, *, lr=None):
+    """DoReMi's domain weights: train proxy_model on the alpha-weighted
+    domain losses while alpha follows each domain's excess loss over the
+    frozen ref_model (per token, clipped at 0) by multiplicative weights.
+    domain_batches(step) gives {domain: LongTensor (b, seq_len + 1)};
+    lr(step) is the learning rate (default cfg.lr). Returns the
+    step-averaged alpha and the per-step trace.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    opt, trace, alpha = d2l._proxy_optimizer(proxy_model, cfg), [], None
+    ref_model.eval()
+    for step in range(steps):
+        batches = domain_batches(step)
+        if alpha is None:
+            alpha = np.full(len(batches), 1 / len(batches))
+        excess = []
+        with torch.no_grad():  # both models on the same tokens
+            for X in batches.values():
+                nll = [torch.cat([d2l._per_token_nll(m, Xm, cfg) for Xm in
+                                  X.split(cfg.micro_batch)])
+                       for m in (proxy_model, ref_model)]
+                excess.append(d2l._doremi_excess(*nll))
+        alpha = d2l._doremi_step(alpha, excess, eta, smooth)
+        for g in opt.param_groups:
+            g['lr'] = cfg.lr if lr is None else lr(step)
+        for a, X in zip(alpha, batches.values()):  # step on sum_i alpha_i l_i
+            for Xm in X.split(cfg.micro_batch):
+                (a * d2l._per_token_nll(proxy_model, Xm, cfg).mean()
+                 * len(Xm) / len(X)).backward()
+        nn.utils.clip_grad_norm_(proxy_model.parameters(), 1.0)
+        opt.step()
+        opt.zero_grad(set_to_none=True)
+        trace.append(dict(alpha=alpha.tolist(), excess=excess))
+    return np.mean([t['alpha'] for t in trace], 0), trace
+
+d2l.DATA_HUB['lm-rephrase-fwedu-5m-v1'] = (  # FineWeb-Edu chunks and their
+    # wiki-style rewrites by Qwen3.5-2B, 4.7M tokens (20.5); ODC-By
+    d2l.LM_DATA_URL + 'lm-rephrase-fwedu-5m-v1.tar',
+    '1b8598668e0959eeef5f4b0045cc7ed6574880e1')
+d2l.DATA_HUB['lm-data-synth-results-v1'] = (  # the judge's verdicts, the 15
+    # proxy runs of the five arms and three Cosmopedia rows (20.5)
+    d2l.LM_DATA_URL + 'lm-data-synth-results-v1.json',
+    'd27e4094b3936e83efc89b6ccc69760f538c49fd')
+
+REPHRASE_PROMPTS = {  # style -> user prompt; {text} is the source chunk
+    'wiki': (
+        'Rewrite the following text as a clear, well-organized passage in '
+        'the style of an encyclopedia article, in plain prose paragraphs '
+        'without Markdown, headings or lists. Preserve every fact, name and '
+        'number; add nothing that the text does not say. Reply with the '
+        'passage only.\n\nText:\n{text}'),
+    'qa': (
+        'Rewrite the following text as a conversation of questions and '
+        'answers in plain text without Markdown: each question on its own '
+        'line starting with "Question:", each answer on its own line '
+        'starting with "Answer:". Preserve every fact, name and number; add '
+        'nothing that the text does not say. Reply with the conversation '
+        'only.\n\nText:\n{text}')}
+
+def _token_pieces(tokenizer):
+    """The text of every token id decoded on its own, cached on the
+    tokenizer (a byte of a multi-byte character decodes to U+FFFD).
+
+    Defined in :numref:`sec_lm_synthetic_data`"""
+    pieces = getattr(tokenizer, '_d2l_pieces', None)
+    if pieces is None:
+        pieces = tokenizer.batch_decode([[i] for i in range(len(tokenizer))])
+        tokenizer._d2l_pieces = pieces
+    return pieces
+
+def chunk_doc(token_ids, tokenizer, max_tokens=400):
+    """Split a document's token ids into chunks of at most max_tokens ids:
+    sentences end at a line break or at ., ? or ! (closing quotes and
+    brackets allowed) before white space; each chunk takes whole sentences
+    while they fit, and a sentence longer than max_tokens is cut into
+    pieces of max_tokens. The chunks concatenate to the document.
+
+    Defined in :numref:`sec_lm_synthetic_data`"""
+    ids, pieces = [int(t) for t in token_ids], d2l._token_pieces(tokenizer)
+    ends = []  # positions after which a sentence ends
+    for k, t in enumerate(ids):
+        p = pieces[t]
+        after = pieces[ids[k + 1]] if k + 1 < len(ids) else ' '
+        core = p.rstrip().rstrip('"\')]”’»')
+        if k + 1 == len(ids) or '\n' in p or (core[-1:] in ('.', '?', '!')
+                                              and (p[-1:].isspace() or
+                                                   after[:1].isspace())):
+            ends.append(k + 1)
+    chunks, cur, start = [], [], 0
+    for end in ends:
+        sentence, start = ids[start:end], end
+        if len(cur) + len(sentence) <= max_tokens:
+            cur += sentence
+            continue
+        if cur:
+            chunks.append(cur)
+        while len(sentence) > max_tokens:  # an over-long sentence
+            chunks.append(sentence[:max_tokens])
+            sentence = sentence[max_tokens:]
+        cur = sentence
+    return chunks + [cur] if cur else chunks
+
+def _synth_generate(model, tokenizer, prompts, max_new_tokens, batch,
+                    temperature, top_p, seed, progress=None):
+    """Generate a chat reply to every prompt (non-thinking template) in
+    batches of similar length with left padding; batch k samples under the
+    seed (seed, k). Returns (text, n_out, finish) per prompt in input
+    order: finish is 'stop' when the model ended its turn and 'length'
+    when max_new_tokens ran out first. progress: seconds between lines.
+
+    Defined in :numref:`sec_lm_synthetic_data`"""
+    import transformers
+    chat = [tokenizer.apply_chat_template(
+        [{'role': 'user', 'content': p}], tokenize=False,
+        add_generation_prompt=True, enable_thinking=False) for p in prompts]
+    ids = tokenizer(chat, add_special_tokens=False)['input_ids']
+    stop = model.generation_config.eos_token_id
+    stop = [stop] if isinstance(stop, int) else list(stop)
+    pad = (tokenizer.pad_token_id if tokenizer.pad_token_id is not None
+           else stop[0])
+    sample = temperature > 0
+    cfg = transformers.GenerationConfig(  # nothing from the model's config
+        max_new_tokens=max_new_tokens, do_sample=sample,
+        temperature=temperature if sample else None,
+        top_p=top_p if sample else None, top_k=0 if sample else None,
+        eos_token_id=stop, pad_token_id=pad)
+    device = next(model.parameters()).device
+    order = sorted(range(len(ids)), key=lambda i: -len(ids[i]))
+    out, t0, shown, n_new = [None] * len(ids), time.time(), time.time(), 0
+    for k, a in enumerate(range(0, len(order), batch)):
+        rows = order[a:a + batch]
+        T = max(len(ids[i]) for i in rows)
+        X = torch.tensor([[pad] * (T - len(ids[i])) + ids[i] for i in rows],
+                         device=device)
+        mask = torch.tensor([[0] * (T - len(ids[i])) + [1] * len(ids[i])
+                             for i in rows], device=device)
+        torch.manual_seed(int(np.random.SeedSequence(
+            [seed, k]).generate_state(1)[0]))
+        with torch.inference_mode():
+            G = model.generate(input_ids=X, attention_mask=mask,
+                               generation_config=cfg)
+        for i, new in zip(rows, G[:, T:].tolist()):
+            n = next((j for j, t in enumerate(new) if t in stop), None)
+            new = new if n is None else new[:n]
+            out[i] = (tokenizer.decode(new).strip(), len(new),
+                      'length' if n is None else 'stop')
+            n_new += len(new)
+        if progress and time.time() - shown > progress:
+            shown = time.time()
+            print(f'  {a + len(rows):,} of {len(ids):,} prompts, '
+                  f'{n_new / (shown - t0):,.0f} new tokens/s')
+    return out
+
+class _SynthRows(list):
+    """The rows rephrase_docs keeps; .dropped holds the rows it dropped.
+
+    Defined in :numref:`sec_lm_synthetic_data`"""
+    dropped = ()
+
+def rephrase_docs(chunks, style, model_id='Qwen/Qwen3.5-2B',
+                  max_new_tokens=512, batch=32, temperature=0.7, top_p=0.9,
+                  seed=0, backend='hf', *, model=None, progress=None):
+    """Rewrite each text of chunks in a style: a key of REPHRASE_PROMPTS,
+    a prompt template with {text}, or a list of either, one per chunk.
+    Non-thinking chat generation by model_id, or by model=(model,
+    tokenizer) loaded once by the caller; backend='vllm' generates with
+    vLLM instead (model: a vllm.LLM; request i samples under seed + i).
+    Returns dict(index, src, out, n_out, finish) rows in
+    input order; rows that ran out of tokens (finish 'length') are dropped
+    and kept in .dropped. A reply with thinking text fails an assertion.
+
+    Defined in :numref:`sec_lm_synthetic_data`"""
+    styles = style if isinstance(style, (list, tuple)) else [style] * len(
+        chunks)
+    prompts = [d2l.REPHRASE_PROMPTS.get(s, s).format(text=c)
+               for s, c in zip(styles, chunks)]
+    if backend == 'hf':
+        m, tok = model or d2l.load_hf(model_id)
+        outs = d2l._synth_generate(m, tok, prompts, max_new_tokens, batch,
+                                   temperature, top_p, seed, progress)
+    elif backend == 'vllm':  # the serving path, if vLLM is installed
+        from vllm import LLM, SamplingParams
+        rev = d2l.HF_REVISIONS.get(model_id)
+        llm = model or LLM(model_id, revision=rev, tokenizer_revision=rev,
+                           dtype='bfloat16', seed=seed,
+                           gpu_memory_utilization=0.5)  # a shared card
+        replies = llm.chat(
+            [[{'role': 'user', 'content': p}] for p in prompts],
+            [SamplingParams(temperature=temperature, top_p=top_p,
+                            max_tokens=max_new_tokens, seed=seed + i)
+             for i in range(len(prompts))],
+            chat_template_kwargs=dict(enable_thinking=False))
+        outs = [(r.outputs[0].text.strip(), len(r.outputs[0].token_ids),
+                 'length' if r.outputs[0].finish_reason == 'length'
+                 else 'stop') for r in replies]
+    else:
+        raise ValueError(f'unknown backend {backend!r}')
+    rows = d2l._SynthRows()
+    rows.dropped = []
+    for i, (c, (text, n, finish)) in enumerate(zip(chunks, outs)):
+        assert '<think>' not in text and '</think>' not in text, (
+            f'chunk {i}: thinking text in the reply')
+        (rows.dropped if finish == 'length' else rows).append(dict(
+            index=i, src=c, out=text, n_out=n, finish=finish))
+    return rows
+
+def synth_metrics(src, out):
+    """Fidelity of a rewrite out of src: copy_rate, the Jaccard similarity
+    of their sets of character 5-grams (1 for a copy); num_fidelity, the
+    share of src's distinct digit strings (7, 1,300, 3.14) that are digit
+    strings of out (1 if src has none); len_ratio, len(out) / len(src) in
+    characters.
+
+    Defined in :numref:`sec_lm_synthetic_data`"""
+    grams = lambda t: {t[i:i + 5] for i in range(len(t) - 4)}
+    nums = lambda t: set(re.findall(r'\d+(?:[.,]\d+)*', t))
+    a, b, s = grams(src), grams(out), nums(src)
+    return dict(copy_rate=len(a & b) / len(a | b) if a | b else float(
+        src == out), num_fidelity=len(s & nums(out)) / len(s) if s else 1.0,
+                len_ratio=len(out) / max(len(src), 1))
+
+def distinct_n(texts, n=4):
+    """The share of distinct word n-grams among all word n-grams of texts
+    (NFC, lowercase, \\w+ words, as d2l.shingles); 0.0 without n-grams.
+
+    Defined in :numref:`sec_lm_synthetic_data`"""
+    grams = [g for t in texts for g in d2l.shingles(t, n)]
+    return len(set(grams)) / len(grams) if grams else 0.0
+
+def collapse_sim(n, generations, mode='replace', reps=1000, seed=0, mu=0.0,
+                 sigma=1.0):
+    """The Gaussian refit: generation 0 is N(mu, sigma^2); fit t (t >= 1)
+    fits (mu, sigma^2) by maximum likelihood to the n points just sampled
+    from fit t - 1 ('replace') or to all points sampled so far
+    ('accumulate'). Returns, per generation 0..generations over reps
+    repetitions, the mean of mu_t, its variance var_mu, the mean of
+    sigma_t^2 and the Monte-Carlo standard errors se_var_mu, se_sigma2.
+
+    Defined in :numref:`sec_lm_synthetic_data`"""
+    if mode not in ('replace', 'accumulate'):
+        raise ValueError(f'unknown mode {mode!r}')
+    rng = np.random.default_rng(seed)
+    M, S = np.zeros((generations + 1, reps)), np.zeros((generations + 1,
+                                                        reps))
+    M[0], S[0] = mu, sigma**2
+    total = np.zeros(reps), np.zeros(reps), 0  # sum, sum of squares, count
+    for t in range(1, generations + 1):
+        x = rng.normal(M[t - 1][:, None], np.sqrt(S[t - 1])[:, None],
+                       (reps, n))
+        s1, s2, k = x.sum(1), (x**2).sum(1), n
+        if mode == 'accumulate':
+            total = total[0] + s1, total[1] + s2, total[2] + n
+            s1, s2, k = total
+        M[t] = s1 / k
+        S[t] = np.maximum(s2 / k - M[t]**2, 0)
+    dev = M - M.mean(1, keepdims=True)
+    var = (dev**2).mean(1) * reps / (reps - 1)
+    m4 = (dev**4).mean(1)
+    return dict(mean=M.mean(1), var_mu=var, mean_sigma2=S.mean(1),
+                se_var_mu=np.sqrt(np.maximum(m4 - var**2, 0) / reps),
+                se_sigma2=S.std(1, ddof=1) / math.sqrt(reps))
+
+d2l.DATA_HUB['belebele-eng_Latn'] = (  # FLORES passages, CC BY-SA 4.0
+    'https://huggingface.co/datasets/facebook/belebele/resolve/'
+    '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/data/eng_Latn.jsonl',
+    '39c6796587fef3057a50ff60ecfa3d99c65ada99')
+d2l.DATA_HUB['belebele-deu_Latn'] = (
+    'https://huggingface.co/datasets/facebook/belebele/resolve/'
+    '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/data/deu_Latn.jsonl',
+    '2492011aa4718237cfaf71256150acb453184401')
+d2l.DATA_HUB['belebele-rus_Cyrl'] = (
+    'https://huggingface.co/datasets/facebook/belebele/resolve/'
+    '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/data/rus_Cyrl.jsonl',
+    '9c17bbd2594ec9ea831ad887587a4a401f80c48d')
+d2l.DATA_HUB['belebele-arb_Arab'] = (
+    'https://huggingface.co/datasets/facebook/belebele/resolve/'
+    '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/data/arb_Arab.jsonl',
+    'd409a6fda63a97566583558886f0414c8edd152a')
+d2l.DATA_HUB['belebele-hin_Deva'] = (
+    'https://huggingface.co/datasets/facebook/belebele/resolve/'
+    '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/data/hin_Deva.jsonl',
+    'e7017e822412dd49ef24f24419bc3e2e45175285')
+d2l.DATA_HUB['belebele-zho_Hans'] = (
+    'https://huggingface.co/datasets/facebook/belebele/resolve/'
+    '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/data/zho_Hans.jsonl',
+    'f7da1fed3c0c6d7e43a324bf8739231f2b346b6e')
+d2l.DATA_HUB['belebele-jpn_Jpan'] = (
+    'https://huggingface.co/datasets/facebook/belebele/resolve/'
+    '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/data/jpn_Jpan.jsonl',
+    '2a3755b2eaea864e066f4414c3f64e0a53cca41a')
+d2l.DATA_HUB['belebele-tha_Thai'] = (
+    'https://huggingface.co/datasets/facebook/belebele/resolve/'
+    '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/data/tha_Thai.jsonl',
+    '4aae5d586fe29db59bf12bfcbc9b75e816ca4380')
+d2l.DATA_HUB['belebele-swh_Latn'] = (
+    'https://huggingface.co/datasets/facebook/belebele/resolve/'
+    '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/data/swh_Latn.jsonl',
+    '1c327092d52031a5d7dfffe5b7419e0f2f584bc8')
+d2l.DATA_HUB['belebele-kor_Hang'] = (
+    'https://huggingface.co/datasets/facebook/belebele/resolve/'
+    '7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/data/kor_Hang.jsonl',
+    '17fa36b78cef39784d497a7cf40caf678e83c955')
+d2l.DATA_HUB['lm-data-fw2-slice-v1'] = (  # FineWeb-2, FineWeb-Edu: ODC-By
+    d2l.LM_DATA_URL + 'lm-data-fw2-slice-v1.tar',
+    '80ddb29c077df2fa73fb85f45197e32459ba4f56')
+d2l.DATA_HUB['lm-r2-tokenizer-v1'] = (  # the reference tokenizer
+    d2l.LM_DATA_URL + 'lm-r2-tokenizer-v1.json',
+    '4e8dbe43379e205000c68cbec6798278761a38cd')
+d2l.DATA_HUB['lm-fwedu-val-v1'] = (  # FineWeb-Edu validation shard: ODC-By
+    d2l.LM_DATA_URL + 'lm-fwedu-val-v1.tar',
+    '2675d35e9e0fb6a8e5b287c3928f5c014a8a34ab')
+d2l.DATA_HUB['lm-fwedu-shards-100m-v1'] = (  # train-00000: ODC-By
+    d2l.LM_DATA_URL + 'lm-fwedu-shards-100m-v1.tar',
+    '66992765074d705d749c304b54f06fe5586f0c0f')
+d2l.DATA_HUB['lm-fwedu-manifest-4b-v1'] = (  # 40 shards under fwedu-r2-v1/
+    d2l.LM_DATA_URL + 'lm-fwedu-manifest-4b-v1.json',
+    '2d97947273a7df83f494ad20bbb561bfbd2b336c')
+d2l.DATA_HUB['lm-data-tok-results-v1'] = (  # small LMs and extension runs
+    d2l.LM_DATA_URL + 'lm-data-tok-results-v1.json',
+    'b0eb51e54b42e5273dc9b17ba416f9f998531548')
+
+def fertility_table(encoders, parallel, ref='eng_Latn'):
+    """Per encoder and language: passages, UTF-8 bytes, tokens, bytes per
+    token, tokens per passage, the share of byte-fallback tokens and the
+    premium, the tokens a language needs over the tokens ref needs for
+    translations of the same passages. encoders maps a name to encode(str)
+    -> ids, or to (encode, fallback_ids); parallel maps a language to its
+    passages, aligned across languages.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    rows = []
+    for name, enc in encoders.items():
+        enc, fallback = enc if isinstance(enc, tuple) else (enc, ())
+        fallback = set(fallback)
+        for lang, passages in parallel.items():
+            ids = [enc(p) for p in passages]
+            n = sum(map(len, ids))
+            n_bytes = sum(len(p.encode('utf-8')) for p in passages)
+            rows.append(dict(
+                encoder=name, lang=lang, passages=len(passages),
+                bytes=n_bytes, tokens=n, bytes_per_token=n_bytes / n,
+                tokens_per_passage=n / len(passages),
+                fallback_share=sum(i in fallback for x in ids for i in x)
+                / n))
+    df = pd.DataFrame(rows)
+    ref_tokens = df[df.lang == ref].set_index('encoder').tokens
+    df['premium'] = df.tokens / df.encoder.map(ref_tokens)
+    return df
+
+def _unigram_lattice(s, logp, max_len):
+    """Edges (i, j, piece) of the segmentation lattice of s, by start i:
+    s[i:j] is a piece of logp.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    return [(i, j, s[i:j]) for i in range(len(s))
+            for j in range(i + 1, min(len(s), i + max_len) + 1)
+            if s[i:j] in logp]
+
+def _unigram_fb(s, logp, max_len):
+    """log P(s), summed over all segmentations of s, and each piece's
+    posterior expected count in s (forward-backward on the lattice).
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    n, edges = len(s), _unigram_lattice(s, logp, max_len)
+    fwd, bwd = [-math.inf] * (n + 1), [-math.inf] * (n + 1)
+    fwd[0] = bwd[n] = 0.0
+    for i, j, x in edges:  # by start: fwd[i] is complete when read
+        fwd[j] = d2l._logaddexp(fwd[j], fwd[i] + logp[x])
+    for i, j, x in reversed(edges):  # by start, descending
+        bwd[i] = d2l._logaddexp(bwd[i], logp[x] + bwd[j])
+    counts = collections.Counter()
+    for i, j, x in edges:
+        counts[x] += math.exp(fwd[i] + logp[x] + bwd[j] - fwd[n])
+    return fwd[n], counts
+
+def viterbi_segment(text, logp, max_len, *, unk=None):
+    """The most probable segmentation of text into pieces of logp (piece
+    -> log-probability) of at most max_len characters; ties go to fewer
+    pieces. With unk, a character that is no piece is a piece of
+    log-probability unk (SentencePiece's rule for unknown characters).
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    n = len(text)
+    best, back = [(-math.inf, 0)] * (n + 1), [0] * (n + 1)
+    best[0] = (0.0, 0)  # (log-probability, minus the number of pieces)
+    for j in range(1, n + 1):
+        for i in range(max(0, j - max_len), j):
+            lp = logp.get(text[i:j], unk if j == i + 1 else None)
+            if lp is not None and best[i][0] > -math.inf:
+                cand = (best[i][0] + lp, best[i][1] - 1)
+                if cand > best[j]:
+                    best[j], back[j] = cand, i
+    if best[n][0] == -math.inf:
+        raise ValueError(f'no segmentation of {text!r}')
+    out, j = [], n
+    while j > 0:
+        out.append(text[back[j]:j])
+        j = back[j]
+    return out[::-1]
+
+def _unigram_sample(s, logp, max_len, alpha, rng):
+    """A segmentation of s drawn with probability proportional to
+    P(segmentation)^alpha: forward filtering, then backward sampling.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    fwd, into = [-math.inf] * (len(s) + 1), collections.defaultdict(list)
+    fwd[0] = 0.0
+    for i, j, x in _unigram_lattice(s, logp, max_len):
+        fwd[j] = d2l._logaddexp(fwd[j], fwd[i] + alpha * logp[x])
+        into[j].append((i, x))
+    out, j = [], len(s)
+    while j > 0:
+        w = np.array([fwd[i] + alpha * logp[x] for i, x in into[j]])
+        p = np.exp(w - w.max())
+        i, x = into[j][rng.choice(len(w), p=p / p.sum())]
+        out.append(x)
+        j = i
+    return out[::-1]
+
+class UnigramTokenizer:
+    """A unigram language model over pieces (Kudo 2018), trained by EM
+    with pruning: seed the vocabulary with every character and the
+    seed_size most frequent substrings (scored by count times length),
+    then alternate em_iters EM steps with keeping prune_frac of the pieces
+    until vocab_size remain. Words are split at whitespace and marked by a
+    leading U+2581, as SentencePiece marks them.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    def __init__(self, vocab_size, seed_size=100_000, em_iters=2,
+                 prune_frac=0.8, max_piece_len=12):
+        self.vocab_size, self.seed_size = vocab_size, seed_size
+        self.em_iters, self.prune_frac = em_iters, prune_frac
+        self.max_len, self.pieces, self.history = max_piece_len, {}, []
+
+    @staticmethod
+    def _words(sentences):
+        return collections.Counter('▁' + w for s in sentences
+                                   for w in s.split())
+
+    def _em_step(self, words, logp):
+        """E: expected piece counts under logp; M: probabilities
+        proportional to them. Returns the new log-probabilities and the
+        corpus log-likelihood under the old ones."""
+        counts, loglik = collections.Counter(), 0.0
+        for w, c in words.items():
+            logz, cw = d2l._unigram_fb(w, logp, self.max_len)
+            loglik += c * logz
+            for x, v in cw.items():
+                counts[x] += c * v
+        for x in logp:  # a character stays a piece, however rare
+            if len(x) == 1 and counts[x] <= 0:
+                counts[x] = 1e-6
+        log_total = math.log(sum(counts.values()))
+        return ({x: math.log(counts[x]) - log_total for x in logp
+                 if counts[x] > 0}, loglik)
+
+    def _prune(self, words, logp, keep):
+        """The keep pieces whose removal costs the most likelihood: a
+        piece's loss is its count in the Viterbi segmentations times what
+        its log-probability gains over the best segmentation of its own
+        string without it. Characters are always kept."""
+        freq = collections.Counter()
+        for w, c in words.items():
+            for x in d2l.viterbi_segment(w, logp, self.max_len):
+                freq[x] += c
+        loss, others = {}, dict(logp)
+        for x, lp in logp.items():
+            if len(x) > 1:
+                del others[x]
+                alt = d2l.viterbi_segment(x, others, self.max_len)
+                loss[x] = freq[x] * (lp - sum(others[a] for a in alt))
+                others[x] = lp
+        chars = [x for x in logp if len(x) == 1]
+        ranked = sorted(loss, key=lambda x: (-loss[x], x))
+        kept = set(chars) | set(ranked[:max(keep - len(chars), 0)])
+        return {x: lp for x, lp in logp.items() if x in kept}
+
+    def train(self, sentences):
+        words = self._words(sentences)
+        subs, chars = collections.Counter(), collections.Counter()
+        for w, c in words.items():
+            for i in range(len(w)):
+                chars[w[i]] += c
+                for j in range(i + 2, min(len(w), i + self.max_len) + 1):
+                    subs[w[i:j]] += c
+        seed = sorted(subs, key=lambda x: (-subs[x] * len(x), x))
+        seed = {x: subs[x] * len(x) for x in seed[:self.seed_size]}
+        seed.update(chars)
+        total = sum(seed.values())
+        logp = {x: math.log(v / total) for x, v in seed.items()}
+        while True:
+            for _ in range(self.em_iters):
+                logp, loglik = self._em_step(words, logp)
+                self.history.append((len(logp), loglik))
+            if len(logp) <= self.vocab_size:
+                break
+            logp = self._prune(words, logp, max(
+                self.vocab_size, int(len(logp) * self.prune_frac)))
+        self.pieces = logp
+        return self
+
+    def encode(self, text):
+        return [x for w in text.split() for x in d2l.viterbi_segment(
+            '▁' + w, self.pieces, self.max_len)]
+
+    def encode_sample(self, text, alpha=0.2, seed=0):
+        """A segmentation drawn with probability proportional to
+        P(segmentation)^alpha, word by word (subword regularization)."""
+        rng = np.random.default_rng(seed)
+        return [x for w in text.split() for x in d2l._unigram_sample(
+            '▁' + w, self.pieces, self.max_len, alpha, rng)]
+
+R2_SPLIT_REGEX = (r"""(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+"""
+                  r"""|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)"""
+                  r"""|\s+""")
+
+def train_hf_bpe(texts, vocab_size, specials, regex=R2_SPLIT_REGEX,
+                 min_frequency=2):
+    """A byte-level BPE (Hugging Face tokenizers) trained on texts: NFC,
+    the split regex, bytes as 256 base symbols, the special tokens first
+    (ids 0, 1, ...), no BOS or EOS added on encode. Special-token strings
+    inside a text are encoded as text (encode_special_tokens is set; the
+    flag is not saved in tokenizer.json, so loaders set it again).
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    from tokenizers import (Regex, Tokenizer, decoders, models, normalizers,
+                            pre_tokenizers, trainers)
+    tok = Tokenizer(models.BPE(dropout=None, byte_fallback=False,
+                               unk_token=None))
+    tok.normalizer = normalizers.NFC()
+    tok.pre_tokenizer = pre_tokenizers.Sequence([
+        pre_tokenizers.Split(Regex(regex), behavior='isolated', invert=False),
+        pre_tokenizers.ByteLevel(add_prefix_space=False, trim_offsets=False,
+                                 use_regex=False)])
+    tok.decoder = decoders.ByteLevel()
+    trainer = trainers.BpeTrainer(
+        vocab_size=vocab_size, min_frequency=min_frequency,
+        special_tokens=list(specials), show_progress=False,
+        initial_alphabet=pre_tokenizers.ByteLevel.alphabet())
+    tok.train_from_iterator(texts, trainer=trainer)
+    if tok.get_vocab_size() != vocab_size:
+        raise ValueError(f'trained {tok.get_vocab_size()} pieces, not '
+                         f'{vocab_size}: too little text for this vocabulary')
+    tok.encode_special_tokens = True
+    return tok
+
+def extend_vocab(model, tokenizer, new_pieces, init='random', seed=0):
+    """Add new_pieces to a Transformers tokenizer (as added tokens, which
+    are matched before the model's own segmentation) and rows for them to
+    the model's input and, if untied, output matrices, initialized by
+    init: 'random' (normal, the config's initializer_range), 'mean' (the
+    mean of the old rows plus noise of 1% of their standard deviation, so
+    that no two rows are equal) or 'decomp' (the mean of the old rows of
+    the pieces the old tokenizer splits the new piece into). Returns
+    (model, tokenizer) with config.vocab_size updated.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    if init not in ('random', 'mean', 'decomp'):
+        raise ValueError(f'unknown init {init!r}')
+    pieces, n_old = list(new_pieces), len(tokenizer)
+    parts = tokenizer(pieces, add_special_tokens=False)['input_ids']
+    if tokenizer.add_tokens(pieces) != len(pieces):
+        raise ValueError('a new piece is in the vocabulary already')
+    out = model.get_output_embeddings()
+    tied = out is None or out.weight is model.get_input_embeddings().weight
+    old = [model.get_input_embeddings().weight] + ([] if tied
+                                                   else [out.weight])
+    old = [W.detach()[:n_old].float().cpu() for W in old]
+    model.resize_token_embeddings(len(tokenizer), mean_resizing=False)
+    mats = [model.get_input_embeddings().weight] + (
+        [] if tied else [model.get_output_embeddings().weight])
+    g = torch.Generator().manual_seed(seed)
+    std = model.config.get_text_config().initializer_range
+    k, d = len(pieces), old[0].shape[1]
+    with torch.no_grad():
+        for W, W0 in zip(mats, old):
+            if init == 'random':
+                new = torch.randn(k, d, generator=g) * std
+            elif init == 'mean':
+                new = W0.mean(0) + 0.01 * W0.std() * torch.randn(
+                    k, d, generator=g)
+            else:
+                new = torch.stack([W0[ids].mean(0) for ids in parts])
+            W[n_old:n_old + k] = new.to(W.device, W.dtype)
+    model.config.get_text_config().vocab_size = len(tokenizer)
+    return model, tokenizer
+
+R2_TOKENIZER_SHA256 = (  # of lm-r2-tokenizer-v1 (tools/build_r2_shards.py)
+    'b1b4b45c36aac256ae4f4bd5e5fd595395242fc6949299cb0e2e25d2a5a656e3')
+
+def r2_tokenizer(raw=False):
+    """The reference tokenizer (artifact lm-r2-tokenizer-v1; its file is
+    checked against R2_TOKENIZER_SHA256): a Transformers
+    PreTrainedTokenizerFast with EOS <|endoftext|> = 0, pad <|pad|> = 1,
+    no BOS, and special-token strings in text encoded as text; raw=True
+    gives the tokenizers.Tokenizer itself.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    if 'lm-r2-tokenizer-v1' not in d2l.DATA_HUB or not d2l.R2_TOKENIZER_SHA256:
+        raise KeyError('lm-r2-tokenizer-v1 is not registered yet: it is '
+                       'built by tools/build_r2_shards.py')
+    return d2l._r2_from_file(d2l.download_keyed('lm-r2-tokenizer-v1'),
+                             raw=raw, sha256=d2l.R2_TOKENIZER_SHA256)
+
+def write_shards(docs, tokenizer, out_dir, split, shard_tokens=100_000_000,
+                 eos_id=None, meta_fn=None, manifest=None, *, batch_docs=1000,
+                 max_shards=None):
+    """Tokenize documents into shards out_dir/{split}-{k:05d}.bin|.idx|
+    .meta.parquet and return the split's manifest entry. docs yields
+    (doc_id, text) or (doc_id, text, meta); each document becomes its ids
+    and one EOS (eos_id, default the tokenizer's <|endoftext|>); special
+    strings in a text stay text, and a special id inside a document is an
+    error. A shard closes at the first document boundary at or after
+    shard_tokens; ids are uint16 for vocabularies up to 65,536, else uint32.
+    meta_fn(doc_id, text, meta) gives a document's extra meta columns
+    (default: meta itself). With max_shards, writing stops when that many
+    shards are closed (the rest of docs is not read). The entry is stored
+    in manifest (a CorpusManifest, created if None), which is saved as
+    out_dir/manifest.json.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    import itertools
+    os.makedirs(out_dir, exist_ok=True)
+    vocab, eos, special = d2l._tok_info(tokenizer)
+    eos = eos if eos_id is None else eos_id
+    if eos is None:
+        raise ValueError('the tokenizer has no <|endoftext|>: pass eos_id')
+    dtype = np.dtype('uint16' if vocab <= 2**16 else 'uint32')
+    special = np.array(sorted(special | {eos}), dtype=np.int64)
+    shards, w, docs = [], None, iter(docs)
+    while (len(shards) != max_shards
+           and (batch := list(itertools.islice(docs, batch_docs)))):
+        batch = [(d[0], d[1], d[2] if len(d) > 2 else None) for d in batch]
+        for (doc_id, text, meta), ids in zip(
+                batch, d2l._doc_token_ids(tokenizer, [b[1] for b in batch])):
+            ids = np.asarray(ids, dtype=np.int64)
+            bad = np.isin(ids, special)
+            if bad.any():
+                raise ValueError(f'document {doc_id}: special id '
+                                 f'{int(ids[bad][0])} inside the text')
+            if w is None:
+                w = d2l._ShardWriter(out_dir, f'{split}-{len(shards):05d}',
+                                     dtype)
+            extra = meta_fn(doc_id, text, meta) if meta_fn else (meta or {})
+            w.add(doc_id, np.append(ids, eos).astype(dtype), extra)
+            if w.n_tokens >= shard_tokens:
+                shards.append(w.close())
+                w = None
+                if len(shards) == max_shards:
+                    break
+    if w is not None:
+        shards.append(w.close())
+    entry = dict(n_tokens=sum(s['n_tokens'] for s in shards),
+                 n_docs=sum(s['n_docs'] for s in shards), shards=shards)
+    manifest = manifest or d2l.CorpusManifest(os.path.basename(
+        os.path.normpath(out_dir)))
+    manifest.splits = dict(manifest.splits or {}, **{split: entry})
+    fmt = dict(dtype=dtype.name, eos_id=int(eos), endianness='little',
+               doc_end='eos', idx_dtype='uint32',
+               meta_required=['doc_id', 'n_tokens'])
+    if manifest.format not in (None, fmt):
+        raise ValueError(f'manifest format {manifest.format} != {fmt}')
+    manifest.format = fmt
+    manifest.tokenizer = manifest.tokenizer or dict(vocab_size=vocab)
+    manifest.save(os.path.join(out_dir, 'manifest.json'))
+    return entry
+
+class TokenShards:
+    """Read-only access to a shard set written by write_shards: documents
+    by global index, token ranges by global position, per-shard meta, and
+    verify(), which recomputes every file's SHA-256 and the EOS and offset
+    invariants. max_tokens keeps the smallest prefix of shards holding at
+    least that many tokens; fetch=True downloads missing files from the
+    manifest's url and checks sha1 and SHA-256. A pickled copy (a data
+    loader's worker) carries no memory maps; it opens its own.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    def __init__(self, root, split='train', fetch=False, max_tokens=None):
+        self.root, self.split, self.fetch = root, split, fetch
+        with open(os.path.join(root, 'manifest.json'), encoding='utf-8') as f:
+            self.manifest = json.load(f)
+        shards = self.manifest['splits'][split]['shards']
+        if max_tokens is not None:
+            total = np.cumsum([s['n_tokens'] for s in shards])
+            shards = shards[:int(np.searchsorted(total, max_tokens)) + 1]
+        self.shards = shards
+        fmt = self.manifest['format']
+        self.dtype = np.dtype(fmt['dtype']).newbyteorder('<')
+        self.eos_id = fmt['eos_id']
+        self.vocab_size = (self.manifest.get('tokenizer') or {}).get(
+            'vocab_size')
+        self._docs = np.cumsum([0] + [s['n_docs'] for s in shards])
+        self._toks = np.cumsum([0] + [s['n_tokens'] for s in shards])
+        self.n_docs, self.n_tokens = int(self._docs[-1]), int(self._toks[-1])
+        self.n_shards = len(shards)
+        self._mm, self._idx = {}, {}
+
+    def __getstate__(self):  # a worker process reopens the memory maps
+        return dict(self.__dict__, _mm={})
+
+    def _path(self, k, ext):
+        s = self.shards[k]
+        path = os.path.join(self.root, s['file'] + d2l._SHARD_EXT[ext])
+        if not os.path.exists(path):
+            if not self.fetch or 'url' not in s:
+                raise FileNotFoundError(path)
+            d2l._fetch_shard_file(s, ext, path)
+        return path
+
+    def shard(self, k):
+        if k not in self._mm:
+            self._mm[k] = np.memmap(self._path(k, 'bin'), dtype=self.dtype,
+                                    mode='r')
+        return self._mm[k]
+
+    def offsets(self, k):
+        if k not in self._idx:
+            self._idx[k] = np.fromfile(self._path(k, 'idx'), dtype='<u4')
+        return self._idx[k]
+
+    def locate(self, i):
+        """(shard, document within it, offset of its first token there)."""
+        if not 0 <= i < self.n_docs:
+            raise IndexError(i)
+        k = int(np.searchsorted(self._docs, i, side='right')) - 1
+        j = i - int(self._docs[k])
+        return k, j, int(self.offsets(k)[j])
+
+    def locate_token(self, t):
+        """(shard, position within it) of global token position t."""
+        if not 0 <= t < self.n_tokens:
+            raise IndexError(t)
+        k = int(np.searchsorted(self._toks, t, side='right')) - 1
+        return k, t - int(self._toks[k])
+
+    def doc(self, i):
+        k, j, a = self.locate(i)
+        return np.asarray(self.shard(k)[a:self.offsets(k)[j + 1]],
+                          dtype=np.int32)
+
+    def iter_docs(self, start=0):
+        for i in range(start, self.n_docs):
+            yield i, self.doc(i)
+
+    def read(self, start, n):
+        """n tokens from global position start, across shard boundaries."""
+        if start < 0 or start + n > self.n_tokens:
+            raise IndexError((start, n))
+        out = []
+        while n > 0:
+            k, a = self.locate_token(start)
+            take = min(n, self.shards[k]['n_tokens'] - a)
+            out.append(np.asarray(self.shard(k)[a:a + take], dtype=np.int32))
+            start, n = start + take, n - take
+        return np.concatenate(out) if out else np.zeros(0, dtype=np.int32)
+
+    def meta(self, k):
+        return pd.read_parquet(self._path(k, 'meta'))
+
+    def verify(self):
+        """Recompute every file's SHA-256 and check that offsets start at 0,
+        increase and end at the shard's token count, that EOS ends every
+        document and occurs nowhere else, and that the meta rows match."""
+        for k, s in enumerate(self.shards):
+            for ext in d2l._SHARD_EXT:
+                path = self._path(k, ext)
+                if d2l._sha256_file(path) != s['sha256'][ext]:
+                    raise ValueError(f'{path}: SHA-256 differs from the '
+                                     'manifest')
+            ids, idx = self.shard(k), self.offsets(k)
+            name = s['file']
+            if (len(idx) != s['n_docs'] + 1 or idx[0] != 0
+                    or idx[-1] != len(ids) or len(ids) != s['n_tokens']
+                    or (np.diff(idx.astype(np.int64)) <= 0).any()):
+                raise ValueError(f'{name}.idx: offsets do not match the '
+                                 'shard')
+            if (np.asarray(ids[idx[1:].astype(np.int64) - 1]) != self.eos_id
+                    ).any() or int((ids == self.eos_id).sum()) != s['n_docs']:
+                raise ValueError(f'{name}.bin: EOS not exactly at the '
+                                 'document ends')
+            m = self.meta(k)
+            if len(m) != s['n_docs'] or (m['n_tokens'].to_numpy()
+                                         != np.diff(idx)).any():
+                raise ValueError(f'{name}.meta.parquet: rows do not match '
+                                 'the offsets')
+        return True
+
+def fwedu_shards(which='100m', fetch=True, max_tokens=None):
+    """The reference shards of FineWeb-Edu under the reference tokenizer:
+    which='val' (2^23 validation tokens), '100m' (train-00000, 10^8 tokens)
+    or '4b' (the 40 training shards, downloaded one by one when first read).
+    Each lives in ../data/lm/fwedu-r2-v1/<which>/, extracted on the first
+    call (make that call once before starting several processes).
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    keys = {'val': 'lm-fwedu-val-v1', '100m': 'lm-fwedu-shards-100m-v1',
+            '4b': 'lm-fwedu-manifest-4b-v1'}
+    if which not in keys:
+        raise ValueError(f'which is one of {tuple(keys)}')
+    key = keys[which]
+    if key not in d2l.DATA_HUB:
+        raise KeyError(f'{key} is not registered yet: it is built by '
+                       'tools/build_r2_shards.py')
+    root = os.path.join('..', 'data', 'lm', 'fwedu-r2-v1', which)
+    path, sha1 = d2l.download_keyed(key), d2l.DATA_HUB[key][1]
+    stamp = os.path.join(root, '.extracted-' + key)
+    old = None
+    if os.path.exists(stamp):
+        with open(stamp) as f:
+            old = f.read()
+    if old != sha1:
+        shutil.rmtree(root, ignore_errors=True)  # afresh when the
+        os.makedirs(root)                        # registered sha1 changes
+        if which == '4b':  # the manifest only; shards come when read
+            shutil.copyfile(path, os.path.join(root, 'manifest.json'))
+        else:
+            d2l.extract(path, root)
+        with open(stamp, 'w') as f:
+            f.write(sha1)
+    return d2l.TokenShards(root, 'val' if which == 'val' else 'train',
+                           fetch=fetch, max_tokens=max_tokens)
+
+def train_batch_ch13(net, X, y, loss, trainer, devices):
+    """Train for a minibatch with multiple GPUs (defined in Chapter 13).
+
+    Defined in :numref:`sec_image_augmentation`"""
+    if isinstance(X, list):
+        # Required for BERT fine-tuning (to be covered later)
+        X = [x.to(devices[0]) for x in X]
+    else:
+        X = X.to(devices[0])
+    y = y.to(devices[0])
+    net.train()
+    trainer.zero_grad()
+    pred = net(X)
+    l = loss(pred, y)
+    l.sum().backward()
+    trainer.step()
+    train_loss_sum = l.sum() if l.numel() > 1 else l * y.numel()
+    train_acc_sum = d2l.accuracy(pred, y)
+    return train_loss_sum, train_acc_sum
+
+def train_ch13(net, train_iter, test_iter, loss, trainer, num_epochs,
+               devices=d2l.try_all_gpus()):
+    """Train a model with multiple GPUs (defined in Chapter 13).
+
+    Defined in :numref:`sec_image_augmentation`"""
+    timer, num_batches = d2l.Timer(), len(train_iter)
+    animator = d2l.Animator(xlabel='epoch', xlim=[1, num_epochs], ylim=[0, 1],
+                            legend=['train loss', 'train acc', 'test acc'])
+    net = nn.DataParallel(net, device_ids=devices).to(devices[0])
+    for epoch in range(num_epochs):
+        # Sum of training loss, sum of training accuracy, no. of examples,
+        # no. of examples
+        metric = d2l.Accumulator(4)
+        for i, (features, labels) in enumerate(train_iter):
+            timer.start()
+            l, acc = train_batch_ch13(
+                net, features, labels, loss, trainer, devices)
+            metric.add(l, acc, labels.shape[0], labels.numel())
+            timer.stop()
+            if (i + 1) % (num_batches // 5) == 0 or i == num_batches - 1:
+                animator.add(epoch + (i + 1) / num_batches,
+                             (metric[0] / metric[2], metric[1] / metric[3],
+                              None))
+        test_acc = d2l.evaluate_accuracy_gpu(net, test_iter)
+        animator.add(epoch + 1, (None, None, test_acc))
+    print(f'loss {metric[0] / metric[2]:.3f}, train acc '
+          f'{metric[1] / metric[3]:.3f}, test acc {test_acc:.3f}')
+    print(f'{metric[2] * num_epochs / timer.sum():.1f} examples/sec on '
+          f'{str(devices)}')
+
+d2l.DATA_HUB['hotdog'] = (d2l.DATA_URL + 'hotdog.zip', 
+                         'fba480ffa8aa7e0febbb511d181409f899b9baa5')
+
+def box_corner_to_center(boxes):
+    """Convert from (upper-left, lower-right) to (center, width, height).
+
+    Defined in :numref:`sec_bbox`"""
+    x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+    w = x2 - x1
+    h = y2 - y1
+    boxes = d2l.stack((cx, cy, w, h), axis=-1)
+    return boxes
+
+def box_center_to_corner(boxes):
+    """Convert from (center, width, height) to (upper-left, lower-right).
+
+    Defined in :numref:`sec_bbox`"""
+    cx, cy, w, h = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    x1 = cx - 0.5 * w
+    y1 = cy - 0.5 * h
+    x2 = cx + 0.5 * w
+    y2 = cy + 0.5 * h
+    boxes = d2l.stack((x1, y1, x2, y2), axis=-1)
+    return boxes
+
+def bbox_to_rect(bbox, color):
+    """Convert bounding box to matplotlib format.
+
+    Defined in :numref:`sec_bbox`"""
+    # Convert the bounding box (upper-left x, upper-left y, lower-right x,
+    # lower-right y) format to the matplotlib format: ((upper-left x,
+    # upper-left y), width, height)
+    return d2l.plt.Rectangle(
+        xy=(bbox[0], bbox[1]), width=bbox[2]-bbox[0], height=bbox[3]-bbox[1],
+        fill=False, edgecolor=color, linewidth=2)
+
+def multibox_prior(data, sizes, ratios):
+    """Generate anchor boxes with different shapes centered on each pixel.
+
+    Defined in :numref:`sec_anchor`"""
+    in_height, in_width = data.shape[-2:]
+    device, num_sizes, num_ratios = data.device, len(sizes), len(ratios)
+    boxes_per_pixel = (num_sizes + num_ratios - 1)
+    size_tensor = d2l.tensor(sizes, device=device)
+    ratio_tensor = d2l.tensor(ratios, device=device)
+    # Offsets are required to move the anchor to the center of a pixel. Since
+    # a pixel has height=1 and width=1, we choose to offset our centers by 0.5
+    offset_h, offset_w = 0.5, 0.5
+    steps_h = 1.0 / in_height  # Scaled steps in y axis
+    steps_w = 1.0 / in_width  # Scaled steps in x axis
+
+    # Generate all center points for the anchor boxes
+    center_h = (torch.arange(in_height, device=device) + offset_h) * steps_h
+    center_w = (torch.arange(in_width, device=device) + offset_w) * steps_w
+    shift_y, shift_x = torch.meshgrid(center_h, center_w, indexing='ij')
+    shift_y, shift_x = shift_y.reshape(-1), shift_x.reshape(-1)
+
+    # Generate `boxes_per_pixel` number of heights and widths that are later
+    # used to create anchor box corner coordinates (xmin, xmax, ymin, ymax)
+    w = torch.cat((size_tensor * torch.sqrt(ratio_tensor[0]),
+                   sizes[0] * torch.sqrt(ratio_tensor[1:])))\
+                   * in_height / in_width  # Handle rectangular inputs
+    h = torch.cat((size_tensor / torch.sqrt(ratio_tensor[0]),
+                   sizes[0] / torch.sqrt(ratio_tensor[1:])))
+    # Divide by 2 to get half height and half width
+    anchor_manipulations = torch.stack((-w, -h, w, h)).T.repeat(
+                                        in_height * in_width, 1) / 2
+
+    # Each center point will have `boxes_per_pixel` number of anchor boxes, so
+    # generate a grid of all anchor box centers with `boxes_per_pixel` repeats
+    out_grid = torch.stack([shift_x, shift_y, shift_x, shift_y],
+                dim=1).repeat_interleave(boxes_per_pixel, dim=0)
+    output = out_grid + anchor_manipulations
+    return output.unsqueeze(0)
+
+def show_bboxes(axes, bboxes, labels=None, colors=None):
+    """Show bounding boxes.
+
+    Defined in :numref:`sec_anchor`"""
+
+    def make_list(obj, default_values=None):
+        if obj is None:
+            obj = default_values
+        elif not isinstance(obj, (list, tuple)):
+            obj = [obj]
+        return obj
+
+    labels = make_list(labels)
+    colors = make_list(colors, ['b', 'g', 'r', 'm', 'c'])
+    for i, bbox in enumerate(bboxes):
+        color = colors[i % len(colors)]
+        rect = d2l.bbox_to_rect(d2l.numpy(bbox), color)
+        axes.add_patch(rect)
+        if labels and len(labels) > i:
+            text_color = 'k' if color == 'w' else 'w'
+            axes.text(rect.xy[0], rect.xy[1], labels[i],
+                      va='center', ha='center', fontsize=9, color=text_color,
+                      bbox=dict(facecolor=color, lw=0))
+
+def box_iou(boxes1, boxes2):
+    """Compute pairwise IoU across two lists of anchor or bounding boxes.
+
+    Defined in :numref:`sec_anchor`"""
+    box_area = lambda boxes: ((boxes[:, 2] - boxes[:, 0]) *
+                              (boxes[:, 3] - boxes[:, 1]))
+    # Shape of `boxes1`, `boxes2`, `areas1`, `areas2`: (no. of boxes1, 4),
+    # (no. of boxes2, 4), (no. of boxes1,), (no. of boxes2,)
+    areas1 = box_area(boxes1)
+    areas2 = box_area(boxes2)
+    # Shape of `inter_upperlefts`, `inter_lowerrights`, `inters`: (no. of
+    # boxes1, no. of boxes2, 2)
+    inter_upperlefts = torch.max(boxes1[:, None, :2], boxes2[:, :2])
+    inter_lowerrights = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])
+    inters = (inter_lowerrights - inter_upperlefts).clamp(min=0)
+    # Shape of `inter_areas` and `union_areas`: (no. of boxes1, no. of boxes2)
+    inter_areas = inters[:, :, 0] * inters[:, :, 1]
+    union_areas = areas1[:, None] + areas2 - inter_areas
+    return inter_areas / union_areas
+
+def assign_anchor_to_bbox(ground_truth, anchors, device, iou_threshold=0.5):
+    """Assign closest ground-truth bounding boxes to anchor boxes.
+
+    Defined in :numref:`sec_anchor`"""
+    num_anchors, num_gt_boxes = anchors.shape[0], ground_truth.shape[0]
+    # Element x_ij in the i-th row and j-th column is the IoU of the anchor
+    # box i and the ground-truth bounding box j
+    jaccard = box_iou(anchors, ground_truth)
+    # Initialize the tensor to hold the assigned ground-truth bounding box for
+    # each anchor
+    anchors_bbox_map = torch.full((num_anchors,), -1, dtype=torch.long,
+                                  device=device)
+    # Assign ground-truth bounding boxes according to the threshold
+    max_ious, indices = torch.max(jaccard, dim=1)
+    anc_i = torch.nonzero(max_ious >= iou_threshold).reshape(-1)
+    box_j = indices[max_ious >= iou_threshold]
+    anchors_bbox_map[anc_i] = box_j
+    col_discard = torch.full((num_anchors,), -1)
+    row_discard = torch.full((num_gt_boxes,), -1)
+    for _ in range(num_gt_boxes):
+        max_idx = torch.argmax(jaccard)  # Find the largest IoU
+        box_idx = (max_idx % num_gt_boxes).long()
+        anc_idx = torch.div(max_idx, num_gt_boxes, rounding_mode='floor')
+        anchors_bbox_map[anc_idx] = box_idx
+        jaccard[:, box_idx] = col_discard
+        jaccard[anc_idx, :] = row_discard
+    return anchors_bbox_map
+
+def offset_boxes(anchors, assigned_bb, eps=1e-6):
+    """Transform for anchor box offsets.
+
+    Defined in :numref:`sec_anchor`"""
+    c_anc = d2l.box_corner_to_center(anchors)
+    c_assigned_bb = d2l.box_corner_to_center(assigned_bb)
+    offset_xy = 10 * (c_assigned_bb[:, :2] - c_anc[:, :2]) / c_anc[:, 2:]
+    offset_wh = 5 * d2l.log(eps + c_assigned_bb[:, 2:] / c_anc[:, 2:])
+    offset = d2l.concat([offset_xy, offset_wh], axis=1)
+    return offset
+
+def multibox_target(anchors, labels):
+    """Label anchor boxes using ground-truth bounding boxes.
+
+    Defined in :numref:`sec_anchor`"""
+    batch_size, anchors = labels.shape[0], anchors.squeeze(0)
+    batch_offset, batch_mask, batch_class_labels = [], [], []
+    device, num_anchors = anchors.device, anchors.shape[0]
+    for i in range(batch_size):
+        label = labels[i, :, :]
+        anchors_bbox_map = assign_anchor_to_bbox(
+            label[:, 1:], anchors, device)
+        bbox_mask = ((anchors_bbox_map >= 0).float().unsqueeze(-1)).repeat(
+            1, 4)
+        # Initialize class labels and assigned bounding box coordinates with
+        # zeros
+        class_labels = torch.zeros(num_anchors, dtype=torch.long,
+                                   device=device)
+        assigned_bb = torch.zeros((num_anchors, 4), dtype=torch.float32,
+                                  device=device)
+        # Label classes of anchor boxes using their assigned ground-truth
+        # bounding boxes. If an anchor box is not assigned any, we label its
+        # class as background (the value remains zero)
+        indices_true = torch.nonzero(anchors_bbox_map >= 0)
+        bb_idx = anchors_bbox_map[indices_true]
+        class_labels[indices_true] = label[bb_idx, 0].long() + 1
+        assigned_bb[indices_true] = label[bb_idx, 1:]
+        # Offset transformation
+        offset = offset_boxes(anchors, assigned_bb) * bbox_mask
+        batch_offset.append(offset.reshape(-1))
+        batch_mask.append(bbox_mask.reshape(-1))
+        batch_class_labels.append(class_labels)
+    bbox_offset = torch.stack(batch_offset)
+    bbox_mask = torch.stack(batch_mask)
+    class_labels = torch.stack(batch_class_labels)
+    return (bbox_offset, bbox_mask, class_labels)
+
+def offset_inverse(anchors, offset_preds):
+    """Predict bounding boxes based on anchor boxes with predicted offsets.
+
+    Defined in :numref:`sec_anchor`"""
+    anc = d2l.box_corner_to_center(anchors)
+    pred_bbox_xy = (offset_preds[:, :2] * anc[:, 2:] / 10) + anc[:, :2]
+    pred_bbox_wh = d2l.exp(offset_preds[:, 2:] / 5) * anc[:, 2:]
+    pred_bbox = d2l.concat((pred_bbox_xy, pred_bbox_wh), axis=1)
+    predicted_bbox = d2l.box_center_to_corner(pred_bbox)
+    return predicted_bbox
+
+def nms(boxes, scores, iou_threshold):
+    """Sort confidence scores of predicted bounding boxes.
+
+    Defined in :numref:`sec_anchor`"""
+    B = torch.argsort(scores, dim=-1, descending=True)
+    keep = []  # Indices of predicted bounding boxes that will be kept
+    while B.numel() > 0:
+        i = B[0]
+        keep.append(i)
+        if B.numel() == 1: break
+        iou = box_iou(boxes[i, :].reshape(-1, 4),
+                      boxes[B[1:], :].reshape(-1, 4)).reshape(-1)
+        inds = torch.nonzero(iou <= iou_threshold).reshape(-1)
+        B = B[inds + 1]
+    return d2l.tensor(keep, device=boxes.device)
+
+def multibox_detection(cls_probs, offset_preds, anchors, nms_threshold=0.5,
+                       pos_threshold=0.009999999):
+    """Predict bounding boxes using non-maximum suppression.
+
+    Defined in :numref:`sec_anchor`"""
+    device, batch_size = cls_probs.device, cls_probs.shape[0]
+    anchors = anchors.squeeze(0)
+    num_classes, num_anchors = cls_probs.shape[1], cls_probs.shape[2]
+    out = []
+    for i in range(batch_size):
+        cls_prob, offset_pred = cls_probs[i], offset_preds[i].reshape(-1, 4)
+        conf, class_id = torch.max(cls_prob[1:], 0)
+        predicted_bb = offset_inverse(anchors, offset_pred)
+        keep = nms(predicted_bb, conf, nms_threshold)
+        # Find all non-`keep` indices and set the class to background
+        all_idx = torch.arange(num_anchors, dtype=torch.long, device=device)
+        combined = torch.cat((keep, all_idx))
+        uniques, counts = combined.unique(return_counts=True)
+        non_keep = uniques[counts == 1]
+        all_id_sorted = torch.cat((keep, non_keep))
+        class_id[non_keep] = -1
+        class_id = class_id[all_id_sorted]
+        conf, predicted_bb = conf[all_id_sorted], predicted_bb[all_id_sorted]
+        # Here `pos_threshold` is a threshold for positive (non-background)
+        # predictions
+        below_min_idx = (conf < pos_threshold)
+        class_id[below_min_idx] = -1
+        conf[below_min_idx] = 1 - conf[below_min_idx]
+        pred_info = torch.cat((class_id.unsqueeze(1),
+                               conf.unsqueeze(1),
+                               predicted_bb), dim=1)
+        out.append(pred_info)
+    return d2l.stack(out)
+
+d2l.DATA_HUB['banana-detection'] = (
+    d2l.DATA_URL + 'banana-detection.zip',
+    '5de26c8fce5ccdea9f91267273464dc968d20d72')
+
+def read_data_bananas(is_train=True):
+    """Read the banana detection dataset images and labels.
+
+    Defined in :numref:`sec_object-detection-dataset`"""
+    data_dir = d2l.download_extract('banana-detection')
+    csv_fname = os.path.join(data_dir, 'bananas_train' if is_train
+                             else 'bananas_val', 'label.csv')
+    csv_data = pd.read_csv(csv_fname)
+    csv_data = csv_data.set_index('img_name')
+    images, targets = [], []
+    for img_name, target in csv_data.iterrows():
+        images.append(torchvision.io.read_image(
+            os.path.join(data_dir, 'bananas_train' if is_train else
+                         'bananas_val', 'images', f'{img_name}')))
+        # Here `target` contains (class, upper-left x, upper-left y,
+        # lower-right x, lower-right y), where all the images have the same
+        # banana class (index 0)
+        targets.append(list(target))
+    return images, torch.tensor(targets).unsqueeze(1) / 256
+
+class BananasDataset(torch.utils.data.Dataset):
+    """A customized dataset to load the banana detection dataset.
+
+    Defined in :numref:`sec_object-detection-dataset`"""
+    def __init__(self, is_train):
+        self.features, self.labels = read_data_bananas(is_train)
+        print('read ' + str(len(self.features)) + (f' training examples' if
+              is_train else f' validation examples'))
+
+    def __getitem__(self, idx):
+        return (self.features[idx].float(), self.labels[idx])
+
+    def __len__(self):
+        return len(self.features)
+
+def load_data_bananas(batch_size):
+    """Load the banana detection dataset.
+
+    Defined in :numref:`sec_object-detection-dataset`"""
+    train_iter = torch.utils.data.DataLoader(BananasDataset(is_train=True),
+                                             batch_size, shuffle=True)
+    val_iter = torch.utils.data.DataLoader(BananasDataset(is_train=False),
+                                           batch_size)
+    return train_iter, val_iter
+
+d2l.DATA_HUB['voc2012'] = (d2l.DATA_URL + 'VOCtrainval_11-May-2012.tar',
+                           '4e443f8a2eca6b1dac8a6c57641b67dd40621a49')
+
+def read_voc_images(voc_dir, is_train=True):
+    """Read all VOC feature and label images.
+
+    Defined in :numref:`sec_semantic_segmentation`"""
+    txt_fname = os.path.join(voc_dir, 'ImageSets', 'Segmentation',
+                             'train.txt' if is_train else 'val.txt')
+    mode = torchvision.io.image.ImageReadMode.RGB
+    with open(txt_fname, 'r') as f:
+        images = f.read().split()
+    features, labels = [], []
+    for i, fname in enumerate(images):
+        features.append(torchvision.io.read_image(os.path.join(
+            voc_dir, 'JPEGImages', f'{fname}.jpg')))
+        labels.append(torchvision.io.read_image(os.path.join(
+            voc_dir, 'SegmentationClass' ,f'{fname}.png'), mode))
+    return features, labels
+
+VOC_COLORMAP = [[0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0],
+                [0, 0, 128], [128, 0, 128], [0, 128, 128], [128, 128, 128],
+                [64, 0, 0], [192, 0, 0], [64, 128, 0], [192, 128, 0],
+                [64, 0, 128], [192, 0, 128], [64, 128, 128], [192, 128, 128],
+                [0, 64, 0], [128, 64, 0], [0, 192, 0], [128, 192, 0],
+                [0, 64, 128]]
+
+VOC_CLASSES = ['background', 'aeroplane', 'bicycle', 'bird', 'boat',
+               'bottle', 'bus', 'car', 'cat', 'chair', 'cow',
+               'diningtable', 'dog', 'horse', 'motorbike', 'person',
+               'potted plant', 'sheep', 'sofa', 'train', 'tv/monitor']
+
+def voc_colormap2label():
+    """Build the mapping from RGB to class indices for VOC labels.
+
+    Defined in :numref:`sec_semantic_segmentation`"""
+    colormap2label = torch.zeros(256 ** 3, dtype=torch.long)
+    for i, colormap in enumerate(VOC_COLORMAP):
+        colormap2label[
+            (colormap[0] * 256 + colormap[1]) * 256 + colormap[2]] = i
+    return colormap2label
+
+def voc_label_indices(colormap, colormap2label):
+    """Map any RGB values in VOC labels to their class indices.
+
+    Defined in :numref:`sec_semantic_segmentation`"""
+    colormap = colormap.permute(1, 2, 0).numpy().astype('int32')
+    idx = ((colormap[:, :, 0] * 256 + colormap[:, :, 1]) * 256
+           + colormap[:, :, 2])
+    return colormap2label[idx]
+
+def voc_rand_crop(feature, label, height, width):
+    """Randomly crop both feature and label images.
+
+    Defined in :numref:`sec_semantic_segmentation`"""
+    rect = torchvision.transforms.RandomCrop.get_params(
+        feature, (height, width))
+    feature = torchvision.transforms.functional.crop(feature, *rect)
+    label = torchvision.transforms.functional.crop(label, *rect)
+    return feature, label
+
+class VOCSegDataset(torch.utils.data.Dataset):
+    """A customized dataset to load the VOC dataset.
+
+    Defined in :numref:`sec_semantic_segmentation`"""
+
+    def __init__(self, is_train, crop_size, voc_dir):
+        self.transform = torchvision.transforms.Normalize(
+            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        self.crop_size = crop_size
+        features, labels = read_voc_images(voc_dir, is_train=is_train)
+        self.features = [self.normalize_image(feature)
+                         for feature in self.filter(features)]
+        self.labels = self.filter(labels)
+        self.colormap2label = voc_colormap2label()
+        print('read ' + str(len(self.features)) + ' examples')
+
+    def normalize_image(self, img):
+        return self.transform(img.float() / 255)
+
+    def filter(self, imgs):
+        return [img for img in imgs if (
+            img.shape[1] >= self.crop_size[0] and
+            img.shape[2] >= self.crop_size[1])]
+
+    def __getitem__(self, idx):
+        feature, label = voc_rand_crop(self.features[idx], self.labels[idx],
+                                       *self.crop_size)
+        return (feature, voc_label_indices(label, self.colormap2label))
+
+    def __len__(self):
+        return len(self.features)
+
+def load_data_voc(batch_size, crop_size):
+    """Load the VOC semantic segmentation dataset.
+
+    Defined in :numref:`sec_semantic_segmentation`"""
+    voc_dir = d2l.download_extract('voc2012', os.path.join(
+        'VOCdevkit', 'VOC2012'))
+    num_workers = d2l.get_dataloader_workers()
+    train_iter = torch.utils.data.DataLoader(
+        VOCSegDataset(True, crop_size, voc_dir), batch_size,
+        shuffle=True, drop_last=True, num_workers=num_workers)
+    test_iter = torch.utils.data.DataLoader(
+        VOCSegDataset(False, crop_size, voc_dir), batch_size,
+        drop_last=True, num_workers=num_workers)
+    return train_iter, test_iter
+
+d2l.DATA_HUB['cifar10_tiny'] = (d2l.DATA_URL + 'kaggle_cifar10_tiny.zip',
+                                '2068874e4b9a9f0fb07ebe0ad2b29754449ccacd')
+
+def read_csv_labels(fname):
+    """Read `fname` to return a filename to label dictionary.
+
+    Defined in :numref:`sec_kaggle_cifar10`"""
+    with open(fname, 'r') as f:
+        # Skip the file header line (column name)
+        lines = f.readlines()[1:]
+    tokens = [l.rstrip().split(',') for l in lines]
+    return dict(((name, label) for name, label in tokens))
+
+def copyfile(filename, target_dir):
+    """Copy a file into a target directory.
+
+    Defined in :numref:`sec_kaggle_cifar10`"""
+    os.makedirs(target_dir, exist_ok=True)
+    shutil.copy(filename, target_dir)
+
+def reorg_train_valid(data_dir, labels, valid_ratio):
+    """Split the validation set out of the original training set.
+
+    Defined in :numref:`sec_kaggle_cifar10`"""
+    # The number of examples of the class that has the fewest examples in the
+    # training dataset
+    n = collections.Counter(labels.values()).most_common()[-1][1]
+    # The number of examples per class for the validation set
+    n_valid_per_label = max(1, math.floor(n * valid_ratio))
+    label_count = {}
+    for train_file in os.listdir(os.path.join(data_dir, 'train')):
+        label = labels[train_file.split('.')[0]]
+        fname = os.path.join(data_dir, 'train', train_file)
+        copyfile(fname, os.path.join(data_dir, 'train_valid_test',
+                                     'train_valid', label))
+        if label not in label_count or label_count[label] < n_valid_per_label:
+            copyfile(fname, os.path.join(data_dir, 'train_valid_test',
+                                         'valid', label))
+            label_count[label] = label_count.get(label, 0) + 1
+        else:
+            copyfile(fname, os.path.join(data_dir, 'train_valid_test',
+                                         'train', label))
+    return n_valid_per_label
+
+def reorg_test(data_dir):
+    """Organize the testing set for data loading during prediction.
+
+    Defined in :numref:`sec_kaggle_cifar10`"""
+    for test_file in os.listdir(os.path.join(data_dir, 'test')):
+        copyfile(os.path.join(data_dir, 'test', test_file),
+                 os.path.join(data_dir, 'train_valid_test', 'test',
+                              'unknown'))
+
+d2l.DATA_HUB['dog_tiny'] = (d2l.DATA_URL + 'kaggle_dog_tiny.zip',
+                            '0cb91d09b814ecdc07b50f31f8dcad3e81d6a86d')
+
+def use_svg_display():
+    """Use the svg format to display a plot in Jupyter.
+
+    Defined in :numref:`sec_utils`"""
+    backend_inline.set_matplotlib_formats('svg')
+
+def set_figsize(figsize=(3.5, 2.5)):
+    """Set the figure size for matplotlib.
+
+    Defined in :numref:`sec_utils`"""
+    use_svg_display()
+    d2l.plt.rcParams['figure.figsize'] = figsize
+
+def set_log_ticks(axis):
+    """Label all major ticks of a log axis in one format.
+
+    Defined in :numref:`sec_utils`"""
+    lo, hi = axis.get_view_interval()
+    if 0 < lo and hi < 100 * lo:  # Under two decades: ticks at 1, 2, 5
+        axis.set_major_locator(ticker.LogLocator(subs=(1, 2, 5)))
+    ticks = axis.get_major_locator().tick_values(lo, hi)
+    plain = all(1e-4 <= t < 1e5 for t in ticks if lo <= t <= hi)
+
+    def label(v, _):
+        if plain:  # 0.001, 0.01, ..., 10000
+            return f'{v:g}'
+        m, k = f'{v:.3e}'.split('e')  # 2.500e-05 -> '2.500', '-05'
+        m, power = f'{float(m):g}', f'10^{{{int(k)}}}'  # '2.5', '10^{-5}'
+        return f'${power}$' if m == '1' else f'${m}\\times{power}$'
+
+    axis.set_major_formatter(ticker.FuncFormatter(label))
+    axis.set_minor_formatter(ticker.NullFormatter())
+
+def set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend,
+             legend_loc=None):
+    """Set the axes for matplotlib. legend_loc is a matplotlib legend
+    location, or 'outside' for beside the axes, clear of the curves.
+
+    Defined in :numref:`sec_utils`"""
+    axes.set_xlabel(xlabel), axes.set_ylabel(ylabel)
+    axes.set_xscale(xscale), axes.set_yscale(yscale)
+    axes.set_xlim(xlim),     axes.set_ylim(ylim)
+    for axis, scale in ((axes.xaxis, xscale), (axes.yaxis, yscale)):
+        if scale == 'log':
+            set_log_ticks(axis)
+    if legend and legend_loc == 'outside':
+        axes.legend(legend, loc='center left', bbox_to_anchor=(1, 0.5))
+    elif legend:
+        axes.legend(legend, loc=legend_loc)  # None: matplotlib's best spot
+    axes.grid()
+
+def plot(X, Y=None, xlabel=None, ylabel=None, legend=None, xlim=None,
+         ylim=None, xscale='linear', yscale='linear',
+         fmts=('-', 'm--', 'g-.', 'r:'), figsize=(3.5, 2.5), axes=None,
+         legend_loc=None):
+    """Plot data points.
+
+    Defined in :numref:`sec_utils`"""
+    legend = [] if legend is None else legend
+
+    def has_one_axis(X):  # True if X (tensor or list) has 1 axis
+        return (hasattr(X, "ndim") and X.ndim == 1 or isinstance(X, list)
+                and not hasattr(X[0], "__len__"))
+    
+    if has_one_axis(X): X = [X]
+    if Y is None:
+        X, Y = [[]] * len(X), X
+    elif has_one_axis(Y):
+        Y = [Y]
+    if len(X) != len(Y):
+        X = X * len(Y)
+        
+    set_figsize(figsize)
+    if axes is None:
+        axes = d2l.plt.gca()
+    axes.cla()
+    # Extend the formats with new colors so that no curve is dropped
+    fmts = list(fmts) + [f'C{i % 10}' + ('-', '--', '-.', ':')[i % 4]
+                         for i in range(len(fmts), len(Y))]
+    for x, y, fmt in zip(X, Y, fmts):
+        axes.plot(x, y, fmt) if len(x) else axes.plot(y, fmt)
+    set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend,
+             legend_loc)
+
+import os
+from matplotlib.figure import Figure
+
+def show_trace_2d(f, results):
+    """Show the trace of 2D variables over the contours of f.
+
+    Defined in :numref:`sec_utils`"""
+    x1s, x2s = zip(*[(float(a), float(b)) for a, b in results])
+    grids = []  # A window around start and minimum, widened to fit the trace
+    for (lo, hi), xs in zip([(-5.5, 1.0), (-3.0, 3.0)], (x1s, x2s)):
+        lo, hi = min(lo, min(xs) - 0.5), max(hi, max(xs) + 0.5)
+        grids.append(d2l.arange(lo, hi, (hi - lo) / 100))
+    x1, x2 = d2l.meshgrid(*grids, indexing='ij')
+    width, height = (float(g[-1] - g[0]) for g in grids)
+    equal = 0.25 < height / width < 4  # Equal scales unless the trace diverged
+    d2l.set_figsize((3, 2.8) if equal else (3.5, 2.5))
+    d2l.plt.contour(x1, x2, f(x1, x2), colors='0.6', linewidths=0.8)
+    d2l.plt.plot(x1s, x2s, '-o', color='C1', markersize=4)
+    d2l.plt.xlabel('$x_1$')
+    d2l.plt.ylabel('$x_2$')
+    if equal:
+        d2l.plt.gca().set_aspect('equal')
+
+def plot_intervals(x, series, xlabel, ylabel, *, kind='errorbar',
+                   reference=None, xscale='linear', axes=None, marks=None):
+    """Estimates with intervals: `series` maps a label to (mean, lo, hi);
+    `marks` maps a name to (fmt, {label: (xs, ys)}).
+
+    Defined in :numref:`sec_utils`"""
+    if kind not in ('errorbar', 'band') or xscale not in ('linear', 'log',
+                                                          'log2'):
+        raise ValueError(f'unknown kind {kind!r} or xscale {xscale!r}')
+    x = np.asarray(x)
+    categorical = not np.issubdtype(x.dtype, np.number)
+    pos = np.arange(len(x), dtype=float) if categorical else x.astype(float)
+    logx = xscale != 'linear' and not categorical
+    # Side-by-side offsets, in the units in which the x-axis is even
+    to_axis, from_axis = (np.log, np.exp) if logx else (np.asarray,) * 2
+    gaps = np.diff(np.unique(to_axis(pos)))
+    width = 0.6 * (gaps.min() if len(gaps) else 1.0) / len(series)
+    if axes is None:
+        d2l.set_figsize()
+        axes = d2l.plt.gca()
+    for i, (label, (mean, lo, hi)) in enumerate(series.items()):
+        mean, lo, hi = (np.asarray(v, dtype=float) for v in (mean, lo, hi))
+        if not mean.shape == lo.shape == hi.shape == pos.shape:
+            raise ValueError(f'{label}: mean, lo and hi need {len(pos)} '
+                             'values each')
+        err = np.stack([mean - lo, hi - mean])
+        if np.any(err < -1e-9):  # nan (a missing point) passes
+            raise ValueError(f'{label}: an interval misses its estimate')
+        color = f'C{i % 10}'
+        if kind == 'band':
+            axes.plot(pos, mean, '-', color=color, label=label)
+            axes.fill_between(pos, lo, hi, color=color, alpha=0.2,
+                              linewidth=0)
+        else:
+            at = from_axis(to_axis(pos) + (i - (len(series) - 1) / 2) * width)
+            axes.errorbar(at, mean, yerr=np.clip(err, 0, None), fmt='o',
+                          color=color, markersize=4, capsize=3, label=label)
+    for name, (fmt, points) in (marks or {}).items():
+        for i, label in enumerate(series):
+            if label in points:
+                axes.plot(*points[label], fmt, color=f'C{i % 10}')
+        axes.plot([], [], fmt, color='black', label=name)  # legend only
+    if reference is not None:
+        axes.axhline(reference, linestyle='--', color='black', linewidth=0.8)
+    if logx:
+        axes.set_xscale('log', base=2 if xscale == 'log2' else 10)
+    if categorical or logx:  # One tick per x value
+        axes.set_xticks(pos, [str(v) if categorical else f'{v:g}' for v in x])
+        axes.xaxis.set_minor_locator(ticker.NullLocator())
+    if categorical and len(x) > 3:  # Slanted names do not collide
+        axes.set_xticklabels(axes.get_xticklabels(), rotation=30, ha='right')
+    axes.set_xlabel(xlabel), axes.set_ylabel(ylabel)
+    if len(series) > 1 or marks:
+        axes.legend()
+    axes.grid(axis='y' if categorical else 'both')  # No line through a bar
+    return axes
+
+def plot_curves(curves, xlabel, ylabel, smooth=1, reference=None,
+                ylim=None, x=None, xscale='linear', yscale='linear',
+                band='range'):
+    """One panel per call. `curves` maps a label to an array of shape
+    [seed, step] (or [step] for a single seed); plots the seed median and a
+    shaded band over the seeds: min to max (`band='range'`) or the
+    interquartile range (`band='iqr'`, the better summary from five seeds
+    on). `smooth`, if greater than 1, replaces each point by the mean of the
+    `smooth` steps that end there, before the seed statistics; the first
+    `smooth - 1` steps lack a full window and are dropped. `x` gives the
+    position of each step (default 0, 1, 2, ...). `reference`, if given,
+    draws a dashed horizontal line; `ylim` fixes the y-axis range; `xscale`
+    and `yscale` take matplotlib's scale names, e.g. 'log'.
+
+    Defined in :numref:`sec_utils`"""
+    set_figsize((6, 4))
+    for name, values in curves.items():
+        values = np.atleast_2d(values)
+        xs = np.arange(values.shape[1]) if x is None else np.asarray(x)
+        if smooth > 1:
+            kernel = np.ones(smooth) / smooth
+            values = np.stack([np.convolve(v, kernel, 'valid')
+                               for v in values])
+            xs = xs[smooth - 1:]      # each window sits at its last step
+        line, = plt.plot(xs, np.median(values, axis=0), label=name)
+        if values.shape[0] > 1:
+            lo, hi = ((values.min(axis=0), values.max(axis=0))
+                      if band == 'range' else
+                      np.percentile(values, [25, 75], axis=0))
+            plt.fill_between(xs, lo, hi, alpha=0.2, color=line.get_color())
+    if reference is not None:
+        plt.axhline(reference, linestyle='--', color='gray')
+    if ylim is not None:
+        plt.ylim(ylim)
+    plt.xscale(xscale)
+    plt.yscale(yscale)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.legend()
+
+def plot_hist(samples, xlabel, ylabel, bins=60, vlines=()):
+    """Overlaid histograms of `samples` (label -> values), dashed at `vlines`.
+
+    Defined in :numref:`sec_utils`"""
+    set_figsize((6, 4))
+    for name, x in samples.items():
+        plt.hist(x, bins=bins, alpha=0.5, label=name)
+    for v in vlines:
+        plt.axvline(v, linestyle='--', color='black')
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.legend()
+
+def show_grid(desc, values, policy=None, titles=None,
+              diverging=False, fmt='{:.2f}'):
+    """A gridworld in the style of the chapter's figures. Each cell is
+    shaded by `values` (white to blue, or with `diverging=True` red to blue
+    around zero, for differences) and shows its state index (top left), its
+    value (bottom left) and an arrow for the action of `policy`, if given.
+    Holes are grey and the goal green; S, H and G sit at the bottom right.
+    The grid shape is read from `desc` (e.g. `env.unwrapped.desc`).
+    `values` and `policy` may each be a single frame, shape (num_states,),
+    or a sequence of frames, shape (num_frames, num_states); `titles`, if
+    given, labels each frame.
+
+    Defined in :numref:`sec_utils`"""
+    h, w = desc.shape
+    values = np.atleast_2d(values).reshape(-1, h * w)
+    if policy is not None:
+        policy = np.atleast_2d(policy).reshape(-1, h * w)
+    if diverging:
+        top = max(np.abs(values).max(), 1e-12)
+        cmap, norm = plt.get_cmap('RdBu'), plt.Normalize(-top, top)
+    else:
+        cmap = plt.get_cmap('Blues')
+        norm = plt.Normalize(min(0.0, values.min()),
+                             max(values.max(), 1e-12))
+    move = {0: (-1, 0), 1: (0, 1), 2: (1, 0), 3: (0, -1)}   # (dx, dy)
+    fig, axes = plt.subplots(1, len(values), squeeze=False,
+                             figsize=(3.6 * len(values), 3.6))
+    for k, ax in enumerate(axes[0]):
+        for s in range(h * w):
+            y, x = divmod(s, w)
+            cell, v = desc[y, x].decode(), values[k, s]
+            fill = {'H': ('#565D66', 0.55), 'G': ('#2CA02C', 0.35)}.get(
+                cell, (cmap(norm(v)), 1.0))
+            ax.add_patch(plt.Rectangle((x, y), 1, 1, fc=fill[0],
+                                       alpha=fill[1], ec='black', lw=1.0))
+            shade = np.abs(norm(v) - 0.5) * 2 if diverging else norm(v)
+            ink = 'white' if cell == 'H' or (cell != 'G' and shade > 0.6) \
+                else 'black'
+            ax.text(x + 0.07, y + 0.07, str(s), ha='left', va='top',
+                    fontsize=9, color=ink)
+            if cell not in 'HG' or np.abs(v) > 1e-9:   # terminal: 0
+                ax.text(x + 0.07, y + 0.93, fmt.format(v), ha='left',
+                        va='bottom', fontsize=10, color=ink)
+            if cell in 'SHG':
+                ax.text(x + 0.82, y + 0.80, cell, ha='center', va='center',
+                        fontsize=13, fontweight='bold', color=ink)
+            if policy is not None and cell not in 'HG':
+                dx, dy = move[int(policy[k, s])]
+                ax.annotate('', xy=(x + 0.5 + 0.22 * dx, y + 0.45 + 0.22 * dy),
+                            xytext=(x + 0.5 - 0.22 * dx,
+                                    y + 0.45 - 0.22 * dy),
+                            arrowprops=dict(arrowstyle='-|>', color=ink,
+                                            lw=1.6, mutation_scale=14))
+        ax.set_xlim(0, w)
+        ax.set_ylim(h, 0)
+        ax.set_aspect('equal')
+        ax.axis('off')
+        if titles is not None:
+            ax.set_title(titles[k])
+    fig.tight_layout()
+
+def run_seeds(train, num_seeds, **kwargs):
+    """Run train(seed, **kwargs), a generator of curve points, per seed.
+
+    Defined in :numref:`sec_utils`"""
+    return np.array([list(train(seed, **kwargs)) for seed in range(num_seeds)])
+
+def on_grid(runs, grid, col, smooth=1):
+    """Resample per-episode rows (env step, value, ...) onto an env-step
+    grid. For each run, drop the rows whose column `col` is NaN, average
+    the column over the last `smooth` episodes, and interpolate linearly at
+    the grid points; returns [run, grid point], the input of plot_curves.
+
+    Defined in :numref:`sec_utils`"""
+    out = []
+    for r in runs:
+        r = np.asarray(r, dtype=float)
+        r = r[~np.isnan(r[:, col])]
+        v = np.convolve(r[:, col], np.ones(smooth) / smooth, 'valid')
+        out.append(np.interp(grid, r[smooth - 1:, 0], v))
+    return np.stack(out)
+
+def plain_sgd(net, lr):
+    """A plain SGD optimizer over the parameters of `net`.
+
+    Defined in :numref:`sec_utils`"""
+    return torch.optim.SGD(net.parameters(), lr=lr)
+
+def load_cifar10_arrays():
+    """CIFAR-10 on the GPU if there is one, pixel values scaled to [-1, 1].
+    Returns train_X, train_y, test_X, test_y.
+
+    Defined in :numref:`sec_utils`"""
+    import pickle, warnings  # not in the d2l library preamble
+    d2l.DATA_HUB['cifar10'] = (
+        'https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz',
+        '874905e36347c8536514d0a26261acf3bff89bc7')
+    cifar_dir = d2l.download_extract('cifar10', 'cifar-10-batches-py')
+    def load_batch(name):
+        with open(f'{cifar_dir}/{name}', 'rb') as f, warnings.catch_warnings():
+            warnings.simplefilter('ignore')   # legacy NumPy pickle format
+            batch = pickle.load(f, encoding='bytes')
+        X = torch.tensor(batch[b'data'], dtype=torch.float32)
+        return X.reshape(-1, 3, 32, 32) / 127.5 - 1, torch.tensor(
+            batch[b'labels'])
+    Xs, ys = zip(*[load_batch(f'data_batch_{i}') for i in range(1, 6)])
+    test_X, test_y = load_batch('test_batch')
+    device = d2l.try_gpu()
+    return (torch.cat(Xs).to(device), torch.cat(ys).to(device),
+            test_X.to(device), test_y.to(device))
+
+class FeatureCNN(nn.Module):
+    """Three conv blocks, global average pooling, and a linear head. Inputs
+    are first resized bilinearly to resolution x resolution.
+
+    Defined in :numref:`sec_utils`"""
+    def __init__(self, feature_dim=128, resolution=32):
+        super().__init__()
+        self.resolution = resolution
+        widths = [3, 32, 64, feature_dim]
+        self.blocks = nn.ModuleList(
+            [nn.Sequential(nn.Conv2d(c_in, c_out, 3, padding=1),
+                           nn.BatchNorm2d(c_out), nn.ReLU(),
+                           nn.MaxPool2d(2))
+             for c_in, c_out in zip(widths[:-1], widths[1:])])
+        self.head = nn.Linear(feature_dim, 10)
+
+    def features(self, x):
+        if x.shape[-1] != self.resolution:
+            x = F.interpolate(x, size=(self.resolution, self.resolution),
+                              mode='bilinear', antialias=True)
+        for block in self.blocks:
+            x = block(x)
+        return x.mean(dim=(2, 3))
+
+    def forward(self, x):
+        return self.head(self.features(x))
+
+def train_feature_cnn(cnn, X, y, num_epochs=15, max_lr=0.003,
+                      batch_size=256, shift=0, seed=0):
+    """Train on random horizontal flips, plus random shifts of up to `shift`
+    pixels, with a one-cycle learning rate; end in evaluation mode.
+
+    Defined in :numref:`sec_utils`"""
+    gen = torch.Generator(X.device).manual_seed(seed)  # local random streams
+    gen_shift = torch.Generator().manual_seed(seed)
+    opt = torch.optim.Adam(cnn.parameters())
+    sched = torch.optim.lr_scheduler.OneCycleLR(
+        opt, max_lr, total_steps=num_epochs * (len(X) // batch_size),
+        cycle_momentum=False)
+    h, w = X.shape[2:]
+    cnn.train()
+    for epoch in range(num_epochs):
+        order = torch.randperm(len(X), device=X.device, generator=gen)
+        for i in range(0, len(order) - batch_size + 1, batch_size):
+            Xb, yb = X[order[i:i + batch_size]], y[order[i:i + batch_size]]
+            flip = torch.rand(len(Xb), 1, 1, 1, device=X.device,
+                              generator=gen) < 0.5
+            Xb = torch.where(flip, Xb.flip(-1), Xb)
+            a, b = torch.randint(0, 2 * shift + 1, (2,),
+                                 generator=gen_shift).tolist()
+            Xb = F.pad(Xb, (shift,) * 4, mode='reflect')[..., a:a + h, b:b + w]
+            loss = F.cross_entropy(cnn(Xb), yb)
+            opt.zero_grad(), loss.backward(), opt.step(), sched.step()
+    cnn.eval()
+
+def load_array(data_arrays, batch_size, is_train=True):
+    """Construct a PyTorch data iterator.
+
+    Defined in :numref:`sec_utils`"""
+    dataset = torch.utils.data.TensorDataset(*data_arrays)
+    return torch.utils.data.DataLoader(dataset, batch_size, shuffle=is_train)
+
+def sgd(params, lr, batch_size):
+    """Minibatch stochastic gradient descent.
+
+    Defined in :numref:`sec_utils`"""
+    with torch.no_grad():
+        for param in params:
+            param -= lr * param.grad / batch_size
+            param.grad.zero_()
+
+def get_dataloader_workers():
+    """Use 4 processes to read the data.
+
+    Defined in :numref:`sec_utils`"""
+    return 4
+
+def load_data_fashion_mnist(batch_size, resize=None):
+    """Download the Fashion-MNIST dataset and then load it into memory.
+
+    Defined in :numref:`sec_utils`"""
+    trans = [transforms.ToTensor()]
+    if resize:
+        trans.insert(0, transforms.Resize(resize))
+    trans = transforms.Compose(trans)
+    mnist_train = torchvision.datasets.FashionMNIST(
+        root="../data", train=True, transform=trans, download=True)
+    mnist_test = torchvision.datasets.FashionMNIST(
+        root="../data", train=False, transform=trans, download=True)
+    return (torch.utils.data.DataLoader(mnist_train, batch_size, shuffle=True,
+                                        num_workers=get_dataloader_workers()),
+            torch.utils.data.DataLoader(mnist_test, batch_size, shuffle=False,
+                                        num_workers=get_dataloader_workers()))
+
+def evaluate_accuracy_gpu(net, data_iter, device=None):
+    """Compute the accuracy for a model on a dataset using a GPU.
+
+    Defined in :numref:`sec_utils`"""
+    if isinstance(net, nn.Module):
+        net.eval()  # Set the model to evaluation mode
+        if not device:
+            device = next(iter(net.parameters())).device
+    # No. of correct predictions, no. of predictions
+    metric = d2l.Accumulator(2)
+
+    with torch.no_grad():
+        for X, y in data_iter:
+            if isinstance(X, list):
+                # Required for BERT Fine-tuning (to be covered later)
+                X = [x.to(device) for x in X]
+            else:
+                X = X.to(device)
+            y = y.to(device)
+            metric.add(d2l.accuracy(net(X), y), d2l.size(y))
+    return metric[0] / metric[1]
+
+def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
+    """Train a model with a GPU (defined in Chapter 6).
+
+    Defined in :numref:`sec_utils`"""
+    def init_weights(m):
+        if type(m) == nn.Linear or type(m) == nn.Conv2d:
+            nn.init.xavier_uniform_(m.weight)
+    net.apply(init_weights)
+    print('training on', device)
+    net.to(device)
+    optimizer = torch.optim.SGD(net.parameters(), lr=lr)
+    loss = nn.CrossEntropyLoss()
+    animator = d2l.Animator(xlabel='epoch', xlim=[1, num_epochs],
+                            legend=['train loss', 'train acc', 'test acc'])
+    timer, num_batches = d2l.Timer(), len(train_iter)
+    for epoch in range(num_epochs):
+        # Sum of training loss, sum of training accuracy, no. of examples
+        metric = d2l.Accumulator(3)
+        net.train()
+        for i, (X, y) in enumerate(train_iter):
+            timer.start()
+            optimizer.zero_grad()
+            X, y = X.to(device), y.to(device)
+            y_hat = net(X)
+            l = loss(y_hat, y)
+            l.backward()
+            optimizer.step()
+            with torch.no_grad():
+                metric.add(l * X.shape[0], d2l.accuracy(y_hat, y), X.shape[0])
+            timer.stop()
+            train_l = metric[0] / metric[2]
+            train_acc = metric[1] / metric[2]
+            if (i + 1) % (num_batches // 5) == 0 or i == num_batches - 1:
+                animator.add(epoch + (i + 1) / num_batches,
+                             (train_l, train_acc, None))
+        test_acc = evaluate_accuracy_gpu(net, test_iter)
+        animator.add(epoch + 1, (None, None, test_acc))
+    print(f'loss {train_l:.3f}, train acc {train_acc:.3f}, '
+          f'test acc {test_acc:.3f}')
+    print(f'{metric[2] * num_epochs / timer.sum():.1f} examples/sec '
+          f'on {str(device)}')
+
+def show_images(imgs, num_rows, num_cols, titles=None, scale=1.5,
+                cmap=None, vmin=None, vmax=None):
+    """Plot a list of images (cmap colors single-channel images, on the
+    color scale from vmin to vmax if given).
+
+    Defined in :numref:`sec_utils`"""
+    figsize = (num_cols * scale, num_rows * scale)
+    _, axes = d2l.plt.subplots(num_rows, num_cols, figsize=figsize)
+    axes = axes.flatten()
+    for i, (ax, img) in enumerate(zip(axes, imgs)):
+        try:
+            img = d2l.numpy(img)
+        except:
+            pass
+        ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax)
+        ax.axes.get_xaxis().set_visible(False)
+        ax.axes.get_yaxis().set_visible(False)
+        if titles:
+            ax.set_title(titles[i])
+    return axes
+
+def show_heatmaps(matrices, xlabel, ylabel, titles=None,
+                  figsize=(2.5, 2.5), cmap='Reds', cbar=True,
+                  xticklabels=None, yticklabels=None):
+    """Show heatmaps of matrices; cbar is True (shared), 'each' or False.
+
+    Defined in :numref:`sec_utils`"""
+    d2l.use_svg_display()
+    matrices = d2l.numpy(matrices)
+    num_rows, num_cols, height, width = matrices.shape
+    fig, axes = d2l.plt.subplots(num_rows, num_cols, figsize=figsize,
+                                 sharex=True, sharey=True, squeeze=False)
+    # All panels share one color scale (one norm) unless each gets its own
+    lims = {} if cbar == 'each' else dict(norm=d2l.plt.Normalize(
+        matrices.min(), matrices.max()))
+    for i, (row_axes, row_matrices) in enumerate(zip(axes, matrices)):
+        for j, (ax, matrix) in enumerate(zip(row_axes, row_matrices)):
+            pcm = ax.imshow(matrix, cmap=cmap, **lims)
+            if cbar == 'each':
+                fig.colorbar(pcm, ax=ax, shrink=0.6)
+            if i == num_rows - 1:
+                ax.set_xlabel(xlabel)
+            if j == 0:
+                ax.set_ylabel(ylabel)
+            if titles:
+                ax.set_title(titles[j])
+    # Shared axes: setting the ticks of one panel sets them for all
+    for axis, n, labels in ((ax.xaxis, width, xticklabels),
+                            (ax.yaxis, height, yticklabels)):
+        if labels is None:
+            axis.set_major_locator(d2l.plt.MaxNLocator(
+                'auto', integer=True, steps=[1, 2, 2.5, 5, 10]))
+        else:  # Named ticks; names along the x-axis read vertically
+            axis.set_ticks(range(n), labels,
+                           rotation=90 if axis is ax.xaxis else 0)
+    if cbar is True:
+        fig.colorbar(pcm, ax=axes, shrink=0.6);
+
+def linreg(X, w, b):
+    """The linear regression model.
+
+    Defined in :numref:`sec_utils`"""
+    return d2l.matmul(X, w) + b
+
+def squared_loss(y_hat, y):
+    """Squared loss.
+
+    Defined in :numref:`sec_utils`"""
+    return (y_hat - d2l.reshape(y, y_hat.shape)) ** 2 / 2
+
+def get_fashion_mnist_labels(labels):
+    """Return text labels for the Fashion-MNIST dataset.
+
+    Defined in :numref:`sec_utils`"""
+    text_labels = ['t-shirt', 'trouser', 'pullover', 'dress', 'coat',
+                   'sandal', 'shirt', 'sneaker', 'bag', 'ankle boot']
+    return [text_labels[int(i)] for i in labels]
+
+class Animator:
+    """For plotting data in animation.
+
+    Defined in :numref:`sec_utils`"""
+    def __init__(self, xlabel=None, ylabel=None, legend=None, xlim=None,
+                 ylim=None, xscale='linear', yscale='linear',
+                 fmts=('-', 'm--', 'g-.', 'r:'), nrows=1, ncols=1,
+                 figsize=(3.5, 2.5)):
+        # Incrementally plot multiple lines
+        if legend is None:
+            legend = []
+        d2l.use_svg_display()
+        self.fig, self.axes = d2l.plt.subplots(nrows, ncols, figsize=figsize)
+        if nrows * ncols == 1:
+            self.axes = [self.axes, ]
+        # Use a lambda function to capture arguments
+        self.config_axes = lambda: d2l.set_axes(
+            self.axes[0], xlabel, ylabel, xlim, ylim, xscale, yscale, legend)
+        self.X, self.Y, self.fmts = None, None, fmts
+
+    def add(self, x, y):
+        # Add multiple data points into the figure
+        if not hasattr(y, "__len__"):
+            y = [y]
+        n = len(y)
+        if not hasattr(x, "__len__"):
+            x = [x] * n
+        if not self.X:
+            self.X = [[] for _ in range(n)]
+        if not self.Y:
+            self.Y = [[] for _ in range(n)]
+        for i, (a, b) in enumerate(zip(x, y)):
+            if a is not None and b is not None:
+                self.X[i].append(a)
+                self.Y[i].append(b)
+        self.axes[0].cla()
+        for x, y, fmt in zip(self.X, self.Y, self.fmts):
+            self.axes[0].plot(x, y, fmt)
+        self.config_axes()
+        display.display(self.fig)
+        display.clear_output(wait=True)
+
+class Accumulator:
+    """For accumulating sums over `n` variables.
+
+    Defined in :numref:`sec_utils`"""
+    def __init__(self, n):
+        self.data = [0.0] * n
+
+    def add(self, *args):
+        self.data = [a + float(b) for a, b in zip(self.data, args)]
+
+    def reset(self):
+        self.data = [0.0] * len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+def accuracy(y_hat, y):
+    """Compute the number of correct predictions.
+
+    Defined in :numref:`sec_utils`"""
+    if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
+        y_hat = d2l.argmax(y_hat, axis=1)
+    elif (len(y_hat.shape) > 1 and y_hat.shape[-1] == 1) or y_hat.dtype != y.dtype:
+        # Binary classification with float scores (logits or probabilities):
+        # threshold at 0 (logits) to get class labels, then reshape to match y.
+        y_hat = d2l.astype(y_hat > 0, y.dtype).reshape(y.shape)
+    cmp = d2l.astype(y_hat, y.dtype) == y
+    return float(d2l.reduce_sum(d2l.astype(cmp, y.dtype)))
+
+def download(url, folder='../data', sha1_hash=None):
+    """Download a file to folder and return the local filepath.
+
+    Defined in :numref:`sec_utils`"""
+    if not url.startswith('http'):
+        # For back compatibility
+        url, sha1_hash = DATA_HUB[url]
+    os.makedirs(folder, exist_ok=True)
+    fname = os.path.join(folder, url.split('/')[-1])
+    # Check if hit cache
+    if os.path.exists(fname) and sha1_hash:
+        sha1 = hashlib.sha1()
+        with open(fname, 'rb') as f:
+            while True:
+                data = f.read(1048576)
+                if not data:
+                    break
+                sha1.update(data)
+        if sha1.hexdigest() == sha1_hash:
+            return fname
+    # Download
+    import tempfile
+    print(f'Downloading {fname} from {url}...')
+    r = requests.get(url, stream=True, verify=True)
+    fd, tmp = tempfile.mkstemp(dir=folder)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(r.content)
+        os.replace(tmp, fname)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+    return fname
+
+def extract(filename, folder=None):
+    """Extract a zip/tar file into folder.
+
+    Defined in :numref:`sec_utils`"""
+    import tempfile, shutil
+    base_dir = os.path.dirname(filename)
+    _, ext = os.path.splitext(filename)
+    assert ext in ('.zip', '.tar', '.gz'), 'Only support zip/tar files.'
+    opener = zipfile.ZipFile if ext == '.zip' else tarfile.open
+    if folder is None:
+        folder = base_dir
+    tmp = tempfile.mkdtemp(dir=folder)
+    try:
+        with opener(filename, 'r') as fp:
+            fp.extractall(tmp)
+        for name in os.listdir(tmp):
+            src = os.path.join(tmp, name)
+            dst = os.path.join(folder, name)
+            if os.path.isdir(dst):
+                shutil.rmtree(dst)
+            os.rename(src, dst)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+def download_extract(name, folder=None):
+    """Download and extract a zip/tar file.
+
+    Defined in :numref:`sec_utils`"""
+    fname = download(name)
+    base_dir = os.path.dirname(fname)
+    data_dir, ext = os.path.splitext(fname)
+    target = os.path.join(base_dir, folder) if folder else data_dir
+    # Skip re-extraction if a completion marker exists (extracting many small
+    # files is slow and unnecessary when the archive is already unpacked).
+    marker = fname + '.extracted'
+    if os.path.exists(marker):
+        return target
+    if ext == '.zip':
+        fp = zipfile.ZipFile(fname, 'r')
+    elif ext in ('.tar', '.gz'):
+        fp = tarfile.open(fname, 'r')
+    else:
+        assert False, 'Only zip/tar files can be extracted.'
+    fp.extractall(base_dir)
+    open(marker, 'w').close()
+    return target
+
+def tokenize(lines, token='word'):
+    """Split text lines into word or character tokens.
+
+    Defined in :numref:`sec_utils`"""
+    assert token in ('word', 'char'), 'Unknown token type: ' + token
+    return [line.split() if token == 'word' else list(line) for line in lines]
+
+def evaluate_loss(net, data_iter, loss):
+    """Evaluate the loss of a model on the given dataset.
+
+    Defined in :numref:`sec_utils`"""
+    metric = d2l.Accumulator(2)  # Sum of losses, no. of examples
+    for X, y in data_iter:
+        out = net(X)
+        y = d2l.reshape(y, out.shape)
+        l = loss(out, y)
+        metric.add(d2l.reduce_sum(l), d2l.size(l))
+    return metric[0] / metric[1]
+
+def grad_clipping(net, theta):
+    """Clip the gradient.
+
+    Defined in :numref:`sec_utils`"""
+    if isinstance(net, nn.Module):
+        params = [p for p in net.parameters() if p.requires_grad]
+    else:
+        params = net.params
+    norm = torch.sqrt(sum(torch.sum((p.grad ** 2)) for p in params))
+    if norm > theta:
+        for param in params:
+            param.grad[:] *= theta / norm
+
+d2l.DATA_HUB['fra-eng'] = (d2l.DATA_URL + 'fra-eng.zip',
+                           '94646ad1522d915e7b0f9296181140edcf86a4f5')
+
+def read_data_nmt():
+    """Load the English-French dataset.
+
+    Defined in :numref:`sec_utils`"""
+    data_dir = d2l.download_extract('fra-eng')
+    with open(os.path.join(data_dir, 'fra.txt'), 'r', encoding='utf-8') as f:
+        return f.read()
+
+def preprocess_nmt(text):
+    """Preprocess the English-French dataset.
+
+    Defined in :numref:`sec_utils`"""
+    def no_space(char, prev_char):
+        return char in set(',.!?') and prev_char != ' '
+
+    # Replace non-breaking space with space, and convert uppercase letters to
+    # lowercase ones
+    text = text.replace('\u202f', ' ').replace('\xa0', ' ').lower()
+    # Insert space between words and punctuation marks
+    out = [' ' + char if i > 0 and no_space(char, text[i - 1]) else char
+           for i, char in enumerate(text)]
+    return ''.join(out)
+
+def tokenize_nmt(text, num_examples=None):
+    """Tokenize the English-French dataset.
+
+    Defined in :numref:`sec_utils`"""
+    source, target = [], []
+    for i, line in enumerate(text.split('\n')):
+        if num_examples and i > num_examples:
+            break
+        parts = line.split('\t')
+        if len(parts) == 2:
+            source.append(parts[0].split(' '))
+            target.append(parts[1].split(' '))
+    return source, target
+
+def truncate_pad(line, num_steps, padding_token):
+    """Truncate or pad sequences.
+
+    Defined in :numref:`sec_utils`"""
+    if len(line) > num_steps:
+        return line[:num_steps]  # Truncate
+    return line + [padding_token] * (num_steps - len(line))  # Pad
+
+def build_array_nmt(lines, vocab, num_steps):
+    """Transform text sequences of machine translation into minibatches.
+
+    Defined in :numref:`sec_utils`"""
+    lines = [vocab[l] for l in lines]
+    lines = [l + [vocab['<eos>']] for l in lines]
+    array = d2l.tensor([truncate_pad(
+        l, num_steps, vocab['<pad>']) for l in lines])
+    valid_len = d2l.reduce_sum(
+        d2l.astype(array != vocab['<pad>'], d2l.int32), 1)
+    return array, valid_len
+
+def load_data_nmt(batch_size, num_steps, num_examples=600):
+    """Return the iterator and the vocabularies of the translation dataset.
+
+    Defined in :numref:`sec_utils`"""
+    text = preprocess_nmt(read_data_nmt())
+    source, target = tokenize_nmt(text, num_examples)
+    src_vocab = d2l.Vocab(source, min_freq=2,
+                          reserved_tokens=['<pad>', '<bos>', '<eos>'])
+    tgt_vocab = d2l.Vocab(target, min_freq=2,
+                          reserved_tokens=['<pad>', '<bos>', '<eos>'])
+    src_array, src_valid_len = build_array_nmt(source, src_vocab, num_steps)
+    tgt_array, tgt_valid_len = build_array_nmt(target, tgt_vocab, num_steps)
+    data_arrays = (src_array, src_valid_len, tgt_array, tgt_valid_len)
+    data_iter = d2l.load_array(data_arrays, batch_size)
+    return data_iter, src_vocab, tgt_vocab
+
+def sequence_mask(X, valid_len, value=0):
+    """Mask irrelevant entries in sequences.
+
+    Defined in :numref:`sec_utils`"""
+    maxlen = X.size(1)
+    mask = torch.arange((maxlen), dtype=torch.float32,
+                        device=X.device)[None, :] < valid_len[:, None]
+    X[~mask] = value
+    return X
+
+class MaskedSoftmaxCELoss(nn.CrossEntropyLoss):
+    """The softmax cross-entropy loss with masks.
+
+    Defined in :numref:`sec_utils`"""
+    # `pred` shape: (`batch_size`, `num_steps`, `vocab_size`)
+    # `label` shape: (`batch_size`, `num_steps`)
+    # `valid_len` shape: (`batch_size`,)
+    def __init__(self):
+        super().__init__(reduction='none')
+
+    def forward(self, pred, label, valid_len):
+        weights = torch.ones_like(label)
+        weights = sequence_mask(weights, valid_len)
+        unweighted_loss = super().forward(pred.permute(0, 2, 1), label)
+        weighted_loss = (unweighted_loss * weights).mean(dim=1)
+        return weighted_loss
+
+def train_seq2seq(net, data_iter, lr, num_epochs, tgt_vocab, device):
+    """Train a model for sequence to sequence.
+
+    Defined in :numref:`sec_utils`"""
+    def xavier_init_weights(m):
+        if type(m) == nn.Linear:
+            nn.init.xavier_uniform_(m.weight)
+        if type(m) == nn.GRU:
+            for param in m._flat_weights_names:
+                if "weight" in param:
+                    nn.init.xavier_uniform_(m._parameters[param])
+    net.apply(xavier_init_weights)
+    net.to(device)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    loss = MaskedSoftmaxCELoss()
+    net.train()
+    animator = d2l.Animator(xlabel='epoch', ylabel='loss',
+                            xlim=[10, num_epochs])
+    for epoch in range(num_epochs):
+        timer = d2l.Timer()
+        metric = d2l.Accumulator(2)  # Sum of training loss, no. of tokens
+        for batch in data_iter:
+            optimizer.zero_grad()
+            X, X_valid_len, Y, Y_valid_len = [x.to(device) for x in batch]
+            bos = torch.tensor([tgt_vocab['<bos>']] * Y.shape[0],
+                               device=device).reshape(-1, 1)
+            dec_input = d2l.concat([bos, Y[:, :-1]], 1)  # Teacher forcing
+            Y_hat, _ = net(X, dec_input, X_valid_len)
+            l = loss(Y_hat, Y, Y_valid_len)
+            l.sum().backward()  # Make the loss scalar for `backward`
+            d2l.grad_clipping(net, 1)
+            num_tokens = Y_valid_len.sum()
+            optimizer.step()
+            with torch.no_grad():
+                metric.add(l.sum(), num_tokens)
+        if (epoch + 1) % 10 == 0:
+            animator.add(epoch + 1, (metric[0] / metric[1],))
+    print(f'loss {metric[0] / metric[1]:.3f}, {metric[1] / timer.stop():.1f} '
+          f'tokens/sec on {str(device)}')
+
+def predict_seq2seq(net, src_sentence, src_vocab, tgt_vocab, num_steps,
+                    device, save_attention_weights=False):
+    """Predict for sequence to sequence.
+
+    Defined in :numref:`sec_utils`"""
+    # Set `net` to eval mode for inference
+    net.eval()
+    src_tokens = src_vocab[src_sentence.lower().split(' ')] + [
+        src_vocab['<eos>']]
+    enc_valid_len = torch.tensor([len(src_tokens)], device=device)
+    src_tokens = d2l.truncate_pad(src_tokens, num_steps, src_vocab['<pad>'])
+    # Add the batch axis
+    enc_X = torch.unsqueeze(
+        torch.tensor(src_tokens, dtype=torch.long, device=device), dim=0)
+    enc_outputs = net.encoder(enc_X, enc_valid_len)
+    dec_state = net.decoder.init_state(enc_outputs, enc_valid_len)
+    # Add the batch axis
+    dec_X = torch.unsqueeze(torch.tensor(
+        [tgt_vocab['<bos>']], dtype=torch.long, device=device), dim=0)
+    output_seq, attention_weight_seq = [], []
+    for _ in range(num_steps):
+        Y, dec_state = net.decoder(dec_X, dec_state)
+        # We use the token with the highest prediction likelihood as input
+        # of the decoder at the next time step
+        dec_X = Y.argmax(dim=2)
+        pred = dec_X.squeeze(dim=0).type(torch.int32).item()
+        # Save attention weights (to be covered later)
+        if save_attention_weights:
+            attention_weight_seq.append(net.decoder.attention_weights)
+        # Once the end-of-sequence token is predicted, the generation of the
+        # output sequence is complete
+        if pred == tgt_vocab['<eos>']:
+            break
+        output_seq.append(pred)
+    return ' '.join(tgt_vocab.to_tokens(output_seq)), attention_weight_seq
+
+def rbfkernel(x1, x2, ls=4.):
+    dist = distance_matrix(np.expand_dims(x1, 1), np.expand_dims(x2, 1))
+    return np.exp(-(1. / ls**2 / 2) * (dist ** 2))
+
+class HPOTrainer(d2l.Trainer):
+    def validation_error(self):
+        return 1 - self.validate()['acc']
+
+class HPOSearcher(d2l.HyperParameters):
+    def sample_configuration(self) -> dict:
+        raise NotImplementedError
+
+    def update(self, config: dict, error: float, additional_info=None):
+        pass
+
+class RandomSearcher(HPOSearcher):
+    def __init__(self, config_space: dict, initial_config=None):
+        self.save_hyperparameters()
+
+    def sample_configuration(self) -> dict:
+        if self.initial_config is not None:
+            result = self.initial_config
+            self.initial_config = None
+        else:
+            result = {
+                name: domain.rvs()
+                for name, domain in self.config_space.items()
+            }
+        return result
+
+class HPOScheduler(d2l.HyperParameters):
+    def suggest(self) -> dict:
+        raise NotImplementedError
+    
+    def update(self, config: dict, error: float, info=None):
+        raise NotImplementedError
+
+class BasicScheduler(HPOScheduler):
+    def __init__(self, searcher: HPOSearcher):
+        self.save_hyperparameters()
+
+    def suggest(self) -> dict:
+        return self.searcher.sample_configuration()
+
+    def update(self, config: dict, error: float, info=None):
+        self.searcher.update(config, error, additional_info=info)
+
+class HPOTuner(d2l.HyperParameters):
+    def __init__(self, scheduler: HPOScheduler, objective: callable):
+        self.save_hyperparameters()
+        self.incumbent, self.incumbent_error = None, None  # Best so far
+        self.incumbent_trajectory, self.records = [], []
+        self.cumulative_runtime, self.current_runtime = [], 0
+
+    def run(self, number_of_trials):
+        for i in range(number_of_trials):
+            start_time = time.time()
+            config = self.scheduler.suggest()
+            print(f"Trial {i}: " + ", ".join(  # Floats to 4 significant digits
+                f"{k} = {v:.4g}" if isinstance(v, float) else f"{k} = {v}"
+                for k, v in config.items()))
+            error = float(self.objective(**config))
+            self.scheduler.update(config, error)
+            runtime = time.time() - start_time
+            self.bookkeeping(config, error, runtime)
+            print(f"    error = {error:.4f}, runtime = {runtime:.1f} s")
+
+    def bookkeeping(self, config: dict, error: float, runtime: float):
+        self.records.append({"config": config, "error": error, "runtime": runtime})
+        # Check if the last hyperparameter configuration performs better 
+        # than the incumbent
+        if self.incumbent is None or self.incumbent_error > error:
+            self.incumbent = config
+            self.incumbent_error = error
+        # Add current best observed performance to the optimization trajectory
+        self.incumbent_trajectory.append(self.incumbent_error)
+        # Update runtime
+        self.current_runtime += runtime
+        self.cumulative_runtime.append(self.current_runtime)
+
+def hpo_objective_lenet(learning_rate, batch_size, max_epochs=10):
+    model = d2l.LeNet(lr=learning_rate, num_classes=10)
+    trainer = d2l.HPOTrainer(max_epochs=max_epochs, num_gpus=1)
+    data = d2l.FashionMNIST(batch_size=batch_size)
+    model.apply_init([next(iter(data.get_dataloader(True)))[0]], d2l.init_cnn)
+    trainer.fit(model=model, data=data)
+    validation_error = trainer.validation_error()
+    return validation_error
+
+class SuccessiveHalvingScheduler(d2l.HPOScheduler):
+    def __init__(self, searcher, eta, r_min, r_max, prefact=1):
+        self.save_hyperparameters()
+        # Compute K, which is later used to determine the number of configurations
+        self.K = int(np.log(r_max / r_min) / np.log(eta))
+        # Define the rungs
+        self.rung_levels = [r_min * eta ** k for k in range(self.K + 1)]
+        if r_max not in self.rung_levels:
+            # The final rung should be r_max
+            self.rung_levels.append(r_max)
+            self.K += 1
+        # Bookkeeping
+        self.observed_error_at_rungs = defaultdict(list)
+        self.all_observed_error_at_rungs = defaultdict(list)
+        # Our processing queue
+        self.queue = []
+
+    def suggest(self):
+        if len(self.queue) == 0:
+            # Start a new round of successive halving
+            # Number of configurations for the first rung:
+            n0 = int(self.prefact * self.eta ** self.K)
+            for _ in range(n0):
+                config = self.searcher.sample_configuration()
+                config["max_epochs"] = self.r_min  # Set r = r_min
+                self.queue.append(config)
+        # Return an element from the queue
+        return self.queue.pop()
+
+    def update(self, config: dict, error: float, info=None):
+        ri = int(config["max_epochs"])  # Rung r_i
+        # Update our searcher, e.g if we use Bayesian optimization later
+        self.searcher.update(config, error, additional_info=info)
+        self.all_observed_error_at_rungs[ri].append((config, error))
+        if ri < self.r_max:
+            # Bookkeeping
+            self.observed_error_at_rungs[ri].append((config, error))
+            # Determine how many configurations should be evaluated on this rung
+            ki = self.K - self.rung_levels.index(ri)
+            ni = int(self.prefact * self.eta ** ki)
+            # If we observed all configuration on this rung r_i, we estimate the
+            # top 1 / eta configuration, add them to queue and promote them for
+            # the next rung r_{i+1}
+            if len(self.observed_error_at_rungs[ri]) >= ni:
+                kiplus1 = ki - 1
+                niplus1 = int(self.prefact * self.eta ** kiplus1)
+                best_performing_configurations = self.get_top_n_configurations(
+                    rung_level=ri, n=niplus1
+                )
+                riplus1 = self.rung_levels[self.K - kiplus1]  # r_{i+1}
+                # Queue may not be empty: insert new entries at the beginning
+                self.queue = [
+                    dict(config, max_epochs=riplus1)
+                    for config in best_performing_configurations
+                ] + self.queue
+                self.observed_error_at_rungs[ri] = []  # Reset
+
+    def get_top_n_configurations(self, rung_level, n):
+        rung = self.observed_error_at_rungs[rung_level]
+        if not rung:
+            return []
+        sorted_rung = sorted(rung, key=lambda x: x[1])
+        return [x[0] for x in sorted_rung[:n]]
+
+d2l.DATA_HUB['ml-100k'] = (
+    'https://files.grouplens.org/datasets/movielens/ml-100k.zip',
+    'cd4dcac4241c8a4ad7badc7ca635da8a69dddb83')
+
+def read_data_ml100k():
+    data_dir = d2l.download_extract('ml-100k')
+    names = ['user_id', 'item_id', 'rating', 'timestamp']
+    data = pd.read_csv(os.path.join(data_dir, 'u.data'), sep='\t',
+                       names=names, engine='python')
+    num_users = data.user_id.unique().shape[0]
+    num_items = data.item_id.unique().shape[0]
+    return data, num_users, num_items
+
+def split_data_ml100k(data, num_users, num_items,
+                      split_mode='random', test_ratio=0.1):
+    """Split the dataset in random mode or seq-aware mode."""
+    if split_mode == 'seq-aware':
+        train_items, test_items, train_list = {}, {}, []
+        for line in data.itertuples():
+            u, i, rating, time = line[1], line[2], line[3], line[4]
+            train_items.setdefault(u, []).append((u, i, rating, time))
+            if u not in test_items or test_items[u][-1] < time:
+                test_items[u] = (i, rating, time)
+        for u in range(1, num_users + 1):
+            train_list.extend(sorted(train_items[u], key=lambda k: k[3]))
+        test_data = [(key, *value) for key, value in test_items.items()]
+        # O(N) set-membership filter instead of O(N^2) list-membership.
+        test_set = set(test_data)
+        train_data = [item for item in train_list if item not in test_set]
+        train_data = pd.DataFrame(train_data)
+        test_data = pd.DataFrame(test_data)
+    else:
+        # Seed for deterministic splits across frameworks; uses Python's
+        # `random` for cross-framework portability (some frameworks' numpy
+        # shim lacks `np.random.default_rng`).
+        rng = random.Random(0)
+        mask = [rng.random() < 1 - test_ratio for _ in range(len(data))]
+        neg_mask = [not x for x in mask]
+        train_data, test_data = data[mask], data[neg_mask]
+    return train_data, test_data
+
+def load_data_ml100k(data, num_users, num_items, feedback='explicit'):
+    users, items, scores = [], [], []
+    inter = np.zeros((num_items, num_users)) if feedback == 'explicit' else {}
+    for line in data.itertuples():
+        user_index, item_index = int(line[1] - 1), int(line[2] - 1)
+        score = int(line[3]) if feedback == 'explicit' else 1
+        users.append(user_index)
+        items.append(item_index)
+        scores.append(score)
+        if feedback == 'implicit':
+            inter.setdefault(user_index, []).append(item_index)
+        else:
+            inter[item_index, user_index] = score
+    return users, items, scores, inter
+
+def split_and_load_ml100k(split_mode='seq-aware', feedback='explicit',
+                          test_ratio=0.1, batch_size=256):
+    data, num_users, num_items = read_data_ml100k()
+    train_data, test_data = split_data_ml100k(
+        data, num_users, num_items, split_mode, test_ratio)
+    train_u, train_i, train_r, _ = load_data_ml100k(
+        train_data, num_users, num_items, feedback)
+    test_u, test_i, test_r, _ = load_data_ml100k(
+        test_data, num_users, num_items, feedback)
+    train_set = torch.utils.data.TensorDataset(
+        torch.tensor(train_u), torch.tensor(train_i),
+        torch.tensor(train_r).float())
+    test_set = torch.utils.data.TensorDataset(
+        torch.tensor(test_u), torch.tensor(test_i),
+        torch.tensor(test_r).float())
+    train_iter = torch.utils.data.DataLoader(
+        train_set, shuffle=True, drop_last=False,
+        batch_size=batch_size)
+    test_iter = torch.utils.data.DataLoader(
+        test_set, batch_size=batch_size)
+    return num_users, num_items, train_iter, test_iter
+
+def train_recsys_rating(net, train_iter, test_iter, loss, trainer, num_epochs,
+                        devices=d2l.try_all_gpus(), evaluator=None,
+                        **kwargs):
+    net = net.to(devices[0])
+    timer = d2l.Timer()
+    animator = d2l.Animator(xlabel='epoch', xlim=[1, num_epochs], ylim=[0, 2],
+                            legend=['train loss', 'test RMSE'])
+    for epoch in range(num_epochs):
+        net.train()
+        metric, l = d2l.Accumulator(3), 0.
+        for i, values in enumerate(train_iter):
+            timer.start()
+            users, items, ratings = [v.to(devices[0]) for v in values]
+            trainer.zero_grad()
+            preds = net(users, items)
+            ls = loss(preds, ratings)
+            ls.backward()
+            trainer.step()
+            l += ls.item()
+            metric.add(ls.item() * users.shape[0], users.shape[0],
+                       users.shape[0])
+            timer.stop()
+        if len(kwargs) > 0:  # It will be used in section AutoRec
+            test_rmse = evaluator(net, test_iter, kwargs['inter_mat'],
+                                  devices)
+        else:
+            test_rmse = evaluator(net, test_iter, devices)
+        train_l = l / (i + 1)
+        animator.add(epoch + 1, (train_l, test_rmse))
+    print(f'train loss {metric[0] / metric[1]:.3f}, '
+          f'test RMSE {test_rmse:.3f}')
+    print(f'{metric[2] * num_epochs / timer.sum():.1f} examples/sec '
+          f'on {str(devices)}')
+
+class BPRLoss(nn.Module):
+    def __init__(self):
+        super(BPRLoss, self).__init__()
+
+    def forward(self, positive, negative):
+        distances = positive - negative
+        loss = -torch.sum(torch.log(torch.sigmoid(distances)), dim=0,
+                          keepdim=True)
+        return loss
+
+class HingeLossbRec(nn.Module):
+    def __init__(self):
+        super(HingeLossbRec, self).__init__()
+
+    def forward(self, positive, negative, margin=1):
+        distances = positive - negative
+        loss = torch.sum(torch.clamp(-distances + margin, min=0))
+        return loss
+
+def hit_and_auc(rankedlist, test_matrix, k):
+    hits_k = [(idx, val) for idx, val in enumerate(rankedlist[:k])
+              if val in set(test_matrix)]
+    hits_all = [(idx, val) for idx, val in enumerate(rankedlist)
+                if val in set(test_matrix)]
+    max = len(rankedlist) - 1
+    auc = 1.0 * (max - hits_all[0][0]) / max if len(hits_all) > 0 else 0
+    return len(hits_k), auc
+
+def evaluate_ranking(net, test_input, seq, candidates, num_users, num_items,
+                     devices):
+    ranked_list, ranked_items, hit_rate, auc = {}, {}, [], []
+    all_items = set([i for i in range(num_items)])
+    for u in range(num_users):
+        neg_items = list(all_items - set(candidates[int(u)]))
+        user_ids, item_ids, scores = [], [], []
+        [item_ids.append(i) for i in neg_items]
+        [user_ids.append(u) for _ in neg_items]
+        x = [torch.tensor(user_ids)]
+        if seq is not None:
+            x.append(seq[user_ids, :])
+        x.extend([torch.tensor(item_ids)])
+        test_data_iter = torch.utils.data.DataLoader(
+            torch.utils.data.TensorDataset(*x), shuffle=False,
+            batch_size=1024)
+        for values in test_data_iter:
+            values = [v.to(devices[0]) for v in values]
+            # `net` returns a 1-D tensor of logits per batch; ravel
+            # ensures we always extend with scalars regardless of whether
+            # the model emits shape (B,) or (B, 1).
+            scores.extend(net(*values).detach().cpu().numpy().ravel().tolist())
+        item_scores = list(zip(item_ids, scores))
+        ranked_list[u] = sorted(item_scores, key=lambda t: t[1], reverse=True)
+        ranked_items[u] = [r[0] for r in ranked_list[u]]
+        temp = hit_and_auc(ranked_items[u], test_input[u], 50)
+        hit_rate.append(temp[0])
+        auc.append(temp[1])
+    return sum(hit_rate) / len(hit_rate), sum(auc) / len(auc)
+
+def train_ranking(net, train_iter, test_iter, loss, optimizer, test_seq_iter,
+                  num_users, num_items, num_epochs, devices, evaluator,
+                  candidates, eval_step=1):
+    timer, hit_rate, auc = d2l.Timer(), 0, 0
+    animator = d2l.Animator(xlabel='epoch', xlim=[1, num_epochs], ylim=[0, 1],
+                            legend=['test hit rate', 'test AUC'])
+    for epoch in range(num_epochs):
+        metric = d2l.Accumulator(3)
+        for i, values in enumerate(train_iter):
+            input_data = [v.to(devices[0]) for v in values]
+            p_pos = net(*input_data[:-1])
+            p_neg = net(*input_data[:-2], input_data[-1])
+            ls = loss(p_pos, p_neg)
+            optimizer.zero_grad()
+            ls.backward()
+            optimizer.step()
+            # Per-batch loss only; accumulating across batches inside `l`
+            # turned the printed train-loss into a quadratic sum.
+            metric.add(ls.item(), values[0].shape[0], values[0].numel())
+            timer.stop()
+        with torch.no_grad():
+            if (epoch + 1) % eval_step == 0:
+                hit_rate, auc = evaluator(net, test_iter, test_seq_iter,
+                                          candidates, num_users, num_items,
+                                          devices)
+                animator.add(epoch + 1, (hit_rate, auc))
+    print(f'train loss {metric[0] / metric[1]:.3f}, '
+          f'test hit rate {float(hit_rate):.3f}, test AUC {float(auc):.3f}')
+    print(f'{metric[2] * num_epochs / timer.sum():.1f} examples/sec '
+          f'on {str(devices)}')
+
+d2l.DATA_HUB['ctr'] = (d2l.DATA_URL + 'ctr.zip',
+                       'e18327c48c8e8e5c23da714dd614e390d369843f')
+
+class CTRDataset(torch.utils.data.Dataset):
+    def __init__(self, data_path, feat_mapper=None, defaults=None,
+                 min_threshold=4, num_feat=34):
+        self.NUM_FEATS, self.count, self.data = num_feat, 0, {}
+        feat_cnts = defaultdict(lambda: defaultdict(int))
+        self.feat_mapper, self.defaults = feat_mapper, defaults
+        self.field_dims = torch.zeros(self.NUM_FEATS, dtype=torch.long)
+        with open(data_path) as f:
+            for line in f:
+                instance = {}
+                values = line.rstrip('\n').split('\t')
+                if len(values) != self.NUM_FEATS + 1:
+                    continue
+                instance['y'] = [float(values[0])]
+                for i in range(1, self.NUM_FEATS + 1):
+                    feat_cnts[i][values[i]] += 1
+                    instance.setdefault('x', []).append(values[i])
+                self.data[self.count] = instance
+                self.count = self.count + 1
+        if self.feat_mapper is None and self.defaults is None:
+            feat_mapper = {i: {feat for feat, c in cnt.items() if c >=
+                               min_threshold} for i, cnt in feat_cnts.items()}
+            self.feat_mapper = {i: {feat_v: idx for idx, feat_v in enumerate(sorted(feat_values))}
+                                for i, feat_values in feat_mapper.items()}
+            self.defaults = {i: len(feat_values) for i, feat_values in feat_mapper.items()}
+        for i, fm in self.feat_mapper.items():
+            self.field_dims[i - 1] = len(fm) + 1
+        self.offsets = torch.tensor(
+            (0, *torch.cumsum(self.field_dims, dim=0).numpy()[:-1]))
+
+    def __len__(self):
+        return self.count
+
+    def __getitem__(self, idx):
+        feat = torch.tensor([self.feat_mapper[i + 1].get(v, self.defaults[i + 1])
+                             for i, v in enumerate(self.data[idx]['x'])])
+        return feat + self.offsets, torch.tensor(self.data[idx]['y'])
+
+class Timer:
+    """Record multiple running times.
+
+    Defined in :numref:`sec_minibatch_sgd`"""
+    def __init__(self):
+        self.times = []
+        self.start()
+
+    def start(self):
+        """Start the timer."""
+        self.tik = time.perf_counter()
+
+    def stop(self):
+        """Stop the timer and record the time in a list."""
+        self.times.append(time.perf_counter() - self.tik)
+        return self.times[-1]
+
+    def avg(self):
+        """Return the average time."""
+        return sum(self.times) / len(self.times)
+
+    def sum(self):
+        """Return the sum of time."""
+        return sum(self.times)
+
+    def cumsum(self):
+        """Return the accumulated time."""
+        return np.array(self.times).cumsum().tolist()
+
+_EVAL_ROWS = {}  # rows of the files read from the Hub in this process
+
+def _eval_load_rows(task, split=None):
+    """The rows (dicts) of the file of task.files for split (default
+    task.split): the one file whose path has the split name as a word.
+    Read from the Hugging Face Hub at task.revision, or from the folder
+    task.dataset if that is a local directory; parquet or JSON lines.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    split = split or task.split
+    word = re.compile(rf'(^|[/_.-]){re.escape(split)}([/_.-]|$)')
+    files = [f for f in task.files if word.search(f)]
+    if len(files) != 1:
+        raise ValueError(f'task {task.id}: {len(files)} files of split '
+                         f'{split!r} in {task.files}')
+    local = os.path.isdir(task.dataset)
+    key = (task.dataset, task.revision, files[0])
+    if local or key not in _EVAL_ROWS:
+        if local:
+            path = os.path.join(task.dataset, files[0])
+        else:
+            from huggingface_hub import hf_hub_download
+            path = hf_hub_download(task.dataset, files[0], repo_type='dataset',
+                                   revision=task.revision)
+        if path.endswith('.parquet'):
+            rows = pd.read_parquet(path).to_dict('records')
+        else:
+            with open(path, encoding='utf-8') as f:
+                rows = [json.loads(line) for line in f if line.strip()]
+        if local:
+            return rows
+        _EVAL_ROWS[key] = rows
+    return _EVAL_ROWS[key]
+
+def _eval_arc(row, i):
+    """ARC: the question, its options and the index of the answer key.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    labels = [str(a) for a in row['choices']['label']]
+    return {'id': str(row['id']), 'question': row['question'],
+            'options': [str(o) for o in row['choices']['text']],
+            'gold': labels.index(str(row['answerKey']))}
+
+def _eval_hellaswag(row, i):
+    """HellaSwag, cleaned as lm-evaluation-harness does: 'label: context'
+    as the question, the four endings as options. With fmt='continuation'
+    the context is the prompt and each ending continues it, as in the
+    harness.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    def clean(text):
+        text = text.strip().replace(' [title]', '. ')
+        return re.sub(r'\[.*?\]', '', text).replace('  ', ' ')
+    ctx = row['ctx_a'] + ' ' + row['ctx_b'].capitalize()
+    return {'id': str(i), 'question': clean(row['activity_label'] + ': ' +
+                                            ctx),
+            'options': [clean(e) for e in row['endings']],
+            'gold': int(row['label'])}
+
+def _eval_mmlu(row, i):
+    """MMLU: the question, four options, the answer index, the subject
+    (for same-subject demonstrations and as the cluster) and the subject
+    header that precedes the prompt. With fmt='mmlu' and five
+    'dev:same_subject' shots the prompt is lm-evaluation-harness's.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    subject = str(row['subject'])
+    return {'id': str(i), 'question': row['question'].strip(),
+            'options': [str(o) for o in row['choices']],
+            'gold': int(row['answer']), 'subject': subject,
+            'header': 'The following are multiple choice questions (with '
+                      f"answers) about {subject.replace('_', ' ')}.\n\n"}
+
+def _eval_mmlu_pro(row, i):
+    """MMLU-Pro: up to ten options, the category as the subject.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    subject = str(row['category'])
+    return {'id': str(row['question_id']), 'question': row['question'].strip(),
+            'options': [str(o) for o in row['options']],
+            'gold': int(row['answer_index']), 'subject': subject,
+            'header': 'The following are multiple choice questions (with '
+                      f'answers) about {subject}.\n\n'}
+
+def _eval_piqa(row, i):
+    """PIQA: the goal and its two solutions.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    return {'id': str(i), 'question': row['goal'],
+            'options': [row['sol1'], row['sol2']], 'gold': int(row['label'])}
+
+def _eval_sciq(row, i):
+    """SciQ: the support paragraph as a header, three distractors and the
+    correct answer last, as lm-evaluation-harness orders them.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    support = (row['support'] or '').strip()
+    return {'id': str(i), 'question': row['question'],
+            'options': [row['distractor1'], row['distractor2'],
+                        row['distractor3'], row['correct_answer']],
+            'gold': 3, 'header': support + '\n' if support else ''}
+
+def _eval_winogrande(row, i):
+    """WinoGrande, partially scored: the sentence up to the blank with
+    either option as two prompts, the rest of the sentence as their
+    shared continuation.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    s = row['sentence']
+    k = s.index('_')
+    return {'id': str(i), 'prompts': [s[:k] + row['option1'],
+                                      s[:k] + row['option2']],
+            'continuation': ' ' + s[k + 1:].strip(),
+            'gold': int(row['answer']) - 1}
+
+def _eval_gsm8k(row, i):
+    """GSM8K: the question, the worked answer without its calculator
+    annotations <<...>> (a demonstration's target) and the final number
+    after '####' (the reference).
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    return {'id': str(i), 'question': row['question'],
+            'target': re.sub(r'<<[^>]*>>', '', row['answer']),
+            'reference': d2l.extract_answer(row['answer'], 'gsm8k',
+                                            strict=True)}
+
+def _eval_humaneval(row, i):
+    """HumanEval: the function header and docstring as the prompt; the
+    tests call check() on the entry point.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    return {'id': str(row['task_id']), 'prompt': row['prompt'],
+            'test': f"{row['test']}\n\ncheck({row['entry_point']})\n",
+            'entry_point': row['entry_point']}
+
+EVAL_ADAPTERS = {  # dataset row and its index -> an item
+    'arc': _eval_arc, 'hellaswag': _eval_hellaswag, 'mmlu': _eval_mmlu,
+    'mmlu_pro': _eval_mmlu_pro, 'piqa': _eval_piqa, 'sciq': _eval_sciq,
+    'winogrande': _eval_winogrande, 'gsm8k': _eval_gsm8k,
+    'humaneval': _eval_humaneval}
+
+def _eval_canonical(task):
+    """task with canonical JSON values (numpy numbers and arrays become
+    Python ones; files and stop become tuples, a string being one entry).
+    Refuses sampling keys that run() sets itself.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    def plain(x):
+        if hasattr(x, 'tolist'):
+            return x.tolist()
+        raise TypeError(f'task {task.id}: {x!r} is not JSON')
+    d = json.loads(json.dumps(task._asdict(), default=plain))
+    for key in ('files', 'stop'):
+        d[key] = (d[key],) if isinstance(d[key], str) else tuple(d[key] or ())
+    clash = sorted(set(d['sampling'] or ()) & {
+        'seed', 'stop', 'chat', 'enable_thinking', 'batch_size',
+        'max_new_tokens'})
+    if clash:
+        raise ValueError(f'task {task.id}: sampling sets {clash}, which '
+                         'run() derives from the task and its seed')
+    return task._replace(**d)
+
+def _eval_items(task, rows, ids):
+    """The items rows[ids] of task, adapted by EVAL_ADAPTERS[task.adapter]
+    and rendered: 'mc' items get a prompt and choices from format_mc in
+    task.fmt with task.shots demonstrations (after the item's header), or,
+    with fmt='continuation', the question as the prompt and each option
+    after a space as a choice (demonstrations: question and answer, blank
+    lines between); 'gen' items get a prompt from fewshot_prompt in
+    task.template. The
+    demonstrations come from task.shots_from: {'split', 'ids'} (rows of
+    that split), {'demos': [[question, target], ...]} (written out in the
+    task, 'gen' only; an optional 'source' names them) or
+    '<split>:same_subject' (the first rows of that split with the item's
+    subject).
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    if task.kind not in ('mc', 'mc_partial', 'gen', 'code', 'ppl'):
+        raise ValueError(f'task {task.id}: unknown kind {task.kind!r}')
+    if task.template in ('chat_single', 'chat_multi') and not task.chat:
+        raise ValueError(f'task {task.id}: template {task.template!r} '
+                         'needs chat=True')
+    adapt = d2l.EVAL_ADAPTERS[task.adapter]
+    items = [adapt(rows[int(i)], int(i)) for i in ids]
+    src, k = task.shots_from, task.shots or 0
+    if k and src is None:
+        raise ValueError(f'task {task.id}: {k} shots but no shots_from')
+    if isinstance(src, dict):
+        n_src = len(src['demos'] if 'demos' in src else src['ids'])
+        if n_src != k:
+            raise ValueError(f'task {task.id}: shots={k} but {n_src} '
+                             'demonstration ids')
+        if 'demos' in src:  # written out in the task: (question, target)
+            if task.kind != 'gen':
+                raise ValueError(f'task {task.id}: written demonstrations '
+                                 "need kind 'gen'")
+            fixed = [{'question': q, 'target': t} for q, t in src['demos']]
+        else:
+            pool = d2l._eval_load_rows(task, src['split'])
+            fixed = [adapt(pool[j], j) for j in src['ids']]
+    elif isinstance(src, str):
+        split, rule = src.split(':')
+        if rule != 'same_subject':
+            raise ValueError(f'task {task.id}: unknown rule {rule!r}')
+        pool = d2l._eval_load_rows(task, split)
+        by_subject = collections.defaultdict(list)
+        for j, row in enumerate(pool):
+            shot = adapt(row, j)
+            if len(by_subject[shot['subject']]) < k:
+                by_subject[shot['subject']].append(shot)
+    for item in items:
+        shots = [] if not k else fixed if isinstance(src, dict) else (
+            by_subject[item['subject']])
+        if k and len(shots) < k:
+            raise ValueError(f"task {task.id}: {len(shots)} of {k} shots "
+                             f"for item {item['id']}")
+        if task.kind == 'mc' and task.fmt == 'continuation':
+            demos = [s['question'] + ' ' + s['options'][s['gold']]
+                     for s in shots]
+            prompt = '\n\n'.join(demos + [item['question']])
+            item['prompt'] = item.get('header', '') + prompt
+            item['choices'] = [' ' + o for o in item['options']]
+        elif task.kind == 'mc':
+            prompt, item['choices'] = d2l.format_mc(
+                item['question'], item['options'], task.fmt,
+                shots=[(s['question'], s['options'], s['gold'])
+                       for s in shots])
+            item['prompt'] = item.get('header', '') + prompt
+        elif task.kind == 'gen':
+            demos = [(s['question'], s['target']) for s in shots]
+            item['prompt'] = (item['question'] if task.template is None
+                              else d2l.fewshot_prompt(demos, item['question'],
+                                                      task.template))
+    return items
+
+GSM8K_COT_DEMOS = [  # Wei et al. (2022), as lm-evaluation-harness's
+    # gsm8k_cot task writes them (lm_eval/tasks/gsm8k/gsm8k-cot.yaml at
+    # commit b733598568fde3afa0e008892f8e7bb18cd472b6)
+    ['There are 15 trees in the grove. Grove workers will plant trees in '
+     'the grove today. After they are done, there will be 21 trees. How '
+     'many trees did the grove workers plant today?',
+     'There are 15 trees originally. Then there were 21 trees after some '
+     'more were planted. So there must have been 21 - 15 = 6. The answer '
+     'is 6.'],
+    ['If there are 3 cars in the parking lot and 2 more cars arrive, how '
+     'many cars are in the parking lot?',
+     'There are originally 3 cars. 2 more cars arrive. 3 + 2 = 5. The '
+     'answer is 5.'],
+    ['Leah had 32 chocolates and her sister had 42. If they ate 35, how '
+     'many pieces do they have left in total?',
+     'Originally, Leah had 32 chocolates. Her sister had 42. So in total '
+     'they had 32 + 42 = 74. After eating 35, they had 74 - 35 = 39. The '
+     'answer is 39.'],
+    ['Jason had 20 lollipops. He gave Denny some lollipops. Now Jason has '
+     '12 lollipops. How many lollipops did Jason give to Denny?',
+     'Jason started with 20 lollipops. Then he had 12 after giving some to '
+     'Denny. So he gave Denny 20 - 12 = 8. The answer is 8.'],
+    ['Shawn has five toys. For Christmas, he got two toys each from his '
+     'mom and dad. How many toys does he have now?',
+     'Shawn started with 5 toys. If he got 2 toys each from his mom and '
+     'dad, then that is 4 more toys. 5 + 4 = 9. The answer is 9.'],
+    ['There were nine computers in the server room. Five more computers '
+     'were installed each day, from monday to thursday. How many computers '
+     'are now in the server room?',
+     'There were originally 9 computers. For each of 4 days, 5 more '
+     'computers were added. So 5 * 4 = 20 computers were added. 9 + 20 is '
+     '29. The answer is 29.'],
+    ['Michael had 58 golf balls. On tuesday, he lost 23 golf balls. On '
+     'wednesday, he lost 2 more. How many golf balls did he have at the '
+     'end of wednesday?',
+     'Michael started with 58 golf balls. After losing 23 on tuesday, he '
+     'had 58 - 23 = 35. After losing 2 more, he had 35 - 2 = 33 golf '
+     'balls. The answer is 33.'],
+    ['Olivia has $23. She bought five bagels for $3 each. How much money '
+     'does she have left?',
+     'Olivia had 23 dollars. 5 bagels for 3 dollars each will be 5 x 3 = '
+     '15 dollars. So she has 23 - 15 dollars left. 23 - 15 is 8. The '
+     'answer is 8.']]
+
+EVAL_TASKS = {t.id: t for t in (  # pinned revisions and explicit files
+    EvalTask('arc_challenge', 'allenai/ai2_arc',
+             '210d026faf9955653af8916fad021475a3f00453',
+             ('ARC-Challenge/test-00000-of-00001.parquet',), 'mc', 'arc',
+             config='ARC-Challenge', norm='char'),
+    EvalTask('arc_easy', 'allenai/ai2_arc',
+             '210d026faf9955653af8916fad021475a3f00453',
+             ('ARC-Easy/test-00000-of-00001.parquet',), 'mc', 'arc',
+             config='ARC-Easy', norm='char'),
+    EvalTask('hellaswag', 'Rowan/hellaswag',
+             '218ec52e09a7e7462a5400043bb9a69a41d06b76',
+             ('data/validation-00000-of-00001.parquet',), 'mc', 'hellaswag',
+             split='validation', fmt='continuation', norm='char'),
+    EvalTask('mmlu', 'cais/mmlu', 'c30699e8356da336a370243923dbaf21066bb9fe',
+             ('all/test-00000-of-00001.parquet',
+              'all/dev-00000-of-00001.parquet'), 'mc', 'mmlu', config='all',
+             fmt='mmlu', norm='sum', shots=5,
+             shots_from='dev:same_subject', cluster='subject'),
+    EvalTask('mmlu_pro', 'TIGER-Lab/MMLU-Pro',
+             'b189ec765aa7ed75c8acfea42df31fdae71f97be',
+             ('data/test-00000-of-00001.parquet',
+              'data/validation-00000-of-00001.parquet'), 'mc', 'mmlu_pro',
+             fmt='letter', norm='sum', shots=5,
+             shots_from='validation:same_subject'),
+    EvalTask('gsm8k', 'openai/gsm8k',
+             '740312add88f781978c0658806c59bc2815b9866',
+             ('main/test-00000-of-00001.parquet',
+              'main/train-00000-of-00001.parquet'), 'gen', 'gsm8k',
+             config='main', template='qa', shots=4,
+             shots_from={'split': 'train', 'ids': [0, 1, 2, 3]},
+             max_new_tokens=384, stop=('\n\nQ:',), extract='gsm8k'),
+    # lm-evaluation-harness's gsm8k_cot: 8 written chain-of-thought
+    # demonstrations as 'Q: ...\nA: ... The answer is N.', greedy, stop 'Q:',
+    # 256 new tokens (the harness's max_gen_toks)
+    EvalTask('gsm8k_cot', 'openai/gsm8k',
+             '740312add88f781978c0658806c59bc2815b9866',
+             ('main/test-00000-of-00001.parquet',
+              'main/train-00000-of-00001.parquet'), 'gen', 'gsm8k',
+             config='main', template='qa', shots=8,
+             shots_from={'source': 'Wei et al. 2022',
+                         'demos': GSM8K_COT_DEMOS},
+             max_new_tokens=256, stop=('Q:',), extract='gsm8k'),
+    EvalTask('humaneval', 'openai/openai_humaneval',
+             '7dce6050a7d6d172f3cc5c32aa97f52fa1a2e544',
+             ('openai_humaneval/test-00000-of-00001.parquet',), 'code',
+             'humaneval', max_new_tokens=512,
+             stop=('\nclass', '\ndef', '\n#', '\nif', '\nprint')),
+    EvalTask('piqa', 'baber/piqa', '142f6d7367fd9877f0fb3b5734ea6a545f54cdd1',
+             ('piqa_validation.parquet',), 'mc', 'piqa', split='validation',
+             norm='char'),
+    EvalTask('sciq', 'allenai/sciq',
+             '2c94ad3e1aafab77146f384e23536f97a4849815',
+             ('data/test-00000-of-00001.parquet',), 'mc', 'sciq',
+             norm='char'),
+    EvalTask('winogrande', 'allenai/winogrande',
+             '01e74176c63542e6b0bcb004dcdea22d94fb67b5',
+             ('winogrande_xl/validation-00000-of-00001.parquet',),
+             'mc_partial', 'winogrande', split='validation',
+             config='winogrande_xl', norm='sum'))}
+
+EVAL_SUITES = {  # frozen manifests: a change here is a new suite version
+    'dev_v1': {'name': 'dev_v1', 'tasks': [
+        EvalTask('arc_challenge', 'allenai/ai2_arc',
+                 '210d026faf9955653af8916fad021475a3f00453',
+                 ('ARC-Challenge/test-00000-of-00001.parquet',), 'mc', 'arc',
+                 config='ARC-Challenge', n=500, norm='char'),
+        EvalTask('gsm8k', 'openai/gsm8k',
+                 '740312add88f781978c0658806c59bc2815b9866',
+                 ('main/test-00000-of-00001.parquet',
+                  'main/train-00000-of-00001.parquet'), 'gen', 'gsm8k',
+                 config='main', n=100, template='chat_multi', chat=True,
+                 enable_thinking=False, shots=4,
+                 shots_from={'split': 'train', 'ids': [0, 1, 2, 3]},
+                 max_new_tokens=384, extract='gsm8k')]},
+    'report_v1': {'name': 'report_v1', 'tasks': [
+        EvalTask('mmlu_pro', 'TIGER-Lab/MMLU-Pro',
+                 'b189ec765aa7ed75c8acfea42df31fdae71f97be',
+                 ('data/test-00000-of-00001.parquet',
+                  'data/validation-00000-of-00001.parquet'), 'mc',
+                 'mmlu_pro', n=1000, fmt='letter', norm='sum', shots=5,
+                 shots_from='validation:same_subject'),
+        EvalTask('mmlu', 'cais/mmlu',
+                 'c30699e8356da336a370243923dbaf21066bb9fe',
+                 ('all/test-00000-of-00001.parquet',
+                  'all/dev-00000-of-00001.parquet'), 'mc', 'mmlu',
+                 config='all', n=2000, fmt='mmlu', norm='sum', shots=5,
+                 shots_from='dev:same_subject', cluster='subject'),
+        EvalTask('gsm8k', 'openai/gsm8k',
+                 '740312add88f781978c0658806c59bc2815b9866',
+                 ('main/test-00000-of-00001.parquet',
+                  'main/train-00000-of-00001.parquet'), 'gen', 'gsm8k',
+                 config='main', template='qa', shots=4,
+                 shots_from={'split': 'train', 'ids': [0, 1, 2, 3]},
+                 max_new_tokens=384, stop=('\n\nQ:',), extract='gsm8k')]}}
+
+def _eval_model_id(model):
+    """(model id, revision) of a Transformers model, from its config;
+    other models may set the attributes name_or_path and revision, else
+    their class name and 'local' are used.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    m = d2l._lm_unwrap(model)
+    cfg = getattr(m, 'config', None)
+    name = (getattr(m, 'name_or_path', None) or
+            getattr(cfg, '_name_or_path', None) or type(m).__name__)
+    revision = (getattr(m, 'revision', None) or
+                getattr(cfg, '_commit_hash', None) or 'local')
+    return str(name), str(revision)
+
+def _eval_cache_path(cache_dir, model_id, revision, suite_hash, run_key):
+    """<cache_dir>/<model id, '/' as '--'>@<revision>/<suite hash>/<run
+    key>.parquet
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    return os.path.join(cache_dir, f"{model_id.replace('/', '--')}@"
+                        f'{revision}', suite_hash, f'{run_key}.parquet')
+
+def _eval_sorted(rows):
+    """Result rows as a DataFrame sorted by task and item id.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    return pd.DataFrame(rows).sort_values(['task', 'item_id'],
+                                          ignore_index=True)
+
+def _eval_cache_read(path):
+    """The result rows cached at path, or [] if there are none.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    if not os.path.exists(path):
+        return []
+    return [{k: (None if isinstance(v, float) and k != 'score' and
+                 math.isnan(v) else v) for k, v in r.items()}
+            for r in pd.read_parquet(path).to_dict('records')]
+
+def _eval_cache_write(path, rows):
+    """Write result rows to path atomically, sorted, without timestamps.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _eval_sorted(rows).to_parquet(path + '.tmp', index=False)
+    os.replace(path + '.tmp', path)
+
+def _eval_score_more(suite, task, items, model, tokenizer, seed):
+    """(scores, preds, finish reasons) of the kinds EvalSuite._score does
+    not show: 'mc_partial' (one continuation after each of an item's
+    prompts; the highest-scoring prompt is the prediction), 'code' (the
+    prompt and its completion run against the item's tests) and 'ppl'
+    (bits per byte per text).
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    n = len(items)
+    if task.kind == 'mc_partial':
+        S = d2l.score_choices(
+            model, tokenizer, [p for it in items for p in it['prompts']],
+            [[it['continuation']] for it in items for _ in it['prompts']],
+            task.norm, batch_size=suite.batch_size)[:, 0]
+        preds = [int(s.argmax()) for s in S.split(
+            [len(it['prompts']) for it in items])]
+        return ([float(p == it['gold']) for p, it in zip(preds, items)],
+                preds, [None] * n)
+    if task.kind == 'code':
+        sampling = dict(task.sampling or {})  # None: greedy
+        if sampling:
+            sampling.setdefault('strategy', 'sample')
+        gens = d2l.generate(
+            model, tokenizer, [it['prompt'] for it in items],
+            task.max_new_tokens, chat=task.chat,
+            enable_thinking=task.enable_thinking, stop=list(task.stop),
+            batch_size=suite.batch_size, **sampling,
+            seed=[d2l.item_seed(seed, task.id, it['id']) for it in items])
+        return ([float(d2l.run_python_tests(it['prompt'] + g.text,
+                                            it['test']))
+                 for g, it in zip(gens, items)], [None] * n,
+                [g.finish_reason for g in gens])
+    if task.kind == 'ppl':  # the mean of texts, not per byte
+        return ([d2l.bits_per_byte(model, tokenizer, [it['text']])
+                 for it in items], [None] * n, [None] * n)
+    raise ValueError(f'unknown kind: {task.kind!r}')
+
+@d2l.add_to_class(d2l.EvalResult)  #@save
+def macro(self, n_boot=10000, *, seed=0, alpha=0.05):
+    """The mean of the task means, with a bootstrap that resamples items
+    (or clusters) within each task."""
+    reps = [d2l._bootstrap_replicates(df.score, n_boot,
+                                      self._clusters(t, df.cluster),
+                                      [seed, k])
+            for k, (t, df) in enumerate(self.per_item.groupby('task'))]
+    means = np.mean([m for _, m, _ in reps], axis=0)
+    lo, hi = np.quantile(means, [alpha / 2, 1 - alpha / 2])
+    return d2l.BootstrapResult(
+        float(np.mean([y.mean() for y, _, _ in reps])),
+        (float(lo), float(hi)), float(means.std(ddof=1)), None,
+        sum(len(y) for y, _, _ in reps), len(reps), n_boot)
+
+def _judge_cut(tokenizer, text, i, name, limit=1500):
+    """text cut to its first limit tokens, with a warning naming item i.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    import warnings
+    ids = tokenizer.encode(text, add_special_tokens=False)
+    if len(ids) <= limit:
+        return text
+    warnings.warn(f'judge_pairwise: item {i}: {name} cut from {len(ids)} '
+                  f'to {limit} tokens')
+    return tokenizer.decode(ids[:limit])
+
+def _judge_logodds(judge, tokenizer, texts, *, batch_size=8,
+                   max_batch_tokens=None):
+    """(len(texts), 3) float64: log P(A), log P(B) and the log-odds of the
+    token 'A' over 'B' as the next token after each rendered prompt.
+    Identical prompts run once; prompts are sorted by length, left-padded
+    and batched (at most batch_size rows and, if given, max_batch_tokens
+    tokens including padding). The log-odds are recomputed in fp32 from
+    the input of the judge's output head, since bf16 logits are rounded
+    (steps of 0.125 near 20); a head that does not give the logits (a
+    soft-capped one) falls back to the logits as returned, with a
+    warning.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    import warnings
+    letters = [tokenizer.encode(c, add_special_tokens=False) for c in 'AB']
+    if any(len(ids) != 1 for ids in letters) or letters[0] == letters[1]:
+        raise ValueError(f'A and B are not two single tokens: {letters}')
+    AB = [letters[0][0], letters[1][0]]
+    unique = list(dict.fromkeys(texts))
+    ids = [tokenizer(t, add_special_tokens=False)['input_ids']
+           for t in unique]
+    order = sorted(range(len(ids)), key=lambda r: (-len(ids[r]), r))
+    batches = [[]]
+    for r in order:  # longest first, so a batch's first row sets its length
+        b = batches[-1]
+        if b and (len(b) == batch_size or max_batch_tokens is not None and
+                  len(ids[b[0]]) * (len(b) + 1) > max_batch_tokens):
+            batches.append([])
+        batches[-1].append(r)
+    pad = tokenizer.pad_token_id
+    pad = tokenizer.eos_token_id if pad is None else pad
+    device = next(judge.parameters()).device
+    head = getattr(judge, 'get_output_embeddings', lambda: None)()
+    seen, warned = [], False
+    hook = (head.register_forward_hook(lambda m, x, y: seen.append(x[0]))
+            if isinstance(head, nn.Linear) else None)
+    lp = torch.empty(len(ids), 3, dtype=torch.float64)
+    try:
+        for b in batches if ids else []:
+            T = len(ids[b[0]])
+            X = torch.tensor([[pad] * (T - len(ids[r])) + ids[r] for r in b],
+                             device=device)
+            mask = torch.tensor([[0] * (T - len(ids[r])) + [1] * len(ids[r])
+                                 for r in b], device=device)
+            pos = (mask.cumsum(-1) - 1).masked_fill(mask == 0, 1)
+            seen.clear()
+            with torch.inference_mode():
+                z = judge(input_ids=X, attention_mask=mask, position_ids=pos,
+                          use_cache=False, logits_to_keep=1).logits[:, -1]
+                zab = z[:, AB].float()
+                if len(seen) == 1:
+                    h = seen[0][:, -1].float()
+                    w = head.weight[AB].to(h.device, torch.float32)
+                    exact = h @ w.T if head.bias is None else (
+                        h @ w.T + head.bias[AB].to(h.device, torch.float32))
+                    exact = exact.to(zab.device)
+                    if torch.allclose(exact, zab, rtol=2**-7, atol=1e-3):
+                        zab = exact
+                    elif not warned:  # a head that is not the last step
+                        warned = True
+                        warnings.warn('judge_pairwise: the output head does '
+                                      'not give the logits; the log-odds '
+                                      'use the logits as returned')
+            lp[b, :2] = z.float().log_softmax(-1)[:, AB].double().cpu()
+            lp[b, 2] = (zab[:, 0] - zab[:, 1]).double().cpu()
+    finally:
+        if hook is not None:
+            hook.remove()
+    row = {t: k for k, t in enumerate(unique)}
+    return lp[[row[t] for t in texts]] if texts else lp
+
+def _lm_frozen_key(key):
+    """The registered artifact a regeneration of key is checked against:
+    key itself if registered, else its highest registered earlier version
+    (lm-x-v1 for lm-x-v2), else None.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    if key in d2l.DATA_HUB:
+        return key
+    stem, _, v = key.rpartition('-v')
+    if not v.isdigit():
+        return None
+    older = [k for k in d2l.DATA_HUB if k.rpartition('-v')[0] == stem and
+             k.rpartition('-v')[2].isdigit() and int(k.rpartition('-v')[2])
+             < int(v)]
+    return max(older, key=lambda k: int(k.rpartition('-v')[2]),
+               default=None)
+
+def _lm_read_table(path):
+    """A parquet file or JSON lines as a DataFrame.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    if path.endswith('.parquet'):
+        return pd.read_parquet(path)
+    return pd.read_json(path, lines=True, dtype=False)
+
+def lm_save_table(name, df, on, key, rerun_dir=os.path.join(
+        '..', 'data', 'lm', 'rerun')):
+    """Write a regenerated table to rerun_dir/name (parquet, or JSON lines
+    for .jsonl) with its rows sorted by the columns on, print its sha1,
+    and print its agreement with the registered artifact it replaces (see
+    _lm_frozen_key): per column, the largest absolute difference of a
+    float column, else the share of equal values. Returns the path.
+
+    Defined in :numref:`sec_lm_eval_suites`"""
+    df = df.sort_values(on, ignore_index=True)
+    if name.endswith('.parquet'):
+        write = lambda path: df.to_parquet(path, index=False)
+    else:  # pandas converts the numpy values
+        write = lambda path: d2l.write_jsonl(path, json.loads(df.to_json(
+            orient='records', double_precision=15)))
+    path = d2l.lm_save_rerun(name, write, rerun_dir)
+    frozen = _lm_frozen_key(key)
+    if frozen is None:
+        print(f'{key}: no earlier version is registered')
+        return path
+    m = df.merge(_lm_read_table(d2l.download_keyed(frozen)), on=on,
+                 suffixes=('', '_frozen'))
+    agree = []
+    for c in df.columns.difference(on):
+        a, b = m[c], m.get(c + '_frozen')
+        if b is None:
+            continue
+        if pd.api.types.is_float_dtype(a) and pd.api.types.is_float_dtype(b):
+            agree.append(f'{c} max |diff| {np.nanmax(np.abs(a - b)):.2g}')
+        else:
+            missing = (a.isna() & b.isna()).to_numpy(bool)  # equal too
+            same = np.mean(missing | (a.astype(object).astype(str) == b.astype(
+                object).astype(str)).to_numpy(bool))
+            agree.append(f'{c} equal {same:.3f}')
+    print(f'against {frozen}: {len(m)} of {len(df)} rows matched')
+    for k in range(0, len(agree), 3):
+        print('    ' + '; '.join(agree[k:k + 3]))
+    return path
+
+ChatResult = collections.namedtuple('ChatResult', [  # one chat completion
+    'text', 'finish_reason', 'usage', 'logprobs', 'model', 'provider',
+    'system_fingerprint', 'reasoning', 'request_hash', 'from_cache',
+    't_send', 't_first', 't_first_content', 't_total', 'itl', 'n_retries',
+    'n_429', 'created'])
+
+class ReplayMiss(KeyError):
+    """A request that is not in the cache of a client in replay mode: a
+    build that replays never reaches the network.
+
+    Defined in :numref:`sec_lm_api`"""
+    def __str__(self):
+        return str(self.args[0]) if self.args else ''
+
+class CostCapExceeded(RuntimeError):
+    """A live call whose worst-case cost would cross the client's cost cap;
+    raised before any HTTP request is made.
+
+    Defined in :numref:`sec_lm_api`"""
+
+def _chat_merge(base, update):
+    """Merge request parameters: keys of update win, nested dicts merge, and
+    keys whose value is None are dropped at every level (so None unsets a
+    default).
+
+    Defined in :numref:`sec_lm_api`"""
+    out = {}
+    for k in list(base) + [k for k in update if k not in base]:
+        v = d2l._chat_plain(update[k] if k in update else base[k])
+        if isinstance(v, dict):
+            inner = base.get(k) if k in update else None
+            v = d2l._chat_merge(inner if isinstance(inner, dict) else {}, v)
+        if v is not None:
+            out[k] = v
+    return out
+
+def _chat_plain(v):
+    """v with NumPy (or torch) scalars, also inside lists and tuples, turned
+    into Python numbers, so that they hash and serialize like them.
+
+    Defined in :numref:`sec_lm_api`"""
+    if isinstance(v, (list, tuple)):
+        return [d2l._chat_plain(a) for a in v]
+    if getattr(v, 'ndim', None) == 0 and hasattr(v, 'item'):
+        return v.item()
+    return v
+
+def _chat_usage(u):
+    """The usage block of a response as prompt, completion, cached and
+    reasoning tokens and the provider's cost; missing values are None,
+    never 0.
+
+    Defined in :numref:`sec_lm_api`"""
+    u = u or {}
+    prompt = u.get('prompt_tokens_details') or {}
+    completion = u.get('completion_tokens_details') or {}
+    return {'prompt_tokens': u.get('prompt_tokens'),
+            'completion_tokens': u.get('completion_tokens'),
+            'cached_tokens': prompt.get('cached_tokens'),
+            'reasoning_tokens': completion.get(
+                'reasoning_tokens', u.get('reasoning_tokens')),
+            'cost': u.get('cost')}
+
+def _chat_logprobs(lp):
+    """Generated-token log-probabilities as (token, logprob, top) triples,
+    top a list of (token, logprob); None when the response has none.
+
+    Defined in :numref:`sec_lm_api`"""
+    if not lp or not lp.get('content'):
+        return None
+    return [(t['token'], t['logprob'],
+             [(a['token'], a['logprob']) for a in t.get('top_logprobs') or []])
+            for t in lp['content']]
+
+def _chat_parse(r):
+    """The fields of a (non-streamed) chat-completions response dict that
+    d2l.ChatResult keeps; unknown top-level fields (such as prompt
+    log-probabilities) and the texts of further choices go to 'extra'.
+
+    Defined in :numref:`sec_lm_api`"""
+    choices = r.get('choices') or [{}]
+    choice, known = choices[0], {'id', 'object', 'created', 'model', 'usage',
+                                 'choices', 'provider', 'system_fingerprint'}
+    message = choice.get('message') or {}
+    extra = {k: v for k, v in r.items() if k not in known and v is not None}
+    if len(choices) > 1:
+        extra['choices'] = [{'text': (c.get('message') or {}).get('content'),
+                             'finish_reason': c.get('finish_reason')}
+                            for c in choices]
+    return {'text': message.get('content') or '',
+            'reasoning': (message.get('reasoning')
+                          or message.get('reasoning_content')),
+            'finish_reason': choice.get('finish_reason'),
+            'logprobs': d2l._chat_logprobs(choice.get('logprobs')),
+            'usage': d2l._chat_usage(r.get('usage')), 'model': r.get('model'),
+            'provider': r.get('provider'),
+            'system_fingerprint': r.get('system_fingerprint'), 'extra': extra,
+            't_first': None, 't_first_content': None, 'itl': None,
+            'n_chunks': None}
+
+def _retry_after(value):
+    """Seconds in a Retry-After header (delta seconds or an HTTP date), or
+    None when the header is absent or unreadable.
+
+    Defined in :numref:`sec_lm_api`"""
+    if value is None:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        import datetime  # not in the d2l library preamble
+        import email.utils
+        try:
+            t = email.utils.parsedate_to_datetime(value)
+            now = datetime.datetime.now(datetime.timezone.utc)
+            return max(0.0, (t - now).total_seconds())
+        except (TypeError, ValueError):
+            return None
+
+def check_closed_loop(results, c):
+    """Raise ValueError unless results can be one closed loop of c recorded
+    in one run: no d2l.ReplayMiss or d2l.CostCapExceeded among them, not a
+    mix of cached and live responses, never more than c in flight, and
+    t_send minus the wall-clock `created` the same within 2 s (a monotonic
+    clock of another boot or a suspended machine shifts it).
+
+    Defined in :numref:`sec_lm_api`"""
+    import calendar  # not in the d2l library preamble
+    bad = [r for r in results
+           if isinstance(r, (d2l.ReplayMiss, d2l.CostCapExceeded))]
+    if bad:
+        raise ValueError(f'{len(bad)} requests got no response: {bad[0]!r}')
+    ok = [r for r in results if not isinstance(r, BaseException)]
+    if len({r.from_cache for r in ok} - {None}) > 1:
+        raise ValueError('the results mix cached and live responses; record '
+                         'the level in one run, into a fresh cache')
+    s = np.array([r.t_send for r in ok], dtype=float)
+    f = s + np.array([r.t_total for r in ok], dtype=float)
+    step = np.concatenate([np.ones(len(ok)), -np.ones(len(ok))])
+    order = np.lexsort((step, np.concatenate([s, f])))  # ends before starts
+    if len(ok) and np.cumsum(step[order]).max() > c:
+        raise ValueError(f'more than c = {c} requests were in flight at once: '
+                         f'not one closed loop')
+    lag = [t - calendar.timegm(time.strptime(r.created, '%Y-%m-%dT%H:%M:%SZ'))
+           for t, r in zip(s, ok) if r.created is not None]
+    if lag and max(lag) - min(lag) > 2:
+        raise ValueError('the send times come from more than one run '
+                         '(monotonic and wall clocks disagree)')
+
+class ChatAPI:
+    """A measuring and replaying client for OpenAI-compatible chat
+    completions. Every request is keyed by d2l.request_hash. Mode 'replay'
+    answers from the JSONL cache and raises d2l.ReplayMiss on a miss,
+    'record' answers from the cache and goes live on a miss, 'live' always
+    goes live and appends; a replay returns the first recorded entry. Every
+    live HTTP attempt, failed or not, is appended to <cache stem>.calls.jsonl.
+    The SDK client (openai.AsyncOpenAI, max_retries=0) is created at the
+    first live call, so constructing and replaying never imports openai or
+    reads a key. api_key is a string, a function returning one (called at
+    the first live call) or None (a placeholder for local servers); it never
+    enters the hash, cache, calls log or manifest. With price set, a live
+    call needs max_tokens (or max_completion_tokens); with cost_cap_usd it
+    reserves its worst-case cost before sending and settles to the real
+    cost after. http_client may also be an httpx transport (such as
+    d2l.FakeChatServer().transport()). backoff_base, backoff_cap and rng
+    (None: the random module) set the retry schedule.
+
+    Defined in :numref:`sec_lm_api`"""
+    RETRY_STATUS = (408, 429)  # and every 5xx
+
+    def __init__(self, base_url, model, api_key=None, *, cache=None,
+                 mode='replay', price=None, cost_cap_usd=None, timeout=120.0,
+                 max_retries=6, default_params=None, http_client=None):
+        import threading  # not in the d2l library preamble
+        if mode not in ('replay', 'record', 'live'):
+            raise ValueError(f"mode must be 'replay', 'record' or 'live', "
+                             f'not {mode!r}')
+        if cost_cap_usd is not None and price is None:
+            raise ValueError('a cost cap needs a price')
+        self.base_url, self.model, self.api_key = base_url, model, api_key
+        self.mode, self.price, self.cost_cap_usd = mode, price, cost_cap_usd
+        self.timeout, self.max_retries = timeout, max_retries
+        self.default_params = d2l._chat_merge(default_params or {}, {})
+        self.http_client, self.cache_path = http_client, cache
+        self.calls_path = (None if cache is None else
+                           os.path.splitext(cache)[0] + '.calls.jsonl')
+        self.backoff_base, self.backoff_cap, self.rng = 1.0, 60.0, None
+        self._lock, self._cache = threading.Lock(), {}
+        self._sdk = self._loop = self._sdk_version = None
+        self._sdks = {}  # event loop -> SDK client
+        self._spent = self._reserved = 0.0
+        self._stats, self._costs = collections.Counter(), collections.Counter()
+        self._served, self._providers = (collections.Counter(),
+                                         collections.Counter())
+        self._trimmed = set()  # files whose torn last line was dealt with
+        if cache is not None and os.path.exists(cache):
+            import warnings  # not in the d2l library preamble
+            with open(cache, 'rb') as f:
+                lines = f.read().split(b'\n')
+            for i, line in enumerate(lines):
+                try:
+                    entry = json.loads(line) if line.strip() else None
+                except ValueError:
+                    if i < len(lines) - 1:  # a whole line: a damaged cache
+                        raise ValueError(f'{cache}: line {i + 1} is not JSON')
+                    warnings.warn(f'{cache}: skipping its torn last line (a '
+                                  f'run killed while writing it)')
+                    continue
+                if entry is not None:
+                    self._cache.setdefault(entry['hash'], []).append(entry)
+
+    @property
+    def spent_usd(self):
+        """USD settled by this client's live calls in this session."""
+        return self._spent
+
+    def entries(self, request_hash):
+        """The cache entries (dicts) recorded for one request hash."""
+        return self._cache.get(request_hash, [])
+
+    def chat(self, messages, *, replica=0, stream=False, **params):
+        """Synchronous d2l.ChatAPI.achat, run on the client's private event
+        loop in a worker thread (so it also works inside Jupyter)."""
+        return self._run(self.achat(messages, replica=replica, stream=stream,
+                                    **params))
+
+    def models(self):
+        """The model ids the endpoint lists (GET /models; never replayed)."""
+        if self.mode == 'replay':
+            raise d2l.ReplayMiss(f'{self.model}: models() needs a live '
+                                 f'endpoint, the client is in replay mode')
+        async def ids():
+            return [m.id async for m in self._client().models.list()]
+        return self._run(ids())
+
+    def manifest(self):
+        """This session's counts (calls, cache hits, live calls, HTTP
+        attempts, retries, 429s, failed attempts), the spent and reconciled
+        cost (sum of api_cost against sum of usage.cost over the results
+        returned), and the served model ids and providers of the results."""
+        from urllib.parse import urlsplit  # not in the d2l library preamble
+        keys = ('calls', 'cache_hits', 'live_calls', 'attempts', 'retries',
+                'n_429', 'failed_attempts')
+        return {'host': urlsplit(self.base_url).hostname,
+                'model': self.model, 'mode': self.mode,
+                'cache': (None if self.cache_path is None else
+                          os.path.basename(self.cache_path)),
+                'cache_entries': sum(map(len, self._cache.values())),
+                **{k: self._stats[k] for k in keys},
+                'spent_usd': self._spent, 'cost_cap_usd': self.cost_cap_usd,
+                'price': None if self.price is None else self.price._asdict(),
+                **{k: self._costs[k] for k in (
+                    'n_api_cost', 'sum_api_cost', 'n_usage_cost',
+                    'sum_usage_cost')},
+                'served_models': dict(self._served),
+                'providers': dict(self._providers), 'sdk': self._sdk_version}
+
+    def _run(self, coro):
+        import asyncio  # not in the d2l library preamble
+        import threading
+        with self._lock:
+            if self._loop is None:
+                self._loop = asyncio.new_event_loop()
+                threading.Thread(target=self._loop.run_forever,
+                                 daemon=True).start()
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+
+    def _client(self):
+        """The SDK client of the running event loop, created on first use:
+        one per open loop (the private loop of chat() and a notebook's), the
+        clients of closed loops dropped."""
+        import asyncio  # not in the d2l library preamble
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            for old in [l for l in self._sdks if l.is_closed()]:
+                del self._sdks[old]
+            if loop in self._sdks:
+                return self._sdks[loop]
+            import openai  # not in the d2l library preamble
+            http = self.http_client
+            if http is not None and hasattr(http, 'handle_async_request'):
+                import httpx2  # the httpx flavour of openai >= 3
+                http = httpx2.AsyncClient(transport=http)
+            key = self.api_key() if callable(self.api_key) else self.api_key
+            self._sdk = self._sdks[loop] = openai.AsyncOpenAI(
+                base_url=self.base_url, api_key=key or 'none', max_retries=0,
+                timeout=self.timeout, http_client=http)
+            self._sdk_version = openai.__version__
+            return self._sdk
+
+    def _lookup(self, h, messages):
+        """The first cached result of h unless the mode is 'live'; a miss
+        raises d2l.ReplayMiss in replay mode and returns None otherwise."""
+        if self.mode != 'live' and self._cache.get(h):
+            self._stats['cache_hits'] += 1
+            return self._result(self._cache[h][0], from_cache=True)
+        if self.mode == 'replay':
+            last = next((m.get('content') for m in reversed(messages)
+                         if m.get('role') == 'user'), '')
+            raise d2l.ReplayMiss(f'{self.model}: request {h[:12]} is not in '
+                                 f'the cache (last user message '
+                                 f'{str(last)[:80]!r})')
+        return None
+
+    def _reserve(self, messages, params):
+        """Reserve the worst case: one prompt token per UTF-8 byte of the
+        messages' JSON (a byte-level BPE token covers at least one byte, and
+        the JSON's quoting outweighs a chat template's few special tokens per
+        message) and max_tokens completion tokens for each of the n
+        choices."""
+        if self.price is None:
+            self._stats['live_calls'] += 1
+            return 0.0
+        out = params.get('max_tokens', params.get('max_completion_tokens'))
+        if out is None:
+            raise ValueError('a priced live call needs max_tokens')
+        n = len(json.dumps(messages, ensure_ascii=False).encode('utf-8'))
+        worst = d2l.api_cost({'prompt_tokens': n, 'completion_tokens': out * (
+            params.get('n') or 1)}, self.price)
+        with self._lock:
+            if (self.cost_cap_usd is not None and self._spent + self._reserved
+                    + worst > self.cost_cap_usd):
+                raise d2l.CostCapExceeded(
+                    f'{self.model}: spent {self._spent:.6f} + reserved '
+                    f'{self._reserved:.6f} + this call {worst:.6f} USD would '
+                    f'cross the cap of {self.cost_cap_usd} USD')
+            self._reserved += worst
+        self._stats['live_calls'] += 1
+        return worst
+
+    def _settle(self, reserved, cost):
+        with self._lock:
+            self._reserved -= reserved
+            self._spent += cost
+
+    def _cost(self, usage, reserved=None):
+        """Real cost of a response: the larger of usage.cost and api_cost
+        from the price; the reservation when neither is known."""
+        costs = [usage.get('cost')]
+        if self.price is not None:
+            try:
+                costs.append(d2l.api_cost(usage, self.price))
+            except ValueError:
+                pass
+        costs = [c for c in costs if c is not None]
+        return max(costs) if costs else (reserved or 0.0)
+
+    def _retry_info(self, e):
+        """(retry?, HTTP status, Retry-After seconds) of a failed attempt:
+        connection errors, timeouts, RETRY_STATUS and every 5xx are retried,
+        and so is an error event inside a stream (the SDK raises a bare
+        APIError; its numeric code, if any, is treated as the status)."""
+        def retry(status):
+            return status in self.RETRY_STATUS or 500 <= status < 600
+        status = getattr(e, 'status_code', None)
+        if status is not None:
+            headers = getattr(getattr(e, 'response', None), 'headers', {})
+            return (retry(status), status,
+                    d2l._retry_after(headers.get('retry-after')))
+        openai = sys.modules.get('openai')
+        if openai is not None and isinstance(e, openai.APIConnectionError):
+            return True, None, None
+        if openai is not None and type(e) is openai.APIError:  # mid-stream
+            code = str(getattr(e, 'code', None) or '')
+            if code.isdigit():
+                return retry(int(code)), int(code), None
+            return True, None, None
+        transport = [getattr(sys.modules.get(m), 'TransportError', None)
+                     for m in ('httpx2', 'httpx')]
+        return any(t is not None and isinstance(e, t)
+                   for t in transport), None, None
+
+    async def _send(self, messages, params, stream, h, replica, attempt):
+        """One HTTP attempt, logged to the calls log whatever its outcome;
+        returns the parsed response with its chunk times."""
+        kwargs = {k: v for k, v in params.items()
+                  if k not in ('stream', 'stream_options')}
+        log = {'created': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+               'hash': h, 'model': self.model, 'replica': replica,
+               'attempt': attempt, 'stream': stream}
+        self._stats['attempts'] += 1
+        self._stats['retries'] += attempt > 0
+        t0 = time.monotonic()
+        try:
+            create = self._client().chat.completions.create
+            if stream:
+                options = d2l._chat_merge({'include_usage': True},
+                                          params.get('stream_options') or {})
+                out = await self._read_stream(await create(
+                    model=self.model, messages=messages, stream=True,
+                    stream_options=options, **kwargs))
+            else:
+                response = await create(model=self.model, messages=messages,
+                                        **kwargs)
+                out = d2l._chat_parse(response.model_dump())
+                out['t_end'] = time.monotonic()
+        except Exception as e:
+            _, status, retry_after = self._retry_info(e)
+            self._stats['failed_attempts'] += 1
+            self._stats['n_429'] += status == 429
+            self._append(self.calls_path, {
+                **log, 'status': status, 'retry_after': retry_after,
+                'error': f'{type(e).__name__}: {e}'[:200],
+                'latency': time.monotonic() - t0})
+            raise
+        self._append(self.calls_path, {
+            **log, 'status': 200, 'latency': out['t_end'] - t0,
+            'finish_reason': out['finish_reason'], 'usage': out['usage'],
+            'cost': self._cost(out['usage']), 'served_model': out['model'],
+            'provider': out['provider']})
+        return out
+
+    async def _read_stream(self, chunks):
+        """Concatenate a streamed response; t_first is the first chunk with
+        content or with reasoning that is not only whitespace (a server with
+        thinking off may send the empty think block before it schedules the
+        request), t_first_content the first with content, and itl the gaps
+        between the chunks from t_first on."""
+        out = dict.fromkeys(('finish_reason', 'usage', 'model', 'provider',
+                             'system_fingerprint', 't_first',
+                             't_first_content'))
+        text, reasoning, logprobs, times = [], [], [], []
+        now = time.monotonic()
+        async for chunk in chunks:
+            c, now = chunk.model_dump(), time.monotonic()
+            for k in ('model', 'provider', 'system_fingerprint', 'usage'):
+                out[k] = c.get(k) or out[k]
+            for choice in c.get('choices') or []:
+                if choice.get('index', 0) != 0:
+                    continue
+                delta = choice.get('delta') or {}
+                r = delta.get('reasoning') or delta.get('reasoning_content')
+                if (delta.get('content') or (r or '').strip() or
+                        (r and out['t_first'] is not None)):
+                    times.append(now)
+                    if out['t_first'] is None:
+                        out['t_first'] = now
+                if delta.get('content'):
+                    text.append(delta['content'])
+                    if out['t_first_content'] is None:
+                        out['t_first_content'] = now
+                if r:
+                    reasoning.append(r)
+                logprobs += d2l._chat_logprobs(choice.get('logprobs')) or []
+                out['finish_reason'] = (choice.get('finish_reason')
+                                        or out['finish_reason'])
+        out.update(text=''.join(text), reasoning=''.join(reasoning) or None,
+                   logprobs=logprobs or None, extra={}, t_end=now,
+                   usage=d2l._chat_usage(out['usage']), n_chunks=len(times),
+                   itl=[b - a for a, b in zip(times, times[1:])])
+        return out
+
+    def _record(self, h, messages, params, replica, out, t_send, created,
+                n_retries, n_429, reserved):
+        """Settle the cost of a live response, append it to the cache and
+        return it as a d2l.ChatResult."""
+        from urllib.parse import urlsplit  # not in the d2l library preamble
+        self._settle(reserved, self._cost(out['usage'], reserved))
+        fields = ('text', 'finish_reason', 'usage', 'logprobs', 'model',
+                  'provider', 'system_fingerprint', 'reasoning', 't_first',
+                  't_first_content', 'itl')
+        result = {**{k: out[k] for k in fields}, 'request_hash': h,
+                  't_send': t_send, 't_total': out['t_end'] - t_send,
+                  'n_retries': n_retries, 'n_429': n_429, 'created': created}
+        transport = ('stream', 'stream_options', 'timeout', 'extra_headers')
+        request = {'host': urlsplit(self.base_url).hostname,
+                   'model': self.model, 'messages': messages,
+                   'replica': replica, 'params': {
+                       k: v for k, v in params.items() if k not in transport}}
+        entry = json.loads(json.dumps(  # what a reload of the file gives
+            {'hash': h, 'request': request, 'result': result,
+             'extra': out['extra'], 'n_chunks': out['n_chunks'],
+             'sdk': self._sdk_version}, ensure_ascii=False))
+        self._cache.setdefault(h, []).append(entry)
+        self._append(self.cache_path, entry)
+        return self._result(entry, from_cache=False)
+
+    def _result(self, entry, from_cache):
+        r = dict(entry['result'], from_cache=from_cache)
+        if r['logprobs'] is not None:
+            r['logprobs'] = [(t, lp, [tuple(a) for a in top])
+                             for t, lp, top in r['logprobs']]
+        result = d2l.ChatResult(**r)
+        self._served[result.model] += 1
+        self._providers[result.provider] += 1
+        if result.usage.get('cost') is not None:
+            self._costs['n_usage_cost'] += 1
+            self._costs['sum_usage_cost'] += result.usage['cost']
+        if self.price is not None:
+            try:
+                self._costs['sum_api_cost'] += d2l.api_cost(result.usage,
+                                                            self.price)
+                self._costs['n_api_cost'] += 1
+            except ValueError:
+                pass
+        return result
+
+    def _append(self, path, obj):
+        """Append one JSON line (the key scrubbed, should it ever appear)."""
+        if path is None:
+            return
+        line = json.dumps(obj, ensure_ascii=False, sort_keys=True)
+        key = getattr(self._sdk, 'api_key', None)
+        if isinstance(key, str) and len(key) >= 8:
+            line = line.replace(key, '[api key]')
+        with self._lock:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            if path not in self._trimmed:
+                d2l._jsonl_trim_torn(path)
+                self._trimmed.add(path)
+            with open(path, 'a', encoding='utf-8') as f:
+                f.write(line + '\n')
+
+    async def achat(self, messages, *, replica=0, stream=False, **params):
+        """One chat completion as a d2l.ChatResult. The cache answers first when
+        the mode allows; a live call reserves its worst-case cost, retries
+        connection errors, timeouts, 408, 429 and 5xx responses and error
+        events inside a stream with full-jitter backoff (Retry-After as a
+        floor), and raises at once on any other status.
+
+        Defined in :numref:`sec_lm_api`"""
+        import asyncio  # not in the d2l library preamble
+        params = d2l._chat_merge(self.default_params, params)
+        h = d2l.request_hash(self.base_url, self.model, messages, params, replica)
+        self._stats['calls'] += 1
+        hit = self._lookup(h, messages)  # raises ReplayMiss in replay mode
+        if hit is not None:
+            return hit
+        reserved = self._reserve(messages, params)  # raises CostCapExceeded
+        t_send, n_retries, n_429 = time.monotonic(), 0, 0
+        created = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        try:
+            for attempt in range(self.max_retries + 1):
+                try:
+                    out = await self._send(messages, params, stream, h, replica,
+                                           attempt)
+                    break
+                except Exception as e:
+                    retry, status, retry_after = self._retry_info(e)
+                    n_429 += status == 429
+                    if not retry or attempt == self.max_retries:
+                        e.n_retries, e.n_429 = n_retries, n_429
+                        raise
+                    n_retries += 1
+                    await asyncio.sleep(d2l.backoff_delay(
+                        attempt, self.backoff_base, self.backoff_cap, self.rng,
+                        retry_after))
+        except BaseException:
+            self._settle(reserved, 0.0)
+            raise
+        return self._record(h, messages, params, replica, out, t_send, created,
+                            n_retries, n_429, reserved)
+
+def _jsonl_trim_torn(path):
+    """End a JSONL file with a newline before appending to it: a torn last
+    line (no newline, as a run killed mid-write leaves it) is cut off unless
+    it is complete JSON, which only gets its newline.
+
+    Defined in :numref:`sec_lm_api`"""
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return
+    with open(path, 'rb+') as f:
+        f.seek(-1, os.SEEK_END)
+        if f.read(1) == b'\n':
+            return
+        f.seek(0)
+        data = f.read()
+        cut = data.rfind(b'\n') + 1
+        try:
+            json.loads(data[cut:])
+            f.write(b'\n')
+        except ValueError:
+            f.truncate(cut)
+
+def _api_window(override, day, hhmm):
+    """Whether a pricing.overrides row covers a UTC weekday and HHMM time;
+    utc_end 0 means midnight, and a window may wrap past it.
+
+    Defined in :numref:`sec_lm_api`"""
+    if override.get('utc_days') and day not in override['utc_days']:
+        return False
+    start, end = override.get('utc_start'), override.get('utc_end')
+    if start is None and end is None:
+        return True
+    start, end = start or 0, end or 2400
+    return (start <= hhmm < end) if start < end else (
+        hhmm >= start or hhmm < end)
+
+def listing_endpoint(listing, model_id, provider):
+    """The endpoint row of one provider of model_id in an OpenRouter listing
+    snapshot: listing['endpoints'][model_id] holds the endpoint rows of
+    /api/v1/models/<id>/endpoints (or that whole response). provider matches
+    a row's tag exactly, else its provider_name or the slug before the tag's
+    '/'; ValueError unless exactly one row matches.
+
+    Defined in :numref:`sec_lm_api`"""
+    rows = listing['endpoints'][model_id]
+    if isinstance(rows, dict):
+        rows = rows['data']['endpoints']
+    p = provider.lower()
+    match = [r for r in rows if str(r.get('tag', '')).lower() == p] or [
+        r for r in rows if p in (str(r.get('provider_name', '')).lower(),
+                                 str(r.get('tag', '')).lower().split('/')[0])]
+    if len(match) != 1:
+        raise ValueError(f'{len(match)} endpoints of {model_id} match '
+                         f'{provider!r}: {[r.get("tag") for r in match]}')
+    return match[0]
+
+def price_from_listing(listing, model_id, provider, *, when=None):
+    """The d2l.PricePoint (USD per million tokens) of one provider's endpoint
+    of model_id in an OpenRouter listing snapshot (the row that
+    d2l.listing_endpoint picks). Listed prices are USD per token with the
+    row's `discount` already applied (Novita's 0.165 per million at
+    discount 0.45 is 0.3 x 0.55), so it is not applied again.
+    Rows with time-window pricing.overrides need when, an aware datetime
+    whose UTC weekday and time select the window.
+
+    Defined in :numref:`sec_lm_api`"""
+    import datetime  # not in the d2l library preamble
+    import decimal
+    pricing = d2l.listing_endpoint(listing, model_id, provider)['pricing']
+    if pricing.get('overrides'):
+        if when is None or when.tzinfo is None:
+            raise ValueError(f'{provider} prices {model_id} by time window: '
+                             f'pass when, an aware datetime')
+        t = when.astimezone(datetime.timezone.utc)
+        day = ('monday', 'tuesday', 'wednesday', 'thursday', 'friday',
+               'saturday', 'sunday')[t.weekday()]
+        window = next((o for o in pricing['overrides'] if d2l._api_window(
+            o, day, 100 * t.hour + t.minute)), {})
+        pricing = {**pricing, **window}
+    def per_million(key):
+        if pricing.get(key) is None:
+            return None
+        value = decimal.Decimal(str(pricing[key])) * 1_000_000
+        if value < 0:
+            raise ValueError(f'{provider}: no fixed {key} price ({value})')
+        return float(value)
+    return d2l.PricePoint(per_million('prompt'), per_million('completion'),
+                          per_million('input_cache_read'))
+
+def _openrouter_key():
+    """The OpenRouter key, read from the environment only (never a file).
+
+    Defined in :numref:`sec_lm_api`"""
+    key = os.environ.get('OPENROUTER_API_KEY')
+    if not key:
+        raise RuntimeError('a live OpenRouter call needs OPENROUTER_API_KEY '
+                           'in the environment')
+    return key
+
+def openrouter_api(model, provider, *, listing, cache=None, mode='replay',
+                   cost_cap_usd=None, reasoning=None, when=None, **kwargs):
+    """A d2l.ChatAPI for one model on OpenRouter with one provider pinned
+    (no fallbacks, require_parameters on), priced from the listing snapshot
+    (None: unpriced). reasoning (e.g. {'enabled': False}) is sent only when
+    given. The key is read from OPENROUTER_API_KEY at the first live call;
+    further keyword arguments go to d2l.ChatAPI.
+
+    Defined in :numref:`sec_lm_api`"""
+    body = {'provider': {'only': [provider], 'allow_fallbacks': False,
+                         'require_parameters': True}}
+    if reasoning is not None:
+        body['reasoning'] = reasoning
+    defaults = d2l._chat_merge({'extra_body': body},
+                               kwargs.pop('default_params', None) or {})
+    kwargs.setdefault('api_key', d2l._openrouter_key)
+    price = (None if listing is None else
+             d2l.price_from_listing(listing, model, provider, when=when))
+    return d2l.ChatAPI('https://openrouter.ai/api/v1', model, cache=cache,
+                       mode=mode, price=price, cost_cap_usd=cost_cap_usd,
+                       default_params=defaults, **kwargs)
+
+class LocalChatServer:
+    """An OpenAI-compatible server (such as `transformers serve`) run as a
+    subprocess in its own process group. '{port}' in cmd becomes port (a
+    free one when None); start() polls http://host:port/v1/models until it
+    answers 200 and returns the base URL, or kills the server and raises
+    with the last 20 log lines; stop() terminates the whole group, deletes
+    the temporary log and returns the exit code. Also a context manager.
+
+    Defined in :numref:`sec_lm_api`"""
+    def __init__(self, cmd, *, port=None, host='127.0.0.1',
+                 ready_timeout=900.0):
+        self.cmd, self.port, self.host = list(cmd), port, host
+        self.ready_timeout = ready_timeout
+        self.proc = self.base_url = self.log_path = self.load_time = None
+
+    def start(self):
+        import atexit  # not in the d2l library preamble
+        import socket
+        import subprocess
+        import tempfile
+        import urllib.request
+        if self.proc is not None:
+            return self.base_url
+        if self.port is None:
+            with socket.socket() as s:
+                s.bind((self.host, 0))
+                self.port = s.getsockname()[1]
+        cmd = [str(a).replace('{port}', str(self.port)) for a in self.cmd]
+        fd, self.log_path = tempfile.mkstemp(prefix='d2l-server-',
+                                             suffix='.log')
+        t0 = time.monotonic()
+        with os.fdopen(fd, 'wb') as log:
+            self.proc = subprocess.Popen(
+                cmd, stdout=log, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL, start_new_session=True)
+        atexit.register(self.stop)
+        url = f'http://{self.host}:{self.port}/v1'
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        while True:
+            if self.proc.poll() is not None:  # its children may live on
+                code, tail = self.proc.returncode, self._tail()
+                self.stop()
+                raise RuntimeError(f'server exited with code {code} before '
+                                   f'it was ready:\n{tail}')
+            left = self.ready_timeout - (time.monotonic() - t0)
+            if left <= 0:
+                tail = self._tail()
+                self.stop()
+                raise TimeoutError(f'server not ready after '
+                                   f'{self.ready_timeout} s:\n{tail}')
+            try:
+                with opener.open(url + '/models',
+                                 timeout=max(0.5, min(5.0, left))) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                pass
+            time.sleep(min(0.5, max(left, 0.0)))
+        self.load_time, self.base_url = time.monotonic() - t0, url
+        return url
+
+    def stop(self):
+        import atexit  # not in the d2l library preamble
+        import signal
+        import subprocess
+        if self.proc is None:
+            return None
+        proc, self.proc = self.proc, None
+        atexit.unregister(self.stop)
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            code = proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            code = proc.wait()
+        try:  # children that outlived the leader
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if self.log_path is not None and os.path.exists(self.log_path):
+            os.remove(self.log_path)
+        return code
+
+    def _tail(self, n=20):
+        with open(self.log_path, encoding='utf-8', errors='replace') as f:
+            return ''.join(f.readlines()[-n:])
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop()
+
+class FakeChatServer:
+    """An in-process chat-completions server for tests. Each request takes
+    service_time seconds in one of capacity slots, so a closed loop has
+    W_0 = service_time and X_max = capacity / service_time; a busy slot
+    starts its next request when the previous one ended (not when the event
+    loop gets round to it), so the capacity is exact. script lists
+    statuses returned in order before normal behaviour (429s carry
+    Retry-After: 0); fail_rate answers 503 at random; rate_limit answers 429
+    beyond that many requests per second. A request with thinking switched
+    on gets reasoning first ('reasoning', or 'reasoning_content' when it
+    carries chat_template_kwargs, as a local server); max_tokens, stop, n,
+    logprobs and stream_options.include_usage are honoured, and requests
+    with a provider pin get a provider and usage.cost. transport() plugs it
+    into the SDK's http_client; n_requests, statuses, bodies and
+    max_in_flight record what it saw.
+
+    Defined in :numref:`sec_lm_api`"""
+    PRICE = (0.1, 0.4)  # USD per million prompt and completion tokens
+
+    def __init__(self, service_time, capacity, *, fail_rate=0.0,
+                 rate_limit=None, script=None, seed=0):
+        self.service_time, self.capacity = service_time, capacity
+        self.fail_rate, self.rate_limit = fail_rate, rate_limit
+        self.script, self.rng = list(script or []), random.Random(seed)
+        self.n_requests = self.in_flight = self.max_in_flight = 0
+        self.statuses, self.bodies = [], []
+        self._admitted = collections.deque()
+        self._sem = self._sem_loop = self._free = None
+
+    def transport(self):
+        """An httpx.AsyncBaseTransport of the flavour the SDK uses."""
+        try:
+            import httpx2 as httpx  # openai >= 3; not in the d2l preamble
+        except ImportError:
+            import httpx
+        server = self
+        class Transport(httpx.AsyncBaseTransport):
+            async def handle_async_request(self, request):
+                return await server._handle(request, httpx)
+        return Transport()
+
+    async def _acquire(self, arrival):
+        """Wait for a slot; the service starts at arrival or when the slot's
+        previous request ended, whichever is later."""
+        import asyncio  # not in the d2l library preamble
+        import heapq
+        loop = asyncio.get_running_loop()
+        if self._sem_loop is not loop:
+            self._sem, self._sem_loop = asyncio.Semaphore(self.capacity), loop
+            self._free = [0.0] * self.capacity
+        await self._sem.acquire()
+        return max(arrival, heapq.heappop(self._free))
+
+    def _release(self, end):
+        import heapq  # not in the d2l library preamble
+        heapq.heappush(self._free, end)
+        self._sem.release()
+
+    def _status(self):
+        if self.script:
+            return self.script.pop(0), True
+        if self.rate_limit is not None:
+            now = time.monotonic()
+            while self._admitted and now - self._admitted[0] >= 1.0:
+                self._admitted.popleft()
+            if len(self._admitted) >= self.rate_limit:
+                return 429, False
+            self._admitted.append(now)
+        if self.fail_rate and self.rng.random() < self.fail_rate:
+            return 503, False
+        return 200, False
+
+    def _reply(self, body):
+        """Tokens ((kind, text) pairs), finish reason and usage of a reply."""
+        messages = body.get('messages') or [{}]
+        last = str(messages[-1].get('content', ''))
+        words = (f'Fake reply to {len(last)} characters: the answer is '
+                 f'{len(last) % 10}.').split(' ')
+        content, finish = [w if i == 0 else ' ' + w
+                           for i, w in enumerate(words)], 'stop'
+        stops = body.get('stop') or []
+        for i in range(len(content)):
+            text = ''.join(content[:i + 1])
+            cut = min((text.find(s) for s in ([stops] if isinstance(
+                stops, str) else stops) if s in text), default=None)
+            if cut is not None:
+                prefix = text[:cut]
+                content = [prefix] if prefix else []
+                break
+        r = body.get('reasoning')
+        think = (r.get('enabled', True) if isinstance(r, dict) else bool(
+            (body.get('chat_template_kwargs') or {}).get('enable_thinking')))
+        tokens = ([('r', w) for w in ('Let', ' me', ' think.')] if think
+                  else []) + [('c', w) for w in content]
+        limit = body.get('max_tokens', body.get('max_completion_tokens'))
+        if limit is not None and len(tokens) > limit:
+            tokens, finish = tokens[:limit], 'length'
+        n_prompt = sum(len(str(m.get('content', '')).split())
+                       for m in messages)
+        usage = {'prompt_tokens': n_prompt, 'completion_tokens': len(tokens),
+                 'total_tokens': n_prompt + len(tokens),
+                 'prompt_tokens_details': {'cached_tokens': 0},
+                 'completion_tokens_details': {'reasoning_tokens': sum(
+                     k == 'r' for k, _ in tokens)}}
+        if 'provider' in body:
+            usage['cost'] = (n_prompt * self.PRICE[0]
+                             + len(tokens) * self.PRICE[1]) / 1e6
+        return tokens, finish, usage
+
+    def _logprobs(self, body, words):
+        if not body.get('logprobs'):
+            return None
+        k = body.get('top_logprobs') or 0
+        return {'content': [
+            {'token': w, 'logprob': -0.1 * (i + 1), 'top_logprobs': [
+                {'token': w if j == 0 else f'{w}#{j}',
+                 'logprob': -0.1 * (i + 1) - j} for j in range(k)]}
+            for i, w in enumerate(words)]}
+
+    async def _handle(self, request, httpx):
+        import asyncio  # not in the d2l library preamble
+        arrival = time.monotonic()
+        self.n_requests += 1
+        if request.method == 'GET' and request.url.path.endswith('/models'):
+            self.statuses.append(200)
+            return httpx.Response(200, json={'object': 'list', 'data': [
+                {'id': 'fake-model', 'object': 'model', 'created': 0,
+                 'owned_by': 'd2l'}]})
+        body = json.loads((await request.aread()) or b'{}')
+        self.bodies.append(body)
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        status, scripted = self._status()
+        self.statuses.append(status)
+        if status != 200:
+            self.in_flight -= 1
+            scripted_429 = scripted and status == 429
+            headers = {'retry-after': '0'} if scripted_429 else {}
+            return httpx.Response(status, headers=headers, json={'error': {
+                'message': f'fake status {status}', 'code': status}})
+        tokens, finish, usage = self._reply(body)
+        head = {'id': 'fake-1', 'created': int(time.time()),
+                'model': body.get('model'), 'system_fingerprint': 'fp_fake'}
+        if 'provider' in body:
+            head['provider'] = (body['provider'].get('only') or ['Fake'])[0]
+        field = ('reasoning_content' if 'chat_template_kwargs' in body
+                 else 'reasoning')
+        if body.get('stream'):
+            return httpx.Response(
+                200, headers={'content-type': 'text/event-stream'},
+                content=self._stream(arrival, body, head, field, tokens,
+                                     finish, usage))
+        try:
+            end = await self._acquire(arrival) + self.service_time
+            try:
+                await asyncio.sleep(max(0.0, end - time.monotonic()))
+            finally:
+                self._release(end)
+        finally:
+            self.in_flight -= 1
+        reasoning = ''.join(w for k, w in tokens if k == 'r')
+        words = [w for k, w in tokens if k == 'c']
+        message = {'role': 'assistant', 'content': ''.join(words)}
+        if reasoning:
+            message[field] = reasoning
+        choice = {'message': message, 'finish_reason': finish,
+                  'logprobs': self._logprobs(body, words)}
+        return httpx.Response(200, json={
+            **head, 'object': 'chat.completion', 'usage': usage,
+            'choices': [{'index': i, **choice}
+                        for i in range(body.get('n') or 1)]})
+
+    async def _stream(self, arrival, body, head, field, tokens, finish,
+                      usage):
+        """Server-sent events: a role chunk, the first token half the
+        service time after the start, the rest spread over the other half."""
+        import asyncio  # not in the d2l library preamble
+        def event(choices, **more):
+            return 'data: {}\n\n'.format(json.dumps({
+                **head, 'object': 'chat.completion.chunk', 'choices': choices,
+                **more})).encode()
+        async def until(t):
+            await asyncio.sleep(max(0.0, t - time.monotonic()))
+        try:
+            start = await self._acquire(arrival)
+            gap = self.service_time / 2 / max(1, len(tokens))
+            try:
+                yield event([{'index': 0, 'finish_reason': None,
+                              'delta': {'role': 'assistant', 'content': ''}}])
+                await until(start + self.service_time / 2)
+                for i, (kind, w) in enumerate(tokens):
+                    lp = self._logprobs(body, [w]) if kind == 'c' else None
+                    key = 'content' if kind == 'c' else field
+                    yield event([{'index': 0, 'finish_reason': None,
+                                  'logprobs': lp, 'delta': {key: w}}])
+                    await until(start + self.service_time / 2 + (i + 1) * gap)
+                yield event([{'index': 0, 'delta': {},
+                              'finish_reason': finish}])
+                if (body.get('stream_options') or {}).get('include_usage'):
+                    yield event([], usage=usage)
+                yield b'data: [DONE]\n\n'
+            finally:
+                self._release(start + self.service_time)
+        finally:
+            self.in_flight -= 1
+
+def chat_thinks(r):
+    """Whether a chat result reasoned: reasoning tokens in its usage, or
+    reasoning text that is not only whitespace (a streamed empty think block
+    arrives as '\n\n').
+
+    Defined in :numref:`sec_lm_api`"""
+    return bool(r.usage['reasoning_tokens'] or (r.reasoning or '').strip())
+
+def api_unpack(key):
+    """Download a registered zip (sha1 checked) and unpack it once, into a
+    folder named by the sha1 (a re-registered key gets a fresh folder).
+
+    Defined in :numref:`sec_lm_api`"""
+    path = d2l.download_keyed(key)
+    folder = os.path.join(os.path.dirname(path),
+                          'files-' + d2l.DATA_HUB[key][1][:12])
+    if not os.path.isdir(folder):
+        with zipfile.ZipFile(path) as z:
+            z.extractall(folder + '.part')
+        os.replace(folder + '.part', folder)
+    return folder
+
+def api_calls(calls_path):
+    """The live attempts in a client's calls log (d2l.ChatAPI.calls_path)
+    over every session of a recording; a torn last line, from a killed run,
+    is skipped.
+
+    Defined in :numref:`sec_lm_api`"""
+    if calls_path is None or not os.path.exists(calls_path):
+        return []
+    calls = []
+    with open(calls_path, encoding='utf-8') as f:
+        for line in f:
+            try:
+                calls.append(json.loads(line))
+            except ValueError:
+                pass
+    return calls
+
+class APIRecording:
+    """The caches, the listing and the shared cost cap of one recording. In
+    mode 'replay' the folder of an artifact key is its unpacked registered
+    zip; in 'record' and 'live' it is record_dir/<key>, seeded once from the
+    zip when the key is registered (the downloaded file itself is never
+    appended to). Every client made through it is kept in `clients`.
+
+    Defined in :numref:`sec_lm_api`"""
+    def __init__(self, mode, record_dir, cost_cap_usd, providers):
+        self.mode, self.record_dir = mode, record_dir
+        self.cost_cap_usd, self.providers = cost_cap_usd, providers
+        self.listing, self.clients, self.shares = None, [], {}
+
+    def folder(self, key):
+        """The folder of one artifact (see the class docstring)."""
+        if self.mode == 'replay':
+            if key not in d2l.DATA_HUB:
+                raise KeyError(f'{key} is not registered yet: record it '
+                               f'first (D2L_API_MODE=record)')
+            return d2l.api_unpack(key)
+        folder = os.path.join(self.record_dir, key)
+        if not os.path.isdir(folder):
+            try:
+                shutil.copytree(d2l.api_unpack(key), folder)
+            except Exception as e:  # not registered, or the download failed
+                os.makedirs(folder, exist_ok=True)
+                print(f'{key}: recording into an empty cache ({e!r:.60})')
+        return folder
+
+    def cache(self, key, arm):
+        """The JSONL cache file of one arm of an artifact."""
+        return os.path.join(self.folder(key), arm + '.jsonl')
+
+    def snapshot_listing(self, models, weights,
+                         key='lm-api-listing-v1'):
+        """The router listing of this recording, from <folder of key>/
+        listing.json; when that is absent (a recording), it is taken now:
+        the router's rows and endpoint rows of each model (free GETs) and the
+        parameter count of each model's open weights on the Hub at a pinned
+        commit (weights maps a model to (repo, revision))."""
+        import datetime  # not in the d2l library preamble
+        path = os.path.join(self.folder(key), 'listing.json')
+        if not os.path.exists(path):
+            import huggingface_hub  # not in the d2l library preamble
+            url = 'https://openrouter.ai/api/v1/models'
+            def get(u):
+                r = requests.get(u, timeout=60)
+                r.raise_for_status()
+                return r.json()['data']
+            rows = {m['id']: m for m in get(url)}
+            now = datetime.datetime.now(datetime.timezone.utc)
+            snapshot = {'retrieved': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                        'models': {m: rows[m] for m in models},
+                        'endpoints': {m: get(f'{url}/{m}/endpoints')[
+                            'endpoints'] for m in models}, 'hf': {}}
+            for m, (repo, rev) in weights.items():
+                info = huggingface_hub.HfApi().model_info(repo, revision=rev)
+                snapshot['hf'][m] = {'repo': repo, 'revision': rev,
+                                     'params': info.safetensors.total}
+            with open(path, 'w') as f:
+                json.dump(snapshot, f, indent=1)
+        with open(path) as f:
+            self.listing = json.load(f)
+        return self.listing
+
+    def hosted(self, model, cache, *, share, **kwargs):
+        """A d2l.openrouter_api client of model at its pinned provider that
+        may spend the fixed fraction `share` of cost_cap_usd over the whole
+        recording, less what earlier sessions spent on this cache. The
+        shares sum to at most 1, so concurrent clients cannot pass the cap
+        together."""
+        self.shares[cache] = share
+        if sum(self.shares.values()) > 1 + 1e-9:
+            raise ValueError(f'the cost shares sum to more than 1: '
+                             f'{self.shares}')
+        earlier = sum(c.get('cost') or 0.0 for c in d2l.api_calls(
+            os.path.splitext(cache)[0] + '.calls.jsonl'))
+        return self.add(d2l.openrouter_api(
+            model, self.providers[model], listing=self.listing, cache=cache,
+            mode=self.mode,
+            cost_cap_usd=max(0.0, share * self.cost_cap_usd - earlier),
+            **kwargs))
+
+    def add(self, api):
+        """Keep a client for the manifest; returns it."""
+        self.clients.append(api)
+        return api
+
+def api_recorded(api):
+    """Totals of a whole recording from a client's calls log: live calls,
+    retries, 429s, failed attempts, USD, the listing's and the provider's
+    cost of the responses with usage.cost, and the sorted served ids and
+    providers.
+
+    Defined in :numref:`sec_lm_api`"""
+    t, served, providers = collections.Counter(), set(), set()
+    for call in d2l.api_calls(api.calls_path):
+        ok = call.get('status') == 200
+        t['live calls'] += call['attempt'] == 0
+        t['retries'] += call['attempt'] > 0
+        t['429s'] += call.get('status') == 429
+        t['failed'] += not ok
+        if not ok:
+            continue
+        t['USD'] += call.get('cost') or 0.0
+        served.add(str(call.get('served_model')))
+        providers.add(str(call.get('provider')))
+        cost = call['usage'].get('cost')
+        if cost is not None and api.price is not None:
+            t['usage cost'] += cost
+            t['listing cost'] += d2l.api_cost(call['usage'], api.price)
+    return {**t, 'served': sorted(served), 'providers': sorted(providers)}
+
+def write_api_manifests(clients, record_dir):
+    """Append this session to the manifest.json of every cache folder under
+    record_dir that one of the clients uses: per arm the session's
+    d2l.ChatAPI.manifest() and the recording's totals (d2l.api_recorded);
+    arms this session did not use keep their totals.
+
+    Defined in :numref:`sec_lm_api`"""
+    by_folder, seen = collections.defaultdict(dict), set()
+    for api in clients:
+        if api.calls_path in seen:
+            continue
+        seen.add(api.calls_path)
+        folder = os.path.dirname(os.path.abspath(api.cache_path))
+        m = api.manifest()
+        by_folder[folder][m['cache']] = (m, d2l.api_recorded(api))
+    now = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    for folder, arms in by_folder.items():
+        if os.path.abspath(record_dir) not in folder:
+            continue
+        path, old = os.path.join(folder, 'manifest.json'), {}
+        if os.path.exists(path):
+            with open(path) as f:
+                old = json.load(f)
+        sessions = old.get('sessions', []) + [{
+            'created': now, 'clients': {a: m for a, (m, _) in arms.items()}}]
+        totals = {**old.get('recorded', {}),
+                  **{a: r for a, (_, r) in arms.items()}}
+        with open(path, 'w') as f:
+            json.dump({'updated': now, 'recorded': totals,
+                       'sessions': sessions}, f, indent=1,
+                      ensure_ascii=False)
+
+def assert_key_absent(roots, key):
+    """Raise AssertionError if the bytes of key occur in any file under the
+    folders roots; returns the number of files read.
+
+    Defined in :numref:`sec_lm_api`"""
+    files = [os.path.join(d, f) for root in roots
+             for d, _, fs in os.walk(root) for f in fs]
+    hits = []
+    for name in files:
+        with open(name, 'rb') as f:
+            if key.encode() in f.read():
+                hits.append(name)
+    assert not hits, f'the API key occurs in {len(hits)} files'
+    return len(files)
+
+def api_committed(folders):
+    """Totals over every arm in the manifest.json of each folder that has
+    one: live calls, USD, and the SDK versions that made live calls.
+
+    Defined in :numref:`sec_lm_api`"""
+    totals, sdks = collections.Counter(), set()
+    for folder in folders:
+        path = os.path.join(folder, 'manifest.json')
+        if not os.path.exists(path):  # the listing and the fields table
+            continue
+        with open(path) as f:
+            m = json.load(f)
+        for arm in m['recorded'].values():
+            totals.update({k: arm.get(k, 0) for k in ('live calls', 'USD')})
+        for session in m['sessions']:
+            sdks.update(c['sdk'] for c in session['clients'].values()
+                        if c.get('sdk') and c.get('live_calls'))
+    return {**totals, 'sdk': sorted(sdks)}
+
+class BackgroundLoad:
+    """An async context manager that keeps `lanes` requests in flight
+    through api while its block runs: lane j sends request(j), then
+    request(j + lanes), ..., where request(i) returns the keyword arguments
+    of one api.achat call (messages included). The block starts once the
+    lanes had `warmup` seconds to fill; when it ends, each lane stops after
+    its current request. Failed requests are kept in `failures`.
+
+    Defined in :numref:`sec_lm_api`"""
+    def __init__(self, api, request, lanes, warmup=2.0):
+        self.api, self.request, self.lanes = api, request, lanes
+        self.warmup, self.failures = warmup, []
+
+    async def _lane(self, j):
+        while not self._done.is_set():
+            kwargs = dict(self.request(j))
+            try:
+                await self.api.achat(kwargs.pop('messages'), **kwargs)
+            except Exception as e:
+                self.failures.append(e)
+            j += self.lanes
+
+    async def __aenter__(self):
+        import asyncio  # not in the d2l library preamble
+        self._done = asyncio.Event()
+        self._task = asyncio.gather(*(self._lane(j)
+                                      for j in range(self.lanes)))
+        await asyncio.sleep(self.warmup)
+        return self
+
+    async def __aexit__(self, *exc):
+        self._done.set()
+        await self._task
+
+def _probe_tests(story, count, rules, base, on, off, max_tokens,
+                 temperature):
+    """field -> (requests as (messages, replica, params), rule mapping the
+    client and the results to (honoured?, evidence)) of the field probe;
+    base is the request body every test sends, on and off the bodies of the
+    thinking switch. rules['seed'] and rules['stop'] are the caller's
+    detection rules. The seed test samples at temperature 1 only where the
+    endpoint lists temperature (with require_parameters an unlisted field is
+    rejected). Evidence holds flags, counts and lengths, never response
+    text: a closed model's outputs may not be committed.
+
+    Defined in :numref:`sec_lm_api`"""
+    json_q = [{'role': 'user',
+               'content': 'What is 6 times 7? Answer in JSON.'}]
+    schema = {'type': 'json_schema', 'json_schema': {
+        'name': 'answer', 'strict': True, 'schema': {
+            'type': 'object', 'properties': {'answer': {'type': 'integer'}},
+            'required': ['answer'], 'additionalProperties': False}}}
+
+    def is_answer(text):  # exactly {"answer": <integer>}
+        try:
+            out = json.loads(text)
+        except ValueError:
+            return False
+        return (isinstance(out, dict) and set(out) == {'answer'} and
+                type(out['answer']) is int)
+
+    def n_choices(api, a):  # further choices are kept in the cache's extra
+        return max(1, len(api.entries(a.request_hash)[0]['extra'].get(
+            'choices', [])))
+
+    def covered(api, a):  # top-5 log-probabilities for every token
+        n, out = len(a.logprobs or []), a.usage['completion_tokens']
+        full = all(len(t) == 5 for _, _, t in a.logprobs or [])
+        status = ('honoured' if full and n >= out - 1 else  # the end token
+                  'partial' if n else 'ignored')
+        return status, f'{n} of {out} tokens'
+
+    def capped(api, a):  # reasoning tokens are bounded by the cap as well
+        o, r = (a.usage[k] or 0 for k in ('completion_tokens',
+                                          'reasoning_tokens'))
+        if r > o:  # usage contradicts itself: no verdict on the cap
+            return 'inconsistent', f'{o} completion < {r} reasoning tokens'
+        return o <= 16, f'{o} completion, {r} reasoning tokens'
+
+    def echoed(api, a):  # prompt log-probabilities, or the prompt echoed
+        lp = 'prompt_logprobs' in api.entries(a.request_hash)[0]['extra']
+        echo = count[0]['content'] in a.text
+        return lp or echo, f'prompt_logprobs: {lp}, echo: {echo}'
+
+    def p(body=base, **kw):
+        return {'max_tokens': max_tokens, **kw,
+                **({'extra_body': body} if body else {})}
+    t = {'temperature': 1} if temperature else {}  # else the default
+    temp = t.get('temperature', 'default')
+    thinks = d2l.chat_thinks
+    return {
+        'seed': ([(story, 0, p(**t, seed=7)), (story, 1, p(**t, seed=7)),
+                  (story, 0, p(**t, seed=8))],
+                 lambda api, a, b, c: (rules['seed'](a, b, c), (
+                     f'7 = 7: {a.text == b.text}, 8 differs: '
+                     f'{c.text != a.text}, temperature {temp}'))),
+        'n=2': ([(count, 0, p(n=2))], lambda api, a: (
+            n_choices(api, a) == 2, f'{n_choices(api, a)} choices returned')),
+        'logprobs, top 5': ([(count, 0, p(logprobs=True, top_logprobs=5))],
+                            covered),
+        "stop=['5']": ([(count, 0, p(stop=['5']))], lambda api, a: (
+            rules['stop'](a),
+            f"has 4: {'4' in a.text}, has 5: {'5' in a.text}")),
+        'response_format': ([(json_q, 0, p(response_format=schema))],
+                            lambda api, a: (is_answer(a.text), (
+                                f'parses as {{answer: int}}: '
+                                f'{is_answer(a.text)}, '
+                                f'{len(a.text)} characters'))),
+        'thinking switch': ([(count, 0, p(body=on, max_tokens=256)),
+                             (count, 0, p(body=off))], lambda api, a, b: (
+            thinks(a) and not thinks(b),
+            f'on {thinks(a)}, off {thinks(b)}')),
+        'max_completion_tokens=16': (
+            [(story, 0, p(max_tokens=None, max_completion_tokens=16))],
+            capped),
+        'prompt log-probabilities': (  # vLLM's two fields
+            [(count, 0, p(body={**(base or {}), 'prompt_logprobs': 1,
+                                'echo': True}))],
+            echoed),
+        'stream usage': ([(count, 0, p(stream=True))], lambda api, a: (
+            a.usage['completion_tokens'] is not None, 'final chunk'))}
+
+async def probe_endpoint(name, api, base, on, off, max_tokens, model_id, *,
+                         story, count, rules, temperature):
+    """Rows (endpoint, field, status, evidence, UTC date) of the field
+    probe of one endpoint: one test per request field, each sending only
+    the field it probes (d2l._probe_tests), then GET /v1/models and four
+    concurrent requests against one (latency ratio and 429s). A request that
+    fails after the client's retries is 'rejected' (4xx) or 'error'.
+
+    Defined in :numref:`sec_lm_api`"""
+    import asyncio  # not in the d2l library preamble
+    today = time.strftime('%Y-%m-%d', time.gmtime())
+
+    def day(results):  # UTC date of the newest live call behind them
+        return max(r.created for r in results)[:10]
+
+    def failure(e):  # (status, evidence) of a request that failed
+        status = getattr(e, 'status_code', None)
+        kind = 'rejected' if status and 400 <= status < 500 else 'error'
+        return kind, f'{status or type(e).__name__}: {e}'[:80]
+
+    rows = []
+    for field, (requests, rule) in d2l._probe_tests(
+            story, count, rules, base, on, off, max_tokens,
+            temperature).items():
+        try:
+            results = [await api.achat(m, replica=k, **q)
+                       for m, k, q in requests]
+        except (d2l.ReplayMiss, d2l.CostCapExceeded):
+            raise
+        except Exception as e:  # after the client's retries; never cached
+            status, evidence, date = *failure(e), today
+        else:
+            status, evidence = rule(api, *results)  # a bool, or a status
+            if not isinstance(status, str):
+                status = 'honoured' if status else 'ignored'
+            evidence, date = evidence[:80], day(results)
+        rows.append({'endpoint': name, 'field': field, 'status': status,
+                     'evidence': evidence, 'date': date})
+    try:  # a live GET, never cached
+        listed = any(i.startswith(model_id) for i in await asyncio.to_thread(
+            api.models))
+        status, evidence = ('honoured' if listed else 'ignored',
+                            f'lists {model_id}: {listed}')
+    except d2l.ReplayMiss:  # a replayed client cannot list: no verdict
+        raise
+    except Exception as e:
+        status, evidence = failure(e)
+    rows.append({'endpoint': name, 'field': '/v1/models', 'status': status,
+                 'evidence': evidence, 'date': today})
+    params = {'max_tokens': max_tokens,
+              **({'extra_body': base} if base else {})}
+    one = await api.achat(count, replica=10, **params)
+    four = await d2l.chat_batch(api, [
+        {'messages': count, 'replica': k, **params} for k in range(11, 15)],
+        concurrency=4)
+    ratio = max(r.t_total for r in four) / one.t_total
+    n_429 = sum(r.n_429 or 0 for r in [one, *four])  # retries add waits
+    verdict = ('rate-limited' if n_429 else 'batched' if ratio < 2
+               else 'serialized' if ratio > 3 else 'partial')
+    rows.append({'endpoint': name, 'field': '4 concurrent requests',
+                 'status': verdict,
+                 'evidence': f'latency x {ratio:.2f}, {n_429} 429s',
+                 'date': day([one, *four])})
+    return rows
+
+async def record_field_probe(path, endpoints, *, local_name, listing,
+                             providers, **kwargs):
+    """Probe every endpoint at once (name -> (client, base, on, off,
+    max_tokens, model id); keyword arguments go to d2l.probe_endpoint) and
+    write the rows to the CSV at path. The seed test samples at temperature
+    1 where the router's listing has temperature for the pinned provider,
+    and always for a model the listing lacks (a local server). Without the
+    local endpoint (no GPU here) the recorded local column of the old CSV
+    is kept.
+
+    Defined in :numref:`sec_lm_api`"""
+    import asyncio  # not in the d2l library preamble
+    def temperature(model_id):
+        return model_id not in listing['endpoints'] or 'temperature' in (
+            d2l.listing_endpoint(listing, model_id, providers[model_id])[
+                'supported_parameters'])
+    rows = await asyncio.gather(*(
+        d2l.probe_endpoint(name, *args, temperature=temperature(args[-1]),
+                           **kwargs) for name, args in endpoints.items()))
+    fields = pd.DataFrame([r for rs in rows for r in rs])
+    if local_name not in endpoints:  # keep the recorded local column
+        old = (pd.read_csv(path) if os.path.exists(path)
+               else pd.DataFrame({'endpoint': []}))
+        old = old[old.endpoint == local_name]
+        if not len(old):
+            raise ValueError('no recorded local column: record on a GPU host')
+        print('local server column kept from', old.date.max())
+        fields = pd.concat([fields, old], ignore_index=True)
+    fields.to_csv(path, index=False)
+
+_HF_LINEAR_KERNELS = ('torch_chunk_gated_delta_rule',  # a prompt, by chunks
+                      'torch_recurrent_gated_delta_rule',  # one token
+                      'causal_conv1d_fn', 'causal_conv1d_update')
+
+_HF_LINEAR_MODELS = ('qwen3_5', 'qwen3_5_moe', 'qwen3_next')  # Gated DeltaNet
+
+def _hf_route(bound):
+    """Transformers' kernel function `bound`, run by the fused kernel it
+    bound at import for CUDA tensors in bf16 or fp16 and by its PyTorch
+    reference code for the rest: the fused Triton kernels need a GPU, and
+    they multiply fp32 inputs in TF32, which an fp32 check does not expect.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import functools
+    import inspect
+    reference = bound.__wrapped__
+    fused = inspect.getclosurevars(bound).nonlocals.get('implementation')
+
+    @functools.wraps(reference)
+    def routed(*args, **kwargs):
+        x = args[0] if args else next(iter(kwargs.values()))
+        if (routed.fused is None or not x.is_cuda
+                or x.dtype not in (torch.bfloat16, torch.float16)):
+            return reference(*args, **kwargs)
+        return bound(*args, **kwargs)
+    routed.fused = None if fused is reference else fused  # None: reference
+    return routed
+
+def _hf_flex_sdpa_mask(*args, q_length, **kwargs):
+    """The flex_sdpa mask: a block mask for a prompt, SDPA's mask (one row
+    at most) for a single token.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    from transformers import masking_utils
+    mask = (masking_utils.flex_attention_mask if q_length > 1
+            else masking_utils.sdpa_mask)
+    return mask(*args, q_length=q_length, **kwargs)
+
+def _hf_flex_sdpa(module, query, key, value, attention_mask, **kwargs):
+    """Flex attention for a prompt, which materializes no n x n mask; SDPA
+    for a single token, where flex's per-step block mask costs time.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    from torch.nn.attention.flex_attention import BlockMask
+    from transformers.integrations import flex_attention, sdpa_attention
+    if not isinstance(attention_mask, BlockMask):
+        return sdpa_attention.sdpa_attention_forward(
+            module, query, key, value, attention_mask, **kwargs)
+    if query.shape[-1] > 128:  # flex's default blocks for wide heads need
+        kwargs.setdefault('kernel_options', dict(  # 148 KiB of shared
+            BLOCK_M=32, BLOCK_N=32, num_stages=1))  # memory; sm_89 has 99
+    return flex_attention.flex_attention_forward(
+        module, query, key, value, attention_mask, **kwargs)
+
+def bind_hf_kernels():
+    """Route the linear-attention functions of Transformers' Gated DeltaNet
+    models by device and dtype (`_hf_route`), importing their modules first
+    so that a later `from_pretrained` finds them routed; register the
+    flex_sdpa attention.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import importlib
+    import sys
+    import warnings
+    from transformers import AttentionInterface, AttentionMaskInterface
+    AttentionInterface.register('flex_sdpa', _hf_flex_sdpa)
+    AttentionMaskInterface.register('flex_sdpa', _hf_flex_sdpa_mask)
+    # Flex attention compiles once per new shape; past torch's default of 8
+    # recompilations it would fall back to code that materializes the n x n
+    # scores, which is an error here rather than a silent slowdown
+    torch._dynamo.config.recompile_limit = max(
+        torch._dynamo.config.recompile_limit, 64)
+    warnings.filterwarnings('error',
+                            'flex_attention called without torch.compile')
+    for name in _HF_LINEAR_MODELS:
+        try:
+            with warnings.catch_warnings():  # fla's notices on a CPU host
+                warnings.simplefilter('ignore')
+                importlib.import_module(f'transformers.models.{name}.'
+                                        f'modeling_{name}')
+        except ImportError:  # a Transformers version without this model
+            pass
+    for name, module in list(sys.modules.items()):
+        if name.startswith('transformers.models.') and module is not None:
+            for fn in _HF_LINEAR_KERNELS:
+                bound = getattr(module, fn, None)
+                if bound is not None and not hasattr(bound, 'fused'):
+                    setattr(module, fn, _hf_route(bound))
+
+def hf_attention(config, device):
+    """The attention that runs `config` on `device` without an n x n mask:
+    flex_sdpa if it has sliding-window layers and the device is a GPU of
+    compute capability 8.0 or more, SDPA otherwise.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    layers = getattr(config.get_text_config(), 'layer_types', None) or []
+    device = torch.device(device)
+    return ('flex_sdpa' if 'sliding_attention' in layers
+            and device.type == 'cuda'
+            and torch.cuda.get_device_capability(device) >= (8, 0)
+            else 'sdpa')
+
+_TEXT_KEY_MAPPING = {  # checkpoint key renames for a multimodal file's text
+    'gemma4_text': {r'^model\.language_model\.': 'model.'}}
+
+def hf_kernels(model):
+    """The code a model's attention and Gated DeltaNet layers run on a GPU
+    in the model's dtype (binding the latter by device and dtype first, as
+    load_hf does).
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import sys
+    bind_hf_kernels()
+    module = sys.modules[type(model).__module__]
+    kernels = {'attention': model.config._attn_implementation}
+    if 'linear_attention' in (getattr(model.config, 'layer_types', None)
+                              or []):
+        for key, fn in (('delta rule', 'torch_chunk_gated_delta_rule'),
+                        ('short convolution', 'causal_conv1d_fn')):
+            fused = getattr(module, fn).fused
+            kernels[key] = ('PyTorch' if fused is None or model.dtype
+                            not in (torch.bfloat16, torch.float16)
+                            else fused.__module__.split('.')[0])
+    return kernels
+
+class reference_kernels:
+    """Run `model` on Transformers' reference code inside a `with` block:
+    SDPA with explicit masks and the PyTorch Gated DeltaNet.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    def __init__(self, model):
+        import sys
+        bind_hf_kernels()
+        module = sys.modules[type(model).__module__]
+        self.model, self.routed = model, [
+            getattr(module, fn) for fn in _HF_LINEAR_KERNELS
+            if hasattr(module, fn)]
+
+    def __enter__(self):
+        self.saved = (self.model.config._attn_implementation,
+                      [f.fused for f in self.routed])
+        self.model.set_attn_implementation('sdpa')
+        for f in self.routed:
+            f.fused = None
+        return self.model
+
+    def __exit__(self, *exc):
+        attention, fused = self.saved
+        for f, kernel in zip(self.routed, fused):
+            f.fused = kernel
+        self.model.set_attn_implementation(attention)
+
+def _hf_allocated(stat='current'):
+    """Bytes the live tensors requested (or their peak), without the
+    allocator's rounding of each block.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    return torch.cuda.memory_stats()[f'requested_bytes.all.{stat}']
+
+def hf_prefill(model, ids, n, keep=1):
+    """Prefill the first n tokens: the output, the allocated bytes before,
+    and the growth and the peak above them.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
+    before = _hf_allocated()
+    with torch.inference_mode():
+        out = model(ids[:, :n], logits_to_keep=keep, use_cache=True)
+    torch.cuda.synchronize()
+    return (out, before, _hf_allocated() - before,
+            _hf_allocated('peak') - before)
+
+def hf_decode_ms(model, cache, token, steps=64, warmup=3, repeats=10):
+    """Median, first and third quartile of milliseconds per greedy decode
+    step; every repeat starts from a fresh copy of the prefilled cache.
+    A profiler session leaves its launch hooks on for the rest of the
+    process (about 3 us more per kernel launch), so time before profiling.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import copy
+
+    def loop(c, token):
+        for _ in range(steps):
+            logits = model(token, past_key_values=c, logits_to_keep=1).logits
+            token = logits[:, -1].argmax(-1, keepdim=True)  # on the device
+
+    times = []
+    with torch.inference_mode():
+        for _ in range(warmup + repeats):
+            c = copy.deepcopy(cache)  # outside the timer
+            seconds = d2l.Benchmark(lambda: loop(c, token), 0, 1).time
+            times.append(1e3 * seconds / steps)
+    return np.percentile(times[warmup:], [50, 25, 75])
+
+def hf_step_kernels(model, cache, token, steps=10):
+    """Device milliseconds per kernel of one decode step, and the number of
+    kernels the step launches.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import copy
+    c = copy.deepcopy(cache)
+
+    def step():
+        model(token, past_key_values=c, logits_to_keep=1)
+
+    with torch.inference_mode():
+        step()  # warm-up
+        torch.cuda.synchronize()  # the copy and warm-up finish unprofiled
+        kernels = d2l.kernel_times(step, steps)
+        with torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CUDA],
+                acc_events=True) as prof:
+            step()
+            torch.cuda.synchronize()
+    launches = sum(e.device_type == torch.autograd.DeviceType.CUDA
+                   for e in prof.events())
+    assert launches > 0
+    return kernels, launches
+
+def _hf_fits(model, ids, batch, n, budget):
+    """The allocator's overhead (reserved minus requested bytes, each at
+    its peak) of a prefill of `batch` copies of the first n tokens with the
+    allocator capped at `budget` bytes, weights included; None if it runs
+    out of memory.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import gc
+    x = ids.repeat(1, -(-n // ids.shape[1]))[:, :n].repeat(batch, 1)
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    torch.cuda.set_per_process_memory_fraction(
+        budget / torch.cuda.get_device_properties(x.device).total_memory)
+    try:
+        with torch.inference_mode():
+            model(x, logits_to_keep=1, use_cache=True)
+        stats = torch.cuda.memory_stats()
+        overhead = (stats['reserved_bytes.all.peak']
+                    - stats['requested_bytes.all.peak'])
+    except torch.OutOfMemoryError:
+        overhead = None
+    finally:
+        torch.cuda.set_per_process_memory_fraction(1.0)
+    del x
+    gc.collect()
+    torch.cuda.empty_cache()
+    return overhead
+
+def hf_capacity(model, config, ids, budget, n=4096):
+    """The largest batch at n tokens (doubling, then bisection) and the
+    largest power-of-two context at batch 1 that fit `budget` bytes,
+    weights included: measured, and by `config_memory` for a prefill.
+    Returns (batch, context) twice and the allocator's overhead in bytes
+    at the measured batch.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    t = config.get_text_config()
+    overhead = {1: _hf_fits(model, ids, 1, n, budget)}
+    assert overhead[1] is not None
+    lo = 1
+    while (fit := _hf_fits(model, ids, 2 * lo, n, budget)) is not None:
+        lo, overhead[2 * lo] = 2 * lo, fit
+    hi = 2 * lo
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if (fit := _hf_fits(model, ids, mid, n, budget)) is not None:
+            lo, overhead[mid] = mid, fit
+        else:
+            hi = mid
+    context = n
+    while (2 * context <= t.max_position_embeddings
+           and _hf_fits(model, ids, 1, 2 * context, budget) is not None):
+        context *= 2
+    mem = d2l.config_memory(config, n, 1, window_cached=n)
+    batch = (budget - mem['weights']) // (mem['total'] - mem['weights'])
+    longest = max(2**k for k in range(8, 19)
+                  if 2**k <= t.max_position_embeddings and d2l.config_memory(
+                      config, 2**k, 1, window_cached=2**k)['total'] <= budget)
+    return (lo, context), (int(batch), longest), overhead[lo]
+
+def hf_measure(model, config, ids, beta, contexts=(256, 1024, 4096, 16384)):
+    """Memory and decode time at each context, one row (dict) per context:
+    the cache walker's bytes, the allocator's growth after the prefill and
+    after one decode step, the peak, each with its value from
+    `config_memory`, the decode milliseconds and the bytes a step reads
+    (`bytes_read`) over the bandwidth `beta`. Prints the live cache's
+    bytes by dtype at 1,024 tokens.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    GiB = 2**30
+    b, t = model.dtype.itemsize, config.get_text_config()
+    rows = []
+    with torch.inference_mode():  # cuBLAS allocates its workspace on the
+        out = model(ids[:, :16], logits_to_keep=1, use_cache=True)
+        model(out.logits[:, -1:].argmax(-1),  # first decode step
+              past_key_values=out.past_key_values)
+    del out
+    for n in contexts:  # a prefill holds every position: window_cached=n
+        pinned = d2l.config_memory(config, n, 1, b, window_cached=n)
+        need = 1.1 * (pinned['total'] - pinned['weights'])
+        torch.cuda.empty_cache()  # cached blocks count as free below
+        if need > torch.cuda.mem_get_info()[0]:
+            print(f'{n} tokens skipped: {need / GiB:.1f} GiB not free')
+            continue
+        try:  # a new length compiles flex attention or tunes fla's
+            hf_prefill(model, ids, n)  # kernels, with their own buffers
+            out, before, growth, peak = hf_prefill(model, ids, n)
+        except torch.OutOfMemoryError:  # the activations estimate fell short
+            print(f'{n} tokens skipped: out of memory in the prefill')
+            continue  # the next context empties the allocator's cache
+        cache, token = out.past_key_values, out.logits[:, -1:].argmax(-1)
+        logical, resident = d2l.cache_bytes(cache)
+        mem = d2l.config_memory(config, n, 1, b)
+        assert sum(logical.values()) == mem['kv_cache'] + mem[
+            'recurrent_state']  # the walker counts what the formula counts
+        if n == 1024:
+            print('live cache at 1,024 tokens:', ', '.join(
+                f'{v:,} B {str(k).removeprefix("torch.")}'
+                for k, v in logical.items()))
+            linear = [layer for layer in cache.layers
+                      if hasattr(layer, 'recurrent_states')]
+            if linear:  # a hybrid's state and convolution inputs
+                print('recurrent state', str(
+                    linear[0].recurrent_states[0].dtype).removeprefix(
+                        'torch.'), '| convolution inputs', str(
+                    linear[0].conv_states[0].dtype).removeprefix('torch.'))
+        wall = hf_decode_ms(model, cache, token)
+        logits_bytes = out.logits.nbytes
+        del out
+        with torch.inference_mode():  # sliding layers drop prompt keys here
+            step = model(token, past_key_values=cache, logits_to_keep=1)
+        after = d2l.config_memory(
+            config, n + 1, 1, b,
+            window_cached=getattr(t, 'sliding_window', None))
+        R = d2l.bytes_read(config, n, b)
+        rows.append(dict(
+            model=model.name_or_path, n=n,
+            walker_logical=sum(logical.values()),
+            walker_resident=sum(resident.values()),
+            formula=mem['kv_cache'] + mem['recurrent_state'], growth=growth,
+            growth_derived=(pinned['kv_cache'] + pinned['recurrent_state']
+                            + logits_bytes),
+            growth_after_step=_hf_allocated() - before,
+            growth_after_step_derived=(after['kv_cache'] + after[
+                'recurrent_state'] + step.logits.nbytes),
+            peak=peak, peak_formula=pinned['total'] - pinned['weights'],
+            wall_ms_median=wall[0], wall_ms_q1=wall[1], wall_ms_q3=wall[2],
+            bytes_read=R, r_over_beta_measured_ms=1e3 * R / beta))
+        del cache, step
+    return rows
+
+def hf_profile_steps(model, ids, rows):
+    """Add one decode step's device time (busy and matrix products) and
+    launch count to each row, on a fresh prefill; return the step's
+    kernels at each context, {n: {kernel: ms}}.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    kernels = {}
+    for row in rows:
+        out = hf_prefill(model, ids, row['n'])[0]
+        kernels[row['n']], row['launches'] = hf_step_kernels(
+            model, out.past_key_values, out.logits[:, -1:].argmax(-1))
+        row['busy_ms'] = sum(kernels[row['n']].values())
+        row['matmul_ms'] = sum(ms for name, ms in kernels[row['n']].items()
+                               if _MATMUL_KERNELS.search(name))
+        del out
+    return kernels
+
+def hf_compare_kernels(model, config, ids, contexts, decode_at=4096,
+                       positions=64):
+    """A prefill on the fused kernels and inside reference_kernels, per
+    context: peak memory above the weights against the formula's peak (GiB),
+    seconds, milliseconds per decode step at `decode_at` tokens, and, on the
+    reference row, how the last `positions` positions' logits compare with
+    the fused run's: the share whose most likely next token agrees, and the
+    largest difference. For scale, the reference at batch 2 against batch 1
+    at the first context: rounding alone. A run that does not fit says so.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import contextlib
+    import pandas as pd
+
+    def compare(a, b):
+        a, b = a.float(), b.float()
+        return {'top-1 agree': round(float(
+                    (a.argmax(-1) == b.argmax(-1)).float().mean()), 2),
+                'max |diff|': round(float((a - b).abs().max()), 3)}
+
+    rows = []
+    for n in contexts:
+        x = ids.repeat(1, -(-n // ids.shape[1]))[:, :n]
+        formula = d2l.config_memory(config, n, 1, window_cached=n)
+        logits = {}
+        for name, kernels in (('fused', contextlib.nullcontext),
+                              ('reference', reference_kernels)):
+            row = dict(n=n, kernels=name, formula=round(
+                (formula['total'] - formula['weights']) / 2**30, 3))
+            out = cache = None
+            with kernels(model):
+                try:  # also compiles and tunes the kernels for n tokens
+                    out, _, _, peak = hf_prefill(model, x, n)
+                    cache = out.past_key_values
+                    token = out.logits[:, -1:].argmax(-1)
+                    out = None
+                    with torch.inference_mode():
+                        seconds = d2l.Benchmark(lambda: model(
+                            x, logits_to_keep=1, use_cache=True), 1, 3).time
+                        logits[name] = model(x, logits_to_keep=positions,
+                                             use_cache=False).logits[0]
+                    row |= dict(peak=round(peak / 2**30, 3),
+                                prefill_s=round(seconds, 3))
+                    if n == decode_at:
+                        row['decode_ms'] = round(float(hf_decode_ms(
+                            model, cache, token, repeats=5)[0]), 2)
+                except torch.OutOfMemoryError:
+                    row['peak'] = 'out of memory'
+                out = cache = None
+            rows.append(row)
+        if len(logits) == 2:
+            rows[-1] |= compare(logits['fused'], logits['reference'])
+        if n == contexts[0] and 'reference' in logits:
+            with reference_kernels(model), torch.inference_mode():
+                twice = model(x.repeat(2, 1), logits_to_keep=positions,
+                              use_cache=False).logits[0]
+            rows.append(dict(n=n, kernels='ref., batch 2')
+                        | compare(twice, logits['reference']))
+            del twice
+        del logits
+    return pd.DataFrame(rows)
+
+_MATMUL_KERNELS = re.compile(  # matrix products; attention kernels are not
+    '^(?!.*(fmha|flash)).*(gemm|gemv|xmma|cutlass|matmul|splitK)', re.I)
+
+def hf_memory_table(rows):
+    """The memory columns of hf_measure's rows: the walker's bytes and the
+    formula's (MiB), the allocator's growth after the prefill and after one
+    step, and the prefill peak, each over its derived value; storages held
+    over logical bytes (a sliding layer's view pins the prompt's keys).
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import pandas as pd
+    df = pd.DataFrame(rows)
+    return pd.DataFrame({
+        'n': df.n, 'walker MiB': df.walker_logical / 2**20,
+        'formula MiB': df.formula / 2**20,
+        'growth': df.growth / df.growth_derived,
+        'after step': df.growth_after_step / df.growth_after_step_derived,
+        'peak': df.peak / df.peak_formula,
+        'held': df.walker_resident / df.walker_logical}).round(2)
+
+def hf_time_table(rows, beta_sheet):
+    """The time columns of the profiled rows, in ms per decode step: wall
+    time (median and quartiles), the device's busy and matrix-product time,
+    kernel launches, and the bytes read over the datasheet bandwidth
+    `beta_sheet` and over the measured one.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import pandas as pd
+    df = pd.DataFrame(rows)
+    return pd.DataFrame({
+        'n': df.n, 'wall': df.wall_ms_median, 'q1': df.wall_ms_q1,
+        'q3': df.wall_ms_q3, 'busy': df.busy_ms, 'matmul': df.matmul_ms,
+        'launches': df.launches,
+        'R/beta sheet': 1e3 * df.bytes_read / beta_sheet,
+        'R/beta meas.': df.r_over_beta_measured_ms}).round(2)
+
+def _kernel_name(name):
+    """A kernel's C++ name without return type, namespaces and arguments.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    name = re.sub(r'^(void |std::enable_if<.*?>::type )|\(anonymous '
+                  r'namespace\)::', '', name)
+    return re.sub(r'\b(at|native|internal|cutlass)::|\(.*', '', name)[:52]
+
+def show_kernels(kernels, rows=4):
+    """The kernels of a decode step with the most device time: ms and share
+    of the busy time.
+
+    Defined in :numref:`sec_lm_hf_models`"""
+    import collections
+    busy, named = sum(kernels.values()), collections.Counter()
+    for name, ms in kernels.items():
+        named[_kernel_name(name)] += ms
+    for name, ms in named.most_common(rows):
+        print(f'{ms:6.2f} ms {ms / busy:4.0%}  {name}')
+
+d2l.DATA_HUB['lm-qwen3-0p6b-logit-ref-v1'] = (
+    d2l.LM_DATA_URL + 'lm-qwen3-0p6b-logit-ref-v1.pt',
+    '2fa5449638a8a8924bc6b35384dc996c23513cb6')
+
+def _qwen3_files(model_id, revision):
+    """Local paths of config.json, generation_config.json (None if the
+    repository has none) and the safetensors files of a Hub checkpoint at a
+    revision, downloaded into the Hugging Face cache.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    import huggingface_hub
+    # the Hub answered that the file is absent; LocalEntryNotFoundError
+    # (offline, not cached) is a sibling subclass and must propagate
+    from huggingface_hub.errors import RemoteEntryNotFoundError
+
+    def get(filename, optional=False):
+        try:
+            return huggingface_hub.hf_hub_download(model_id, filename,
+                                                   revision=revision)
+        except RemoteEntryNotFoundError:
+            if optional:
+                return None
+            raise
+
+    index = get('model.safetensors.index.json', optional=True)
+    if index is None:
+        weights = [get('model.safetensors')]
+    else:  # a sharded checkpoint lists its shards in the index
+        with open(index) as fh:
+            shards = sorted(set(json.load(fh)['weight_map'].values()))
+        weights = [get(shard) for shard in shards]
+    return (get('config.json'), get('generation_config.json', optional=True),
+            weights)
+
+def _lm_unwrap(model):
+    """The model inside a torch.compile or PEFT wrapper (which pass every
+    keyword argument through to it), or model itself.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    while True:
+        inner = getattr(model, '_orig_mod', None)
+        if inner is None and hasattr(model, 'get_base_model'):
+            inner = model.get_base_model()
+        if inner is None or inner is model:
+            return model
+        model = inner
+
+def _lm_bos_ids(tokenizer):
+    """The special tokens the tokenizer puts before a text (a BOS, or
+    none). Those it appends after a text, such as an EOS, are left out:
+    a prompt continues where its text ends.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    with_sp, plain = (tokenizer(['a'], add_special_tokens=s)['input_ids'][0]
+                      for s in (True, False))
+    return next((with_sp[:k] for k in range(len(with_sp) - len(plain) + 1)
+                 if with_sp[k:k + len(plain)] == plain), [])
+
+def _lm_stopping(model, tokenizer, max_new_tokens=None, eos_token_ids=None,
+                 stop=None):
+    """generate's stopping arguments with their defaults: max_new_tokens
+    from the model's generation_config (else 256); the end tokens, by
+    default the tokenizer's and the generation_config's, as a set of ids
+    (one id may be given bare); stop strings as a list (one string is one
+    stop string, not its characters).
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    config = getattr(model, 'generation_config', None)
+    if max_new_tokens is None:
+        max_new_tokens = getattr(config, 'max_new_tokens', None) or 256
+    if eos_token_ids is None:
+        eos = getattr(config, 'eos_token_id', None)
+        eos_token_ids = [tokenizer.eos_token_id,
+                         *(eos if isinstance(eos, list) else [eos])]
+    if isinstance(eos_token_ids, (int, np.integer)):
+        eos_token_ids = [eos_token_ids]
+    eos_ids = {int(i) for i in eos_token_ids if i is not None}
+    if isinstance(stop, str):
+        stop = [stop]
+    return max_new_tokens, eos_ids, stop
+
+def _lm_prompt_ids(tokenizer, prompts, chat=False, enable_thinking=None):
+    """Token ids of each prompt of generate. With chat=True a prompt is
+    rendered by the chat template (a string is one user message; the
+    template adds no BOS); otherwise the tokenizer's BOS, if it has one,
+    goes before the text, and never an EOS after it.
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    if chat:
+        opts = {} if enable_thinking is None else {
+            'enable_thinking': enable_thinking}
+        prompts = [tokenizer.apply_chat_template(
+            [{'role': 'user', 'content': x}] if isinstance(x, str) else x,
+            tokenize=False, add_generation_prompt=True, **opts)
+                   for x in prompts]
+    head = [] if chat else _lm_bos_ids(tokenizer)
+    ids = [head + tokenizer(x, add_special_tokens=False)['input_ids']
+           for x in prompts]
+    if not all(ids):  # Qwen3's tokenizer adds no BOS to predict from
+        raise ValueError('an empty prompt has no position to predict from')
+    return ids
+
+def _lm_generators(seed, num_prompts):
+    """generate's random streams, as a function rows -> the generator
+    argument of sample_logits for those prompts. seed is an int or a
+    torch.Generator (one stream for the whole call) or one int per prompt
+    (one stream each, so that a prompt's draws do not depend on the
+    others).
+
+    Defined in :numref:`sec_lm_d2l_checkpoint`"""
+    if isinstance(seed, torch.Generator):
+        return lambda rows: seed
+    if isinstance(seed, (int, np.integer)):
+        shared = torch.Generator().manual_seed(int(seed))
+        return lambda rows: shared
+    assert len(seed) == num_prompts, 'one seed per prompt'
+    streams = [torch.Generator().manual_seed(int(s)) for s in seed]
+    return lambda rows: [streams[i] for i in rows]
+
+def _label_sep(prompt, word):
+    """A space between a prompt and a label word, except after whitespace
+    and next to a wide (Chinese, Japanese or Korean) character.
+
+    Defined in :numref:`sec_lm_prompting`"""
+    import unicodedata
+    wide = any(unicodedata.east_asian_width(c) in ('W', 'F')
+               for c in prompt[-1:] + word[:1])
+    return '' if wide or prompt[-1:].isspace() else ' '
+
+def label_token_ids(tokenizer, prompts, label_words, sep=None):
+    """The prompts' token ids, and per prompt the id of each label word's
+    first token as the next token, the word following the prompt after
+    sep (by default _label_sep's choice). Raises if (a) the prompt's end
+    merges with a word, (b) two words share a first token, (c) a word is
+    several tokens, checked in this order.
+
+    Defined in :numref:`sec_lm_prompting`"""
+    enc = lambda texts: tokenizer(texts, add_special_tokens=False)[
+        'input_ids']
+    ids, tails = enc(prompts), [[] for _ in prompts]
+    seps = [[_label_sep(p, w) if sep is None else sep for w in label_words]
+            for p in prompts]
+    for j, w in enumerate(label_words):
+        full = enc([p + s[j] + w for p, s in zip(prompts, seps)])
+        for i, (p, h, f) in enumerate(zip(prompts, ids, full)):
+            if f[:len(h)] != h:  # (a) the prompt ends inside a token
+                raise ValueError(
+                    f'prompt {i} ends inside a token ({p[-12:]!r} merges '
+                    f'with {w!r}): strip trailing whitespace from the '
+                    'prompt, the space belongs to the label')
+            if len(f) == len(h):
+                raise ValueError(f'label word {w!r} adds no token')
+            tails[i].append(f[len(h):])
+    for t in tails:  # (b) two words, one first token
+        first = {}
+        for w, s in zip(label_words, t):
+            if s[0] in first:
+                raise ValueError(
+                    f'label words {first[s[0]]!r} and {w!r} share the '
+                    f'first token {tokenizer.decode(s[:1])!r} ({s[0]})')
+            first[s[0]] = w
+    for t, seps_i in zip(tails, seps):  # (c) a word of several tokens
+        for w, s, sp in zip(label_words, t, seps_i):
+            if len(s) > 1:
+                raise ValueError(
+                    f'label word {w!r} after {sp!r} is {len(s)} tokens '
+                    f'{[tokenizer.decode([u]) for u in s]}: use a word '
+                    'that is one token there, or another sep')
+    return ids, [[s[0] for s in t] for t in tails]
+
+def _label_output_layer(model):
+    """The output layer of a Transformers model when its label logits are
+    the last hidden state times the label words' rows (a plain linear
+    layer, no final logit soft-capping); None otherwise, as for a d2l
+    GPT.
+
+    Defined in :numref:`sec_lm_prompting`"""
+    inner = d2l._lm_unwrap(model)
+    hf = sys.modules.get('transformers')  # loaded if model is one of its
+    if hf is None or not isinstance(inner, hf.PreTrainedModel):
+        return None
+    W = inner.get_output_embeddings()
+    capped = getattr(inner.config.get_text_config(),
+                     'final_logit_softcapping', None) is not None
+    return W if isinstance(W, nn.Linear) and not capped else None
+
+def _label_logprobs_logits(model, tokenizer, ids, labels, batch_size):
+    """label_logprobs from the model's own logits at the last position:
+    a Transformers model in left-padded batches (logits_to_keep=1), a d2l
+    GPT, which takes no attention mask, in batches of prompts of equal
+    length.
+
+    Defined in :numref:`sec_lm_prompting`"""
+    inner = d2l._lm_unwrap(model)
+    hf = sys.modules.get('transformers')
+    hf = hf is not None and isinstance(inner, hf.PreTrainedModel)
+    if hf:  # one padded group, in input order
+        groups = [list(range(len(ids)))]
+        pad = getattr(tokenizer, 'pad_token_id', None) or 0
+    else:
+        groups = [[i for i in range(len(ids)) if len(ids[i]) == n]
+                  for n in sorted({len(r) for r in ids})]
+    device = next(model.parameters()).device
+    out = torch.empty(len(ids), len(labels[0]))
+    for rows in (g[j:j + batch_size] for g in groups
+                 for j in range(0, len(g), batch_size)):
+        lab = torch.tensor([labels[i] for i in rows], device=device)
+        with torch.inference_mode():
+            if hf:
+                T = max(len(ids[i]) for i in rows)
+                X = torch.tensor([[pad] * (T - len(ids[i])) + ids[i]
+                                  for i in rows], device=device)
+                mask = torch.tensor([[0] * (T - len(ids[i])) +
+                                     [1] * len(ids[i]) for i in rows],
+                                    device=device)
+                pos = (mask.cumsum(-1) - 1).masked_fill(mask == 0, 1)
+                z = model(input_ids=X, attention_mask=mask, position_ids=pos,
+                          use_cache=False, logits_to_keep=1).logits[:, -1]
+            else:
+                X = torch.tensor([ids[i] for i in rows], device=device)
+                z = (model(X, logits_to_keep=1) if isinstance(
+                    inner, d2l.Qwen3GPT) else model(X))[:, -1]
+            lp = z.gather(-1, lab).float().log_softmax(-1).cpu()
+        out[rows] = lp  # out is an ordinary tensor the caller may modify
+    return out
+
+def clean_ag_news(titles):
+    """AG News titles with the escapes left in them resolved: HTML
+    entities and tags, '#39;'-style codes without the '&', Windows-1252
+    codes 145 to 151, backslashes. Returns the cleaned titles (an object
+    array) and, per rule, the number of titles it changed; raises if an
+    escape is left that no rule handles.
+
+    Defined in :numref:`sec_lm_prompting`"""
+    import html
+    cp1252 = {'145': "'", '146': "'", '147': '"', '148': '"', '151': '-'}
+    codes = {37, 38, 133, 160, 163, 225, 233, 234, 8217, 8482}  # in AG News
+
+    def quote(m):  # an apostrophe or closing quote takes the space before
+        return ('' if m[2] in ('145', '146', '148') else m[1]) + cp1252[m[2]]
+
+    def numeric(m):  # '#233;' is 'é'; 128 to 159 are Windows-1252 codes
+        n = int(m[2])
+        if n not in codes:  # left for the check at the end
+            return m[0]
+        c = bytes([n]).decode('cp1252') if 128 <= n < 160 else chr(n)
+        return ('' if c.isalnum() or c in "&'’" else m[1]) + c
+    rules = [  # in this order
+        ("#39; is '", lambda s: re.sub(r' ?#39;', "'", s)),
+        ('#36; is $', lambda s: s.replace('#36;', '$')),
+        ('#145; to #151;', lambda s: re.sub(r'( ?)#(14[5-8]|151);', quote,
+                                             s)),
+        ('other #n;', lambda s: re.sub(r'( ?)#(\d+);', numeric, s)),
+        ('&entities;', html.unescape),
+        ('<tags>', lambda s: re.sub(r'<[^<>]*>', '', s)),
+        ('\\ and spaces', lambda s: ' '.join(s.replace('\\', ' ').split()))]
+    changed = {}
+    for name, rule in rules:
+        new = [rule(s) for s in titles]
+        changed[name] = sum(a != b for a, b in zip(titles, new))
+        titles = new
+    left = sorted({m for s in titles
+                   for m in re.findall(r'#\d+;|&\w+;|\\', s)})
+    assert not left, f'no cleanup rule for {left}'
+    return np.array(titles, dtype=object), changed
+
+def _lm_encode(tokenizer, texts):
+    """Token ids of each text without special tokens: a Transformers
+    tokenizer is called with add_special_tokens=False, any other one (such
+    as tiktoken's) through its plain encode.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    hf = sys.modules.get('transformers')
+    texts = [str(t) for t in texts]  # also numpy arrays, pandas Series
+    if not texts:
+        return []
+    if hf is not None and isinstance(tokenizer, hf.PreTrainedTokenizerBase):
+        return tokenizer(texts, add_special_tokens=False)['input_ids']
+    return [list(tokenizer.encode(t)) for t in texts]
+
+def _lm_boundary_id(tokenizer):
+    """The token that separates documents in pretraining: <|endoftext|> if
+    the tokenizer has it, else its EOS, else None. Qwen3: 151643, Qwen3.5:
+    248044, for base and post-trained checkpoints alike.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    conv = getattr(tokenizer, 'convert_tokens_to_ids', None)
+    if conv is not None:
+        i = conv('<|endoftext|>')
+        if i is not None and i != getattr(tokenizer, 'unk_token_id', None):
+            return int(i)
+    elif '<|endoftext|>' in getattr(tokenizer, 'special_tokens_set', ()):
+        return tokenizer.encode_single_token('<|endoftext|>')  # tiktoken
+    return getattr(tokenizer, 'eos_token_id', None)
+
+def _lm_max_len(model):
+    """The longest input the model takes, or None if it does not say.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    model = d2l._lm_unwrap(model)
+    cfg = getattr(model, 'config', None)
+    if cfg is not None and hasattr(cfg, 'get_text_config'):
+        cfg = cfg.get_text_config()
+    return (getattr(cfg, 'max_position_embeddings', None) or
+            getattr(model, 'max_len', None))
+
+def _lm_ctx_len(model, ctx_len):
+    """ctx_len, capped (with a warning) at the model's longest input.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    import warnings
+    max_len = _lm_max_len(model)
+    if max_len and ctx_len > max_len:
+        warnings.warn(f'bits_per_byte: ctx_len {ctx_len} capped at the '
+                      f"model's maximum input length {max_len}")
+        return max_len
+    return ctx_len
+
+def _lm_continuations(tokenizer, prompts, choices, max_len=None):
+    """Every (prompt, choice) pair of score_choices, as (rows, inputs,
+    conts, texts, shape): rows[r] = (i, j) names prompt i and its choice j,
+    inputs[r] the token ids the model reads, conts[r] the continuation's
+    ids it scores, texts[r] the choice text without one leading
+    whitespace character (the harness's length), shape (N, C_max).
+    choices holds N lists (ragged) or one list shared by all prompts.
+    Trailing whitespace of a prompt moves to the front of its choices; the
+    continuation is the suffix of encode(prompt + choice) beyond
+    encode(prompt), with a warning when the prompt's last token merges into
+    the choice's; an empty prompt is preceded by the document-boundary
+    token; a pair longer than max_len loses prompt tokens from the left,
+    with a warning naming the item; an empty continuation raises.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    import warnings
+    prompts, choices = list(prompts), list(choices)  # also arrays, Series
+    if len(choices) and isinstance(choices[0], str):  # one shared list
+        choices = [choices] * len(prompts)
+    choices = [list(cs) for cs in choices]
+    if len(choices) != len(prompts):
+        raise ValueError(f'{len(prompts)} prompts, {len(choices)} choices')
+    heads = [p.rstrip() for p in prompts]
+    rows = [(i, j) for i, cs in enumerate(choices) for j in range(len(cs))]
+    conts = [prompts[i][len(heads[i]):] + choices[i][j] for i, j in rows]
+    texts = [c[1:] if c[:1].isspace() else c for c in conts]
+    ctx_ids = _lm_encode(tokenizer, heads)
+    full = _lm_encode(tokenizer, [heads[i] + c
+                                  for (i, _), c in zip(rows, conts)])
+    cut_items, inputs, cont_ids = set(), [], []
+    merged = []  # pairs whose prompt tokens are not a prefix of the whole
+    for (i, j), f in zip(rows, full):
+        ctx, cont = ctx_ids[i], f[len(ctx_ids[i]):]
+        if not cont:
+            raise ValueError(f'item {i}, choice {j}: empty continuation')
+        if f[:len(ctx)] != ctx:
+            merged.append((i, j))
+        if not ctx:
+            b = _lm_boundary_id(tokenizer)
+            if b is None:
+                raise ValueError(f'item {i}: empty prompt and no boundary '
+                                 'token to put before it')
+            ctx = [b]
+        cut = len(ctx) + len(cont) - 1 - (max_len or float('inf'))
+        if cut > 0:  # cut the prompt from the left
+            if cut >= len(ctx):
+                raise ValueError(f'item {i}, choice {j}: the continuation '
+                                 f'does not fit the context of {max_len}')
+            if i not in cut_items:
+                warnings.warn(f'score_choices: prompt of item {i} cut by '
+                              f'{cut} tokens to fit the context of {max_len}')
+                cut_items.add(i)
+            ctx = ctx[cut:]
+        inputs.append((ctx + cont)[:-1])  # the last token predicts nothing
+        cont_ids.append(cont)
+    if merged:
+        warnings.warn(
+            f'score_choices: in {len(merged)} of {len(rows)} prompt-choice '
+            f'pairs (first: item {merged[0][0]}, choice {merged[0][1]}) the '
+            "prompt's last token merges with the choice's first, so the "
+            'scored tokens do not spell prompt + choice; end the prompts '
+            'differently (for example without a newline)')
+    shape = (len(prompts), max(map(len, choices), default=0))
+    return rows, inputs, cont_ids, texts, shape
+
+def _lm_components(rows, ll, conts, texts, shape):
+    """ScoreComponents of shape (N, C_max) from the pairs of
+    _lm_continuations and their summed log-likelihoods ll; padded columns
+    hold -inf (ll) and 0.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    comps = [torch.zeros(shape, dtype=dt)
+             for dt in (torch.float32, torch.long, torch.long, torch.long)]
+    comps[0].fill_(-math.inf)
+    for r, (i, j) in enumerate(rows):
+        for t, v in zip(comps, (ll[r].item(), len(conts[r]), len(texts[r]),
+                                len(texts[r].encode('utf-8')))):
+            t[i, j] = v
+    return d2l.ScoreComponents(*comps)
+
+def _lm_cont_logits(model, inputs, n_cont, pad=0):
+    """The model's own logits, in its dtype, at the positions that predict
+    the last n_cont[k] tokens of each row inputs[k] + [next token],
+    concatenated over the rows: a Transformers model (one whose output
+    layer is not a plain linear layer, such as a soft-capped one) in a
+    left-padded batch with logits_to_keep; a d2l.Qwen3GPT right-padded,
+    with logits_to_keep from the earliest continuation; any other module
+    (a d2l.GPT) right-padded, whole (exact under the causal mask).
+
+    Defined in :numref:`sec_lm_scoring`"""
+    inner = d2l._lm_unwrap(model)
+    hf = sys.modules.get('transformers')
+    hf = hf is not None and isinstance(inner, hf.PreTrainedModel)
+    device = next(model.parameters()).device
+    T = max(map(len, inputs))
+    if hf:
+        X = torch.tensor([[pad] * (T - len(x)) + x for x in inputs],
+                         device=device)
+        mask = torch.tensor([[0] * (T - len(x)) + [1] * len(x)
+                             for x in inputs], device=device)
+        pos = (mask.cumsum(-1) - 1).masked_fill(mask == 0, 1)
+        z = model(input_ids=X, attention_mask=mask, position_ids=pos,
+                  use_cache=False, logits_to_keep=max(n_cont)).logits
+        return torch.cat([z[k, z.shape[1] - m:]
+                          for k, m in enumerate(n_cont)])
+    X = torch.tensor([x + [0] * (T - len(x)) for x in inputs], device=device)
+    starts = [len(x) - m for x, m in zip(inputs, n_cont)]
+    qwen3 = isinstance(inner, d2l.Qwen3GPT)
+    off = min(starts) if qwen3 else 0
+    out = model(X, logits_to_keep=T - off) if qwen3 else model(X)
+    z = getattr(out, 'logits', out)
+    return torch.cat([z[k, s - off:s - off + m]
+                      for k, (s, m) in enumerate(zip(starts, n_cont))])
+
+def _lm_unscored_head(tokenizer, text, ids):
+    """For a tokenizer without a boundary token: the text's first token has
+    no context, so it is not scored, nor any next token up to the end of
+    the character the first one starts. Returns how many of ids go
+    unscored and the UTF-8 bytes they spell.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    first = 1
+    while first < len(ids):
+        head = tokenizer.decode(ids[:first])
+        if text.startswith(head) or '�' not in head:
+            break
+        first += 1
+    return first, len(tokenizer.decode(ids[:first]).encode('utf-8'))
+
+def _run_limits(timeout):
+    """Python source that, run first in the child, limits its CPU time to
+    timeout + 1 seconds (rounded up) and its address space to 1 GiB; empty
+    off POSIX, where only the wall-clock timeout applies.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    if os.name != 'posix':
+        return ''
+    cpu = math.ceil(timeout) + 1
+    return ('import resource\n'
+            f'for r, v in ((resource.RLIMIT_CPU, {cpu}), '
+            '(resource.RLIMIT_AS, 1 << 30)):\n'
+            '    try:\n        resource.setrlimit(r, (v, v))\n'
+            '    except (ValueError, OSError):\n        pass\n')
+
+def _kill_session(proc):
+    """Kill a child started with start_new_session=True and every process
+    it started (on POSIX; elsewhere the child alone), then reap it.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    import signal
+    if os.name == 'posix':
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    else:
+        proc.kill()
+    proc.wait()
+
+def download_keyed(key, root=os.path.join('..', 'data', 'lm')):
+    """Download DATA_HUB[key] into root/key/ and return its local path.
+    Files from different datasets often share a name (Hugging Face's
+    'test-00000-of-00001.parquet'), and d2l.download keeps one file per
+    name and folder, so each key gets a folder of its own. The file's sha1
+    is checked after a fresh download too.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    path = d2l.download(key, os.path.join(root, key))
+    sha1 = d2l.DATA_HUB[key][1]
+    if sha1:
+        with open(path, 'rb') as f:
+            got = hashlib.sha1(f.read()).hexdigest()
+        assert got == sha1, f'{path}: sha1 {got}, DATA_HUB pins {sha1}'
+    return path
+
+def lm_rerun(artifacts):
+    """The measured results this run regenerates, from the environment
+    variable D2L_RERUN: '1' names all of artifacts, 'a,b' the ones it
+    lists; unset, empty or '0', none (a normal build).
+
+    Defined in :numref:`sec_lm_scoring`"""
+    names = os.environ.get('D2L_RERUN', '0').split(',')
+    rerun = set(artifacts if names == ['1'] else names) - {'0', ''}
+    if not rerun <= set(artifacts):
+        raise ValueError(f'D2L_RERUN names one of {tuple(artifacts)}, or 1')
+    return rerun
+
+def lm_registered(key):
+    """Local path of the registered artifact DATA_HUB[key], or None while
+    the key is not registered.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    return d2l.download_keyed(key) if key in d2l.DATA_HUB else None
+
+def lm_artifact(key, rerun_name=None,
+                rerun_dir=os.path.join('..', 'data', 'lm', 'rerun')):
+    """Where a measured result is read from: rerun_dir/rerun_name, the file
+    this run regenerated, when rerun_name is given; else the registered
+    artifact DATA_HUB[key], which must exist.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    if rerun_name is not None:
+        return os.path.join(rerun_dir, rerun_name)
+    path = lm_registered(key)
+    if path is None:
+        raise KeyError(f'{key} is not registered: regenerate it with '
+                       'D2L_RERUN, upload it and register its sha1')
+    return path
+
+def lm_save_rerun(name, write,
+                  rerun_dir=os.path.join('..', 'data', 'lm', 'rerun')):
+    """Call write(path) for a regenerated artifact in rerun_dir and print
+    its path and sha1; the author uploads it under the next -vN key.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    os.makedirs(rerun_dir, exist_ok=True)
+    path = os.path.join(rerun_dir, name)
+    write(path)
+    with open(path, 'rb') as f:
+        print(f'wrote {path}, sha1 {hashlib.sha1(f.read()).hexdigest()}')
+    return path
+
+def read_jsonl(path):
+    """A file of JSON lines as a DataFrame, one row per line, values with
+    the types they were written with.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    with open(path, encoding='utf-8') as f:
+        return pd.DataFrame([json.loads(line) for line in f])
+
+def write_jsonl(path, records):
+    """Write records (dicts) as JSON lines.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    with open(path, 'w', encoding='utf-8') as f:
+        f.writelines(json.dumps(r, ensure_ascii=False) + '\n'
+                     for r in records)
+
+def lm_free():
+    """Return the memory of deleted models to the GPU.
+
+    Defined in :numref:`sec_lm_scoring`"""
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+def lm_peak():
+    """Peak GPU memory since the last call, as text: what tensors held, and
+    what the allocator reserved from the card (what nvidia-smi shows, less
+    the CUDA context).
+
+    Defined in :numref:`sec_lm_scoring`"""
+    if not torch.cuda.is_available():
+        return 'no GPU'
+    gib = [f() / 2**30 for f in (torch.cuda.max_memory_allocated,
+                                 torch.cuda.max_memory_reserved)]
+    torch.cuda.reset_peak_memory_stats()
+    return f'peak {gib[0]:.1f} GiB ({gib[1]:.1f} GiB reserved)'
+
+def _intervene_site(model, site):
+    """site as (kind, layer) if it names a site of model, else ValueError.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    if not (isinstance(site, tuple) and len(site) == 2
+            and site[0] in d2l._Intervention.KINDS
+            and isinstance(site[1], (int, np.integer))
+            and 0 <= site[1] < len(model.blks)):
+        raise ValueError(f'not a site of this model: {site!r}')
+    return site[0], int(site[1])
+
+def _intervene_args(model, sites, record, stop_after):
+    """The checked arguments of d2l.intervene: the sites to edit (site ->
+    fn), the sites to record (a set, with stop_after) and stop_after.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    assert isinstance(model, d2l.GPT), 'intervene instruments a d2l.GPT'
+    for blk in model.blks:
+        assert blk.pre_norm, 'intervene needs pre-norm blocks'
+        assert not (blk.training and blk.dropout.p > 0), (
+            'dropout must be inactive: call model.eval()')
+    sites = {_intervene_site(model, s): fn for s, fn in (sites or {}).items()}
+    for site, fn in sites.items():
+        if fn is None:  # recording is record='s job
+            raise ValueError(f'site {site} maps to None; use record=')
+    stop = None if stop_after is None else _intervene_site(model, stop_after)
+    record = {_intervene_site(model, s) for s in record}
+    if stop is not None:  # a stopped forward is for reading
+        record.add(stop)
+    return sites, record, stop
+
+def lm_hub_rows(repo, path, revision, start, stop, column='text'):
+    """Rows start, ..., stop - 1 of one column of a parquet file of a Hub
+    dataset, reading only the row groups that hold them (range requests);
+    returns the values and the compressed bytes read.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    import pyarrow.parquet as pq
+    from huggingface_hub import HfFileSystem
+    with HfFileSystem().open(f'datasets/{repo}@{revision}/{path}',
+                             'rb') as f:
+        pf = pq.ParquetFile(f)
+        md, col = pf.metadata, pf.schema_arrow.names.index(column)
+        ends = np.cumsum([md.row_group(g).num_rows
+                          for g in range(md.num_row_groups)])
+        groups = [g for g, e in enumerate(ends)
+                  if e > start and e - md.row_group(g).num_rows < stop]
+        values = pf.read_row_groups(groups, columns=[column]).column(0)
+        first = ends[groups[0]] - md.row_group(groups[0]).num_rows
+        nbytes = sum(md.row_group(g).column(col).total_compressed_size
+                     for g in groups)
+    return values.to_pylist()[start - first:stop - first], nbytes
+
+def lm_walk_docs(encode, source, rows, subsets, block=1000):
+    """Visit the rows of source = (repo, path, revision) in the order rows
+    gives and keep the first n qualifying documents of each subset in turn;
+    subsets maps a name to (n, take), take(ids) -> ids or None, and
+    encode(text) -> ids. Rows are read a block of block rows at a time.
+    Returns a tensor of documents per subset, and the rows visited (first,
+    last), the blocks read and their compressed bytes.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    docs, cache, used, nbytes, rows = {}, {}, [], 0, iter(rows)
+    for name, (n, take) in subsets.items():
+        kept = []
+        while len(kept) < n:
+            row = next(rows)
+            start = row - row % block
+            if start not in cache:
+                cache[start], b = lm_hub_rows(*source, start, start + block)
+                nbytes += b
+            if (ids := take(encode(cache[start][row - start]))) is not None:
+                kept.append(ids)
+            used.append(row)
+        docs[name] = torch.tensor(kept)
+    return docs, dict(rows=(min(used), max(used)), blocks=len(cache),
+                      nbytes=nbytes)
+
+def lm_round_robin(stride, first=0, blocks=20, block=1000):
+    """Row i of each of the blocks at first + b * stride, then row i + 1.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    return (first + b * stride + i for i in range(block)
+            for b in range(blocks))
+
+def read_conllu(path, stride, max_words):
+    """Every stride-th sentence of a CoNLL-U file, up to max_words words:
+    the text rebuilt with SpaceAfter=No, and per word (start, end, form,
+    UPOS).
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    with open(path, encoding='utf-8') as f:
+        sentences, out, n = f.read().strip().split('\n\n'), [], 0
+    for sentence in sentences[::stride]:
+        text, words, end = '', [], 0
+        for c in (line.split('\t') for line in sentence.split('\n')
+                  if not line.startswith('#')):
+            spaced = 'SpaceAfter=No' not in c[9]
+            if '-' in c[0]:  # a multiword token; its words follow, unspaced
+                end, space = int(c[0].split('-')[1]), spaced
+            elif '.' not in c[0]:  # skip empty nodes
+                words.append((len(text), len(text) + len(c[1]), c[1], c[3]))
+                text += c[1]
+                i = int(c[0])
+                if i == end and space or i > end and spaced:
+                    text += ' '
+        if n + len(words) > max_words:
+            break
+        out.append((text.rstrip(), words))
+        n += len(words)
+    return out
+
+def lm_word_features(model, tokenizer, sentences, layer, batch=32):
+    """Per word of sentences (read_conllu's), at its last token: the token
+    embedding and the stream after block layer, on the CPU. Right padding
+    is safe: a causal model never reads a later position.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    dev, site, emb, hidden = model.token_emb.weight.device, (
+        'resid_post', layer), [], []
+    for i in range(0, len(sentences), batch):
+        chunk = [tokenizer(t, return_offsets_mapping=True,
+                           add_special_tokens=False)
+                 for t, _ in sentences[i:i + batch]]
+        T = max(len(e.input_ids) for e in chunk)
+        X = torch.tensor([e.input_ids + [0] * (T - len(e.input_ids))
+                          for e in chunk], device=dev)
+        with torch.no_grad(), d2l.intervene(model, stop_after=site) as ctx:
+            model(X)
+        H = ctx.cache[site][0]
+        with torch.no_grad():
+            E0 = model.token_emb(X)
+        for j, (e, (_, ws)) in enumerate(zip(chunk, sentences[i:i + batch])):
+            starts = [s for s, _ in e.offset_mapping]
+            pos = [int(np.searchsorted(starts, w[1])) - 1 for w in ws]
+            emb.append(E0[j, pos].cpu())
+            hidden.append(H[j, pos].cpu())
+    return {'embedding': torch.cat(emb), f'block {layer}': torch.cat(hidden)}
+
+def type_tag_baseline(train_types, train_tags, test_types):
+    """Per test word, the most frequent training tag of its word type, or
+    the most frequent training tag for a type unseen in training.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    best = pd.DataFrame({'type': train_types, 'tag': train_tags}).groupby(
+        'type')['tag'].agg(lambda t: t.value_counts().idxmax())
+    default = np.bincount(train_tags).argmax()
+    return np.array([best.get(w, default) for w in test_types])
+
+def cluster_resample(clusters, n_boot=2000, seed=0):
+    """Per replicate, the item indices of a resample of whole clusters
+    (clusters holds one cluster id per item).
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    ids, inverse = np.unique(np.asarray(clusters), return_inverse=True)
+    members = [np.flatnonzero(inverse == g) for g in range(len(ids))]
+    rng = np.random.default_rng(seed)
+    for _ in range(n_boot):
+        yield np.concatenate([members[g] for g in rng.integers(
+            len(ids), size=len(ids))])
+
+def percentile_ci(values, alpha=0.05, names=None):
+    """Percentile endpoints of bootstrap replicates (along axis 0), over
+    the replicates where the statistic is defined; prints how many are not
+    for each statistic (column) named in names.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    values = np.asarray(values, dtype=float)
+    undefined = np.isnan(values).sum(0)
+    for name, k in zip(names or (), np.atleast_1d(undefined)):
+        if k:
+            print(f'  {name}: {k} of {len(values)} replicates undefined, '
+                  'left out')
+    return np.nanquantile(values, [alpha / 2, 1 - alpha / 2], axis=0)
+
+def fmt_ci(mean, ci, digits=3):
+    """A value and its interval as text: 'mean [lo, hi]'.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    return f'{mean:.{digits}f} [{ci[0]:.{digits}f}, {ci[1]:.{digits}f}]'
+
+def detection_stats(y, score, threshold):
+    """Precision and recall of score > threshold as a detector of the
+    boolean labels y, and the AUC of score (Mann-Whitney, mid-ranks).
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    from scipy.stats import rankdata
+    active, n = score > threshold, y.sum()
+    auc = (rankdata(score)[y].sum() - n * (n + 1) / 2) / (n * (len(y) - n))
+    return [(y & active).sum() / active.sum(), (y & active).sum() / n, auc]
+
+def long_csv(T, axes, column):
+    """The array T as CSV bytes, one row per entry: per axis a column that
+    names the entry's index, axes = [(name, labels), ...], then its value
+    in column.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    index = np.indices(T.shape).reshape(T.ndim, -1)
+    named = {name: np.asarray(labels)[i] for (name, labels), i in zip(
+        axes, index)}
+    return pd.DataFrame({**named, column: T.ravel()}).to_csv(
+        index=False).encode()
+
+def block_runs(cells, classes):
+    """(block, class) cells as text, runs of blocks per class in the order
+    of classes: "'subject' 0-3, 7; ' of' 20-27" ('none' if empty).
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    parts = []
+    for c in classes:
+        ls = np.array([l for l, c_ in cells if c_ == c])
+        if len(ls):
+            runs = np.split(ls, np.flatnonzero(np.diff(ls) > 1) + 1)
+            parts.append(f'{c!r} ' + ', '.join(
+                f'{r[0]}-{r[-1]}' if len(r) > 1 else f'{r[0]}' for r in runs))
+    return '; '.join(parts) or 'none'
+
+def lm_write_zip(path, members):
+    """A zip archive of members (name -> bytes), byte-identical for
+    identical members.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    with zipfile.ZipFile(path, 'w') as z:
+        for name, data in sorted(members.items()):
+            info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+            z.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED)
+
+def cache_stream(model, windows, layer, batch=32):
+    """The stream after block layer at the positions >= 1 of windows
+    (N, T), without norm outliers (above 10 times the batch median), as
+    one fp16 tensor in host memory, filled in place.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    site, n, dev = ('resid_post', layer), 0, model.token_emb.weight.device
+    acts = torch.empty(windows[:, 1:].numel(), model.num_hiddens,
+                       dtype=torch.float16)
+    for X in windows.split(batch):
+        with torch.no_grad(), d2l.intervene(model, stop_after=site) as ctx:
+            model(X.to(dev))
+        h = ctx.cache[site][0][:, 1:].flatten(0, 1)
+        norms = h.float().norm(dim=-1)
+        h = h[norms <= 10 * norms.median()]
+        acts[n:n + len(h)] = h.half().cpu()
+        n += len(h)
+    assert torch.isfinite(acts[:n]).all()
+    return acts[:n]
+
+def lm_save_sae(sae, tokens, name):
+    """Write sae in fp16, with its config and its training-token count, as
+    the regenerated artifact name (d2l.lm_save_rerun); sae then holds the
+    fp16 values the file publishes.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    state = {'state_dict': {k: v.half() for k, v in sae.state_dict().items()},
+             'config': dict(d_model=sae.d_model, d_sae=sae.d_sae, k=sae.k,
+                            center=sae.center), 'tokens': tokens}
+    d2l.lm_save_rerun(name, lambda p: torch.save(state, p))
+    sae.load_state_dict(state['state_dict'])
+
+def lm_load_sae(key, device=None):
+    """The TopKSAE that lm_save_sae wrote, registered as DATA_HUB[key],
+    and the number of tokens it was trained on.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    saved = torch.load(d2l.download_keyed(key), map_location='cpu',
+                       weights_only=True)
+    sae = d2l.TopKSAE(**saved['config'])
+    sae.load_state_dict(saved['state_dict'])
+    return sae.to(device), saved['tokens']
+
+def lm_stream(model, docs, site, batch=16):
+    """The activation at site (recorded by d2l.intervene, which stops the
+    forward there) at the positions >= 1 of docs: (docs, positions, d).
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    out, dev = [], model.token_emb.weight.device
+    for X in docs.split(batch):
+        with torch.no_grad(), d2l.intervene(model, stop_after=site) as ctx:
+            model(X.to(dev))
+        out.append(ctx.cache[site][0][:, 1:])
+    return torch.cat(out)
+
+@torch.no_grad()
+def sae_fire_rate(sae, H, chunk=2048):
+    """The fraction of the positions of H (..., d) where each feature of
+    sae fires.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    flat = H.reshape(-1, H.shape[-1])
+    fired = sum((sae.encode(h) > 0).sum(0) for h in flat.split(chunk))
+    return fired / len(flat)
+
+@torch.no_grad()
+def sae_acts(sae, H, feats, chunk=2048):
+    """The activations of the features feats of sae on H (docs, positions,
+    d): (docs, positions, len(feats)), in fp32.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    return torch.cat([sae.encode(h)[:, feats] for h in H.flatten(0, 1).split(
+        chunk)]).view(*H.shape[:2], len(feats)).float()
+
+def char_fraction(text, pattern):
+    """The fraction of the non-space characters of text that match the
+    compiled regular expression pattern (0 for an empty text).
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    chars = [c for c in text if not c.isspace()]
+    return sum(pattern.match(c) is not None for c in chars) / max(
+        len(chars), 1)
+
+@torch.no_grad()
+def lm_doc_ce(model, docs, prefix_ids=(), mask=None, batch=16):
+    """Per document of docs (N, T), after the tokens prefix_ids: the mean
+    cross-entropy of its tokens 1 to T - 1, and the same renormalized over
+    the vocabulary outside the boolean mask (V,) and averaged over the
+    targets outside it. Returns an (N, 2) array.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    dev, P, out = model.token_emb.weight.device, len(prefix_ids), []
+    mask = mask.to(dev)
+    X = torch.cat([torch.tensor(list(prefix_ids), dtype=torch.long).expand(
+        len(docs), P), docs], 1)
+    for Xb in X.split(batch):
+        Xb = Xb.to(dev)
+        z, y = model(Xb)[:, P:-1].float(), Xb[:, P + 1:]
+        z_y = z.gather(-1, y[..., None])[..., 0]
+        ce = z.logsumexp(-1) - z_y
+        ce_rest = z.masked_fill(mask, -torch.inf).logsumexp(-1) - z_y
+        rest = ~mask[y]
+        out.append(torch.stack([ce.mean(1), (ce_rest * rest).sum(1)
+                                / rest.sum(1)], 1).cpu())
+    return torch.cat(out).numpy()
+
+def frontier_envelope(cost, sw):
+    """The monotone envelope of the points (cost, sw): the most switched at
+    each cost or less, costs clipped at 0; one vertex per distinct cost.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    order = np.argsort(cost, kind='stable')
+    x, y = np.clip(cost[order], 0, None), np.maximum.accumulate(sw[order])
+    last = np.append(x[1:] > x[:-1], True)  # ties: keep the last, the most
+    return x[last], y[last]
+
+def frontier_area(cost, sw, cap):
+    """The area under the frontier from cost 0 to cap (linear between the
+    envelope's vertices, flat past the last).
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    grid = np.linspace(0, cap, 101)
+    return np.trapezoid(np.interp(grid, *frontier_envelope(cost, sw)), grid)
+
+def cost_of_half(cost, sw):
+    """The cost at which a strength grid (cost and switched fraction per
+    strength, in increasing strength) first switches half: linear between
+    the first strength that does and the strength before it; NaN if none
+    does. Read along the strengths, not the envelope: past the cliff the
+    cost falls as the output breaks down.
+
+    Defined in :numref:`sec_lm_interpretability`"""
+    j = np.flatnonzero(np.asarray(sw) >= 0.5)
+    if not len(j):
+        return np.nan
+    if j[0] == 0:
+        return float(cost[0])
+    (c0, c1), (s0, s1) = cost[j[0] - 1:j[0] + 1], sw[j[0] - 1:j[0] + 1]
+    return float(c0 + (0.5 - s0) * (c1 - c0) / (s1 - s0))
+
+_R3_DIRECTIVES = ('numref', 'eqref', 'exref', 'ref', 'cite', 'citet', 'label',
+                  'eqlabel', 'exlabel', 'begin_tab', 'end_tab', 'width',
+                  'height', 'maxdepth')
+
+def _r3_caption_head(caption, width=80):
+    """The first sentence of a caption, on one line, at most width chars.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    text = ' '.join(caption.split())
+    head = re.split(r'(?<=[.:;])\s', text, maxsplit=1)[0].rstrip('.:;')
+    return head if len(head) <= width else head[:width - 3].rstrip() + '...'
+
+def _r3_label_titles(sources):
+    """Pass 1 of the reference rewriting: {label: (kind, title, doc_id)}
+    for every :label: in sources ({doc_id: raw markdown}); kind is
+    'Chapter', 'Section', 'Figure' or 'Table' by what the label follows."""
+    titles = {}
+    for doc_id, text in sources.items():
+        heading = None
+        for m in re.finditer(
+                r'^(#{1,6})\s+(.*)$|^\s*:label:`([^`]+)`', text, re.M):
+            if m.group(1):
+                heading = re.sub(r'\s*\{[^}]*\}\s*$', '', m.group(2)).strip()
+                continue
+            label, before = m.group(3), text[:m.start()].rstrip()
+            last = before.rsplit('\n', 1)[-1]
+            image = re.search(r'!\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\([^)\s]*\)'
+                              r'(\{[^}]*\})?\s*$', before[-2000:])
+            if last.startswith('#'):
+                kind = 'Chapter' if label.startswith('chap') else 'Section'
+                title = heading
+            elif image:
+                kind, title = 'Figure', image.group(1)
+            elif last.startswith(':') and not last.startswith(':label'):
+                kind, title = 'Table', last[1:]
+            else:
+                kind, title = 'Section', heading
+            titles.setdefault(label, (kind, title, doc_id))
+    raw = dict(titles)
+    for label, (kind, title, doc_id) in raw.items():  # titles as plain text
+        title = _r3_rewrite_refs(' '.join((title or '').split()), raw, [])
+        if kind in ('Figure', 'Table'):
+            title = _r3_caption_head(title)
+        titles[label] = (kind, title, doc_id)
+    return titles
+
+def _r3_rewrite_refs(line, label_titles, unresolved):
+    """Rewrite the reference directives of one prose line (rule 4); a
+    kind the text already names ('exercise :exref:', 'Table :numref:') is
+    not repeated."""
+    def sub(m):
+        name, arg = m.group(1), m.group(2)
+        before = re.search(r'(\w+)\s*$', m.string[:m.start()])
+        before = before.group(1).lower() if before else ''
+        if name not in _R3_DIRECTIVES:
+            raise ValueError(f'unknown directive :{name}: in {line!r}')
+        if name in ('cite', 'citet'):
+            return ''
+        if name in ('eqref', 'exref'):
+            kind = 'Equation' if name == 'eqref' else 'Exercise'
+            named = before in ('equation', 'equations', 'exercise',
+                               'exercises', 'problem', 'problems')
+            return '\x00' if named else kind
+        if name in ('numref', 'ref'):
+            hit = label_titles.get(arg.strip())
+            if hit is None:
+                unresolved.append(arg.strip())
+                return 'another section'
+            kind, title, _ = hit
+            named = before.rstrip('s') == kind.lower()
+            return (f'"{title}"' if name == 'ref' or named
+                    else f'{kind} "{title}"')
+        return ''  # label, eqlabel, exlabel, width, height inside a line
+    line = re.sub(r'^[ \t]*:(cite|citet):`[^`]*`', '\x01', line)  # join up
+    line = re.sub(r'[ \t]*(?<![\w`]):(cite|citet):`[^`]*`', '', line)
+    line = re.sub(r'(?<![\w`]):([a-z_]+):`([^`]*)`', sub, line)
+    return re.sub(r'[ \t]*\x00', '', line)  # a dropped reference
+
+def clean_d2l_markdown(text, framework='pytorch', keep_exercises=False,
+                       label_titles=None):
+    """One book source as plain text for retrieval, and its metadata: the
+    slide deck cut, framework tabs other than framework dropped, cells as
+    plain python fences, references rewritten as titles, citations and
+    markup removed, exercises dropped (rules 1-8 of the book corpus).
+    Returns (text, meta) with meta keys title, label, headings,
+    cell_ids, unresolved_refs, has_exercises."""
+    lines = text.split('\n')
+    for i, line in enumerate(lines):  # rule 1: cut the slide deck
+        if (line.strip() == '<!-- slides -->'
+                or re.match(r'^::: \{\.(slide|cover)', line)):
+            lines = lines[:i]
+            break
+    if label_titles is None:
+        label_titles = _r3_label_titles({None: '\n'.join(lines)})
+    meta = dict(title=None, label=None, headings=[], cell_ids=[],
+                unresolved_refs=[], has_exercises=False)
+    segs = []  # (kind, text): 'prose' lines, 'code' blocks, 'cell' blocks
+    tab_keep, in_comment, last_heading, i = None, False, None, 0
+    def emit(kind, s, cell_id=None):
+        if tab_keep is not False:
+            segs.append((kind, s, cell_id))
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        if in_comment:  # rule 5: HTML comments
+            if '-->' in line:
+                in_comment, line = False, line.split('-->', 1)[1]
+            else:
+                continue
+        while '<!--' in line:
+            head, tail = line.split('<!--', 1)
+            if '-->' in tail:
+                line = head + tail.split('-->', 1)[1]
+            else:
+                line, in_comment = head, True
+        fence = re.match(r'^(\s*)(`{3,}|~{3,})(.*)$', line)
+        if fence:  # rules 3 and 8: a fence and its body
+            mark, info, body = fence.group(2), fence.group(3).strip(), []
+            while i < len(lines) and not re.match(
+                    rf'^\s*{re.escape(mark[0])}{{{len(mark)},}}\s*$', lines[i]):
+                body.append(lines[i])
+                i += 1
+            if i == len(lines):
+                raise ValueError(f'unclosed fence {line!r}')
+            i += 1
+            if info == 'toc':
+                continue
+            if not info.startswith('{.python'):
+                emit('code', '\n'.join([line, *body, lines[i - 1]]))
+                continue
+            first = next((b for b in body if b.strip()), '')
+            tab = re.match(r'^\s*(?:%%tab|#@tab)\s+(.*)$', first)
+            if tab:
+                fws = {f.strip() for f in tab.group(1).split(',')}
+                if not fws & {framework, 'all'}:
+                    continue
+                body = body[body.index(first) + 1:]
+            code = [b for b in body if b.strip()]
+            imports = [b for b in code if re.match(  # and d2lbook's tabs
+                r'^\s*(import\s|from\s\S+\s+import\s|%matplotlib|'
+                r'%load_ext\s|tab\.interact_select\()', b)]
+            if not code or len(imports) >= 0.9 * len(code):
+                continue
+            cell_id = re.search(r'#([\w-]+)', info)
+            emit('cell', '```python\n' + '\n'.join(body).strip('\n')
+                 + '\n```', cell_id.group(1) if cell_id else None)
+            continue
+        if in_comment and not line.strip():
+            continue
+        tab = re.match(r'^\s*:begin_tab:`([^`]*)`\s*$', line)
+        if tab:  # rule 2: prose tabs
+            if tab_keep is not None:
+                raise ValueError('nested :begin_tab:')
+            fws = {f.strip() for f in tab.group(1).split(',')}
+            tab_keep = bool(fws & {framework, 'all'})
+            continue
+        if re.match(r'^\s*:end_tab:\s*$', line):
+            if tab_keep is None:
+                raise ValueError(':end_tab: without :begin_tab:')
+            tab_keep = None
+            continue
+        if re.match(r'^##\s+Exercises\s*$', line):  # rule 7
+            meta['has_exercises'] = True
+            if not keep_exercises:
+                break
+        label = re.match(r'^\s*:label:`([^`]+)`\s*$', line)
+        if label:  # attach a label to the heading it follows
+            prev = next((s for s in reversed(segs) if s[1].strip()), None)
+            if last_heading is not None and prev is not None and (
+                    prev[1] is last_heading[1]):
+                last_heading[0]['label'] = label.group(1)
+            continue
+        if re.match(r'^\s*:(eqlabel|exlabel|width|height):`[^`]*`\s*$', line):
+            continue
+        if (re.match(r'^\s*:::', line)
+                or re.match(r'^\s*\[Discussions\]\(', line)):
+            continue
+        caption = re.match(r'^:([^\s:`].*)$', line)
+        if caption and not re.match(r'^:[a-z_]+:`', line):  # table caption
+            line = 'Table: ' + caption.group(1)
+        line = _r3_rewrite_refs(line, label_titles, meta['unresolved_refs'])
+        if not line.strip() and tab_keep is not False:
+            segs.append(('prose', '', None))
+            continue
+        heading = re.match(r'^(#{1,6})\s+(.*?)\s*(\{[^}]*\})?\s*$', line)
+        line = line.rstrip()
+        if heading:  # without attributes such as {.unnumbered}
+            line = heading.group(1) + ' ' + heading.group(2)
+        if heading and tab_keep is not False:
+            h = dict(level=len(heading.group(1)), title=heading.group(2),
+                     label=None, char_start=None)
+            meta['headings'].append(h)
+            last_heading = (h, line)
+        emit('prose', line)
+    if tab_keep is not None:
+        raise ValueError('unclosed :begin_tab:')
+    if in_comment:
+        raise ValueError('unclosed HTML comment')
+    # Images become 'Figure: caption'; runs of blank lines collapse (rule 5)
+    out, prose = [], []
+    def flush():
+        s = '\n'.join(prose)
+        s = re.sub(r'!\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\([^)\s]*\)(\{[^}]*\})?',
+                   lambda m: 'Figure: ' + ' '.join(m.group(1).split()), s)
+        s = re.sub(r'\n\x01(?=[.,;:!?)])', '', s).replace('\x01', '')
+        s = re.sub(r'\n\s*\n(\s*\n)+', '\n\n', s)
+        if s.strip():
+            out.append(s.strip('\n'))
+        prose.clear()
+    for kind, s, cell_id in segs:
+        if kind == 'prose':
+            prose.append(s)
+            continue
+        flush()
+        out.append(('cell' if kind == 'cell' else 'code', s, cell_id))
+    flush()
+    text, parts = '', []
+    for part in out:  # prose, code and cells, one blank line apart
+        if parts:
+            text += '\n\n'
+        if isinstance(part, tuple):
+            if part[0] == 'cell':
+                meta['cell_ids'].append(dict(
+                    id=part[2], char_start=len(text),
+                    char_end=len(text) + len(part[1])))
+            text += part[1]
+        else:
+            text += part
+        parts.append(part)
+    text += '\n'
+    # Heading offsets in the cleaned text, in order, outside code fences
+    spans = [(c.start(), c.end()) for c in re.finditer(
+        r'^```.*?^```', text, re.M | re.S)]
+    found = [m for m in re.finditer(r'^(#{1,6})\s+(.*?)\s*$', text, re.M)
+             if not any(a <= m.start() < b for a, b in spans)]
+    if len(found) != len(meta['headings']):
+        raise ValueError('heading count changed during cleaning')
+    for h, m in zip(meta['headings'], found):
+        h['char_start'], h['title'] = m.start(), m.group(2)
+    h1 = next((h for h in meta['headings'] if h['level'] == 1), None)
+    if h1 is not None:
+        meta['title'], meta['label'] = h1['title'], h1['label']
+    return text, meta
+
+def _r3_sentences(text):
+    """Character spans (start, end) of the sentences of a prose text: a
+    sentence ends at '.', '!' or '?' followed by whitespace and an upper-case
+    letter, a digit, a dollar sign or a backtick.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    ends = [m.end() for m in re.finditer(
+        r'(?<=[.!?])["\')\]]?(?=\s+[A-Z0-9$`(])', text)]
+    starts = [0] + [len(text) - len(text[e:].lstrip()) for e in ends]
+    return [(s, e) for s, e in zip(starts, ends + [len(text)]) if e > s]
+
+def _r3_parse_blocks(text):
+    """The blocks of a cleaned document, as (kind, start, end) character
+    spans: 'heading', 'para', 'list', 'table', 'math' ($$ ... $$), 'code'
+    (a fence), 'quote'. Blocks are separated by blank lines; a fence or a
+    display-math block runs to its closing line; a heading line is a block
+    of its own."""
+    blocks, pos, n = [], 0, len(text)
+    line_starts = [0] + [m.end() for m in re.finditer('\n', text)]
+    lines = text.split('\n')
+    k = 0
+    while k < len(lines):
+        line, start = lines[k], line_starts[k]
+        if not line.strip():
+            k += 1
+            continue
+        fence = re.match(r'^\s*(`{3,}|~{3,})', line)
+        if fence or line.strip().startswith('$$'):
+            if fence:
+                close = rf'^\s*{re.escape(fence.group(1)[0])}{{{len(fence.group(1))},}}\s*$'
+            j = k + 1
+            if fence or line.strip() == '$$' or not (
+                    line.strip().endswith('$$') and len(line.strip()) > 2):
+                while j < len(lines) and not (
+                        re.match(close, lines[j]) if fence
+                        else lines[j].strip().endswith('$$')):
+                    j += 1
+                j += 1
+            end = line_starts[j - 1] + len(lines[j - 1]) if j <= len(
+                lines) else n
+            blocks.append(('code' if fence else 'math', start, end))
+            k = j
+            continue
+        if re.match(r'^#{1,6}\s', line):
+            blocks.append(('heading', start, start + len(line)))
+            k += 1
+            continue
+        j = k
+        while (j + 1 < len(lines) and lines[j + 1].strip()
+               and not re.match(r'^(#{1,6}\s|\s*(`{3,}|~{3,})|\s*\$\$)',
+                                lines[j + 1])):
+            j += 1
+        s = line.lstrip()
+        kind = ('table' if s.startswith('|') else 'quote' if s.startswith('>')
+                else 'list' if re.match(r'^([-*+]|\d+\.)\s', s) else 'para')
+        blocks.append((kind, start, line_starts[j] + len(lines[j])))
+        k = j + 1
+    return blocks
+
+def _r3_ntokens(tokenizer, text):
+    """Number of tokens of text, without special tokens.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    return len(tokenizer(text, add_special_tokens=False)['input_ids'])
+
+def _r3_split_block(text, kind, start, end, tokenizer, max_tokens):
+    """Split one block longer than max_tokens into pieces (code at blank
+    lines or def/class lines, math at line ends, prose at sentence ends,
+    a remainder at token windows), as (kind, start, end) spans."""
+    piece = text[start:end]
+    if kind == 'code':  # never right after the opening fence line
+        cuts = [m.start() for m in re.finditer(
+            r'\n(?=\s*\n)|\n(?=(def|class|@)\b)', piece)
+            if m.start() > piece.find('\n')]
+    elif kind in ('math', 'table', 'list'):
+        cuts = [m.start() for m in re.finditer(r'\n', piece)]
+    else:
+        cuts = [e for _, e in _r3_sentences(piece)][:-1]
+    bounds = [0] + sorted(set(cuts)) + [len(piece)]
+    units = [(start + a, start + b) for a, b in zip(bounds, bounds[1:])]
+    out, cur = [], None
+    for a, b in units:
+        if cur is not None and _r3_ntokens(
+                tokenizer, text[cur[0]:b]) <= max_tokens:
+            cur = (cur[0], b)
+            continue
+        if cur is not None:
+            out.append(cur)
+        cur = (a, b)
+        if _r3_ntokens(tokenizer, text[a:b]) > max_tokens:  # token windows
+            for w in chunk_fixed(dict(text=text[a:b]), tokenizer,
+                                 size=max_tokens, overlap=0):
+                out.append((a + w['char_start'], a + w['char_end']))
+            cur = None
+    if cur is not None:
+        out.append(cur)
+    return [(kind, a + len(text[a:b]) - len(text[a:b].lstrip()),
+             a + len(text[a:b].rstrip())) for a, b in out
+            if text[a:b].strip()]
+
+def _r3_chunk_record(doc, tag, k, strategy, start, end, tokenizer, path,
+                     section_label, kinds):
+    """One chunk dict of doc over doc['text'][start:end]."""
+    text = doc['text'][start:end]
+    cells = [c['id'] for c in doc.get('cell_ids', ())
+             if c['char_start'] < end and c['char_end'] > start]
+    body = set(kinds) - {'heading'}
+    kind = ('code' if body == {'code'} else 'table' if body == {'table'}
+            else 'mixed' if 'code' in body else 'prose')
+    return dict(id=f'{tag}:{doc["doc_id"]}#{k:03d}', doc_id=doc['doc_id'],
+                strategy=strategy, text=text, heading_path=list(path),
+                char_start=start, char_end=end,
+                n_tokens=_r3_ntokens(tokenizer, text), kind=kind,
+                cell_ids=[c for c in cells if c], section_label=section_label)
+
+def _r3_heading_path(doc, pos):
+    """(H1..H3 titles, deepest label) in force at character pos of doc."""
+    path, labels = {}, {}
+    for h in doc.get('headings', ()):
+        if h['char_start'] > pos:
+            break
+        if h['level'] <= 3:
+            path = {l: t for l, t in path.items() if l < h['level']}
+            labels = {l: t for l, t in labels.items() if l < h['level']}
+            path[h['level']] = h['title']
+            labels[h['level']] = h['label']
+    label = next((labels[l] for l in sorted(labels, reverse=True)
+                  if labels[l]), None)
+    return [path[l] for l in sorted(path)], label
+
+def chunk_sections(doc, tokenizer, max_tokens=512, min_tokens=64,
+                   tag='sec512'):
+    """Structure-aware chunks of a cleaned document (a dict with doc_id,
+    text, headings, cell_ids): the blocks under each H1-H3 heading packed
+    greedily up to max_tokens; a display-math block stays with the
+    paragraph before it and a following paragraph starting 'where', a code
+    cell with the paragraph before it when both fit; a section under
+    min_tokens merges into its neighbour under the same H2."""
+    text = doc['text']
+    size = lambda bl: sum(_r3_ntokens(tokenizer, text[a:b]) for _, a, b in bl)
+    units, h2 = [], 0  # [H2 count, path, label, heading block, blocks]
+    for kind, a, b in _r3_parse_blocks(text):
+        level = len(text[a:b]) - len(text[a:b].lstrip('#'))
+        if kind == 'heading' and level <= 3:
+            h2 += level <= 2
+            units.append([h2, *_r3_heading_path(doc, a), (kind, a, b), []])
+        elif units:
+            units[-1][4].append((kind, a, b))
+        else:
+            units.append([h2, *_r3_heading_path(doc, a), None, [(kind, a, b)]])
+    merged = []  # a small section joins its neighbour under the same H2
+    for u in units:
+        if merged and merged[-1][0] == u[0] and (
+                size(u[4]) < min_tokens or size(merged[-1][4]) < min_tokens):
+            merged[-1][4].extend([u[3]] + u[4])
+        else:
+            merged.append(u)
+    chunks = []
+    for _, path, label, _, ublocks in merged:
+        groups = []  # atomic runs of blocks
+        for kind, a, b in ublocks:
+            prev = groups[-1] if groups else None
+            glue = prev is not None and (
+                (kind == 'math' and prev[-1][0] in ('para', 'list', 'math'))
+                or (kind == 'para' and prev[-1][0] == 'math'
+                    and text[a:b].lstrip().lower().startswith('where'))
+                or (kind == 'code' and prev[-1][0] == 'para' and _r3_ntokens(
+                    tokenizer, text[prev[0][1]:b]) <= max_tokens))
+            if glue:
+                prev.append((kind, a, b))
+            else:
+                groups.append([(kind, a, b)])
+        pieces = []  # groups that fit, else their blocks, else block pieces
+        for g in groups:
+            if _r3_ntokens(tokenizer, text[g[0][1]:g[-1][2]]) <= max_tokens:
+                pieces.append(g)
+                continue
+            for kind, a, b in g:
+                if _r3_ntokens(tokenizer, text[a:b]) <= max_tokens:
+                    pieces.append([(kind, a, b)])
+                else:
+                    pieces.extend([p] for p in _r3_split_block(
+                        text, kind, a, b, tokenizer, max_tokens))
+        cur = []
+        for p in pieces:
+            if cur and _r3_ntokens(
+                    tokenizer, text[cur[0][1]:p[-1][2]]) > max_tokens:
+                chunks.append((cur, path, label))
+                cur = []
+            cur = cur + p
+        if cur:
+            chunks.append((cur, path, label))
+    out = []
+    for k, (bl, path, label) in enumerate(chunks):
+        a, b = bl[0][1], bl[-1][2]
+        out.append(_r3_chunk_record(doc, tag, k, 'sections', a, b, tokenizer,
+                                    path, label, [x[0] for x in bl]))
+    return out
+
+def chunk_fixed(doc, tokenizer, size=256, overlap=0, tag=None):
+    """Windows of size tokens with overlap tokens shared, over the token
+    stream of doc['text'], cut at character boundaries: a window ends at
+    its last token whose characters it does not share with the next token
+    (a byte-level token can hold part of a character)."""
+    text = doc['text']
+    enc = tokenizer(text, add_special_tokens=False,
+                    return_offsets_mapping=True)
+    offs = enc['offset_mapping']
+    n = len(offs)
+    shared = lambda j: j + 1 < n and offs[j][1] > offs[j + 1][0]
+    windows, i = [], 0
+    while i < n:
+        j = min(i + size, n) - 1
+        while j > i and shared(j):
+            j -= 1
+        windows.append((offs[i][0], offs[j][1]))
+        if j == n - 1:
+            break
+        nxt = max(j + 1 - overlap, i + 1)
+        while nxt < n and nxt > 0 and offs[nxt - 1][1] > offs[nxt][0]:
+            nxt += 1  # never start inside a character
+        i = nxt
+    if tag is None:
+        return [dict(char_start=a, char_end=b) for a, b in windows]
+    out, blocks = [], _r3_parse_blocks(text)
+    for k, (a, b) in enumerate(windows):
+        path, label = _r3_heading_path(doc, a)
+        kinds = [kind for kind, s, e in blocks if s < b and e > a]
+        out.append(_r3_chunk_record(doc, tag, k, 'fixed', a, b, tokenizer,
+                                    path, label, kinds))
+    return out
+
+_R3_EXCLUDED = {  # directory prefix: reason
+    'chapter_language-models': 'Language Models part (self-reference)',
+    'chapter_lm-': 'Language Models part (self-reference)',
+    'chapter_attic': 'Attic', 'chapter_gaussian-processes': 'Attic',
+    'chapter_hyperparameter-optimization': 'Attic',
+    'chapter_recommender-systems': 'Attic',
+    'chapter_natural-language-processing-pretraining': 'retiring NLP chapter',
+    'chapter_natural-language-processing-applications': 'retiring NLP chapter',
+    'chapter_preface': 'front matter', 'chapter_installation': 'front matter',
+    'chapter_notation': 'front matter', 'chapter_references': 'references'}
+_R3_SPLIT_SALT = 'r3-split-v1|'
+R3_TOKENIZER = 'Qwen/Qwen3-0.6B'
+R3_VERSION = 'r3.1'
+
+def _r3_quarto_files(quarto_yml):
+    """[(path without .md, part file or None)] of the chapter files that
+    _quarto.yml lists, in book order, part files included.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    files, part = [], None
+    for line in quarto_yml.split('\n'):
+        m = re.match(r'^\s*-\s+part:\s*(\S+)\.qmd\s*$', line)
+        if m:
+            part = m.group(1)
+            files.append((part, None))
+            continue
+        m = re.match(r'^\s*-\s+(chapter_\S+)\.qmd\s*$', line)
+        if m:
+            files.append((m.group(1), part))
+    return files
+
+def _r3_split_docs(doc_ids):
+    """{doc_id: 'train'|'dev'|'test'}: within each chapter directory the
+    files ordered by sha256 of a salted id; floor(0.15 n + 0.5) to dev, as
+    many to test, the rest to train; chapters of fewer than 4 files train."""
+    by_chapter = collections.defaultdict(list)
+    for d in doc_ids:
+        by_chapter[d.split('/')[0]].append(d)
+    split = {}
+    for docs in by_chapter.values():
+        docs = sorted(docs, key=lambda d: hashlib.sha256(
+            (_R3_SPLIT_SALT + d).encode()).hexdigest())
+        m = math.floor(0.15 * len(docs) + 0.5) if len(docs) >= 4 else 0
+        for i, d in enumerate(docs):
+            split[d] = 'dev' if i < m else 'test' if i < 2 * m else 'train'
+    return split
+
+def _r3_build(read, commit, tokenizer, revision):
+    """The book corpus from the sources at a commit: read(path) returns a
+    file's text at that commit. Returns (manifest, docs, chunkings), with
+    docs a list of document dicts and chunkings {tag: chunk list}."""
+    listed = _r3_quarto_files(read('_quarto.yml'))
+    parts = {p for p, _ in listed if _ is None}
+    included, excluded = [], collections.Counter()
+    for path, part in listed:
+        reason = next((r for pre, r in _R3_EXCLUDED.items()
+                       if path.startswith(pre)), None)
+        if part is None and reason is None:
+            reason = 'part placeholder'
+        if reason is None and path in parts:
+            reason = 'part placeholder'
+        if reason:
+            excluded[(path.split('/')[0], reason)] += 1
+        else:
+            included.append((path, part))
+    raw = {path: read(path + '.md') for path, _ in included}
+    titles = _r3_label_titles(raw)
+    part_titles = {p: re.search(r'^#\s+(.*?)\s*$', read(p + '.md'),
+                                re.M).group(1) for p in parts}
+    split = _r3_split_docs(raw)
+    docs, unresolved = [], collections.Counter()
+    for path, part in sorted(included):
+        text, meta = clean_d2l_markdown(raw[path], label_titles=titles)
+        unresolved.update(meta['unresolved_refs'])
+        docs.append(dict(
+            doc_id=path, title=meta['title'], label=meta['label'],
+            chapter=path.split('/')[0], part=part_titles[part], text=text,
+            headings=meta['headings'], cell_ids=meta['cell_ids'],
+            n_tokens=_r3_ntokens(tokenizer, text),
+            source_sha256=hashlib.sha256(raw[path].encode()).hexdigest(),
+            split=split[path]))
+    chapter_titles = {d['chapter']: d['title'] for d in docs
+                      if d['doc_id'].endswith('/index')}
+    for d in docs:
+        d['chapter_title'] = chapter_titles.get(d['chapter'], d['title'])
+    chunkings = {'sec512': [], 'fix256o0': [], 'fix256o64': []}
+    for d in docs:
+        chunkings['sec512'] += chunk_sections(d, tokenizer)
+        chunkings['fix256o0'] += chunk_fixed(d, tokenizer, 256, 0,
+                                             tag='fix256o0')
+        chunkings['fix256o64'] += chunk_fixed(d, tokenizer, 256, 64,
+                                              tag='fix256o64')
+    def quantiles(xs):
+        return {str(q): int(np.quantile(xs, q, method='nearest'))
+                for q in (0, 0.1, 0.5, 0.9, 0.99, 1)}
+    manifest = dict(
+        corpus_version=R3_VERSION, book_commit=commit,
+        builder_version='build_r3-1',
+        cleaning=dict(framework='pytorch', keep_exercises=False),
+        tokenizer=dict(id=R3_TOKENIZER, revision=revision),
+        included=dict(collections.Counter(p.split('/')[0]
+                                          for p, _ in included)),
+        excluded=[dict(directory=d, reason=r, files=n)
+                  for (d, r), n in sorted(excluded.items())],
+        files={d['doc_id']: d['source_sha256'] for d in docs},
+        doc_split={d['doc_id']: d['split'] for d in docs},
+        counts=dict(docs=len(docs), **{
+            f'docs_{s}': sum(d['split'] == s for d in docs)
+            for s in ('train', 'dev', 'test')},
+            chars=sum(len(d['text']) for d in docs),
+            tokens=sum(d['n_tokens'] for d in docs),
+            **{f'chunks_{t}': len(c) for t, c in chunkings.items()}),
+        token_quantiles={t: quantiles([c['n_tokens'] for c in cs])
+                         for t, cs in chunkings.items()},
+        unresolved_refs=dict(count=sum(unresolved.values()),
+                             labels=dict(sorted(unresolved.items()))),
+        chunking=dict(sec512=dict(strategy='sections', max_tokens=512,
+                                  min_tokens=64),
+                      fix256o0=dict(strategy='fixed', size=256, overlap=0),
+                      fix256o64=dict(strategy='fixed', size=256,
+                                     overlap=64)))
+    return manifest, docs, chunkings
+
+class BookCorpus:
+    """The book corpus under one chunking: chunks (a list of dicts in
+    document order), docs ({doc_id: dict}), the manifest, and views of the
+    chunk texts for a generator ('display'), a dense encoder ('dense') and
+    a word index ('sparse'). Iterating yields the chunks in order;
+    corpus[cid] looks a chunk up by its id.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    def __init__(self, manifest, docs, chunks, tag):
+        self.manifest, self.tag = manifest, tag
+        self.version = manifest['corpus_version']
+        self.docs = {d['doc_id']: d for d in docs}
+        self.chunks = chunks
+        self.ids = [c['id'] for c in chunks]
+        self._index = {c['id']: i for i, c in enumerate(chunks)}
+        self._by_doc = collections.defaultdict(list)
+        for c in chunks:
+            self._by_doc[c['doc_id']].append(c)
+
+    def __len__(self):
+        return len(self.chunks)
+
+    def __iter__(self):
+        return iter(self.chunks)
+
+    def __getitem__(self, chunk_id):
+        return self.chunks[self._index[chunk_id]]
+
+    def header(self, chunk):
+        """'Chapter > Section > Subsection' of a chunk."""
+        doc = self.docs[chunk['doc_id']]
+        path = list(chunk['heading_path'])
+        if not path or path[0] != doc['chapter_title']:
+            path = [doc['chapter_title']] + path
+        return ' > '.join(path)
+
+    def texts(self, view='display', header=True):
+        """Chunk texts, in chunk order, for a view: 'display' (the text),
+        'dense' (code cells cut to their first 30 lines) or 'sparse' (math
+        removed)."""
+        out = []
+        for c in self.chunks:
+            t = c['text']
+            if view == 'dense':
+                t = re.sub(r'(^```python\n)(.*?)(^```)',
+                           lambda m: m.group(1) + _r3_cut_code(m.group(2))
+                           + m.group(3), t, flags=re.M | re.S)
+            elif view == 'sparse':
+                t = _r3_strip_math(t)
+            elif view != 'display':
+                raise ValueError(f'unknown view {view!r}')
+            out.append(self.header(c) + '\n' + t if header else t)
+        return out
+
+    def split_of(self, doc_id):
+        """'train', 'dev' or 'test' of a document."""
+        return self.manifest['doc_split'][doc_id]
+
+    def chunk_split(self, chunk_id):
+        """The split of the document a chunk comes from."""
+        return self.split_of(self[chunk_id]['doc_id'])
+
+    def span_to_chunk_ids(self, doc_id, start, end, min_overlap=0.5):
+        """Ids of the chunks of doc_id that overlap the character span
+        [start, end) by at least min_overlap of the span's or of the
+        chunk's characters."""
+        out = []
+        for c in self._by_doc.get(doc_id, ()):
+            ov = min(end, c['char_end']) - max(start, c['char_start'])
+            if ov > 0 and (ov >= min_overlap * (end - start) or
+                           ov >= min_overlap * (c['char_end'] -
+                                                c['char_start'])):
+                out.append(c['id'])
+        return out
+
+def _r3_cut_code(code, n_lines=30):
+    """The first n_lines lines of a code cell's body, '# ...' if cut."""
+    lines = code.split('\n')
+    return code if len(lines) <= n_lines + 1 else '\n'.join(
+        lines[:n_lines] + ['# ...', ''])
+
+def _r3_strip_math(text):
+    """text with $$...$$ and $...$ spans removed outside code fences."""
+    parts = re.split(r'(^```.*?^```)', text, flags=re.M | re.S)
+    for i in range(0, len(parts), 2):
+        s = re.sub(r'\$\$.*?\$\$', ' ', parts[i], flags=re.S)
+        parts[i] = re.sub(r'(?<!\\)\$[^$\n]+?(?<!\\)\$', ' ', s)
+    return ''.join(parts)
+
+def _r3_read_zip(path, tags=None):
+    """(manifest, docs, {tag: chunks}) from a corpus zip; tags (default
+    all) names the chunkings to read, () none and no documents."""
+    with zipfile.ZipFile(path) as z:
+        manifest = json.loads(z.read('manifest.json'))
+        read = lambda name: [json.loads(l) for l in gzip.decompress(
+            z.read(name)).decode('utf-8').splitlines()]
+        tags = manifest['chunking'] if tags is None else tags
+        docs = read('docs.jsonl.gz') if tags else []
+        chunks = {t: read(f'chunks_{t}.jsonl.gz') for t in tags}
+    return manifest, docs, chunks
+
+def _r3_local(root, tokenizer, revision):
+    """The book corpus rebuilt in memory from a checkout's HEAD."""
+    import subprocess
+    commit = subprocess.run(['git', '-C', root, 'rev-parse', 'HEAD'],
+                            capture_output=True, text=True,
+                            check=True).stdout.strip()
+    read = lambda p: subprocess.run(
+        ['git', '-C', root, 'show', f'{commit}:{p}'], capture_output=True,
+        check=True).stdout.decode('utf-8')
+    manifest, docs, chunks = _r3_build(read, commit, tokenizer, revision)
+    return manifest, docs, chunks
+
+# The released embedders: pooling, padding side and the query instruction
+# format of their model cards; documents get no prefix
+_EMBEDDERS = {
+    'Qwen/Qwen3-Embedding-0.6B': dict(
+        pooling='last', padding_side='left',
+        query_format='Instruct: {task}\nQuery:{query}')}
+# The task in the book's query instruction: the model cards' default. Our
+# own wording, 'Given a question about the book, retrieve passages that
+# answer it', lowered the embedder's MRR@10 on the dev questions, where
+# this one is level with no instruction (sec_lm_text_embeddings)
+BOOK_TASK = ('Given a web search query, retrieve relevant passages that '
+             'answer the query')
+# Registered chunk vectors (sec512 chunks, 'dense' view, float16) by embedder
+_R3_EMB_KEYS = {
+    'Qwen/Qwen3-Embedding-0.6B': 'lm-enc-r3-emb-qwen3emb06b-sec512-v1'}
+
+def _emb_cache_key(corpus_version, tag, view, model_id, revision, max_len,
+                   pooling, prefix):
+    """sha1 naming the chunk vectors of one corpus, view and encoder.
+
+    Defined in :numref:`sec_lm_retrieval`"""
+    return hashlib.sha1('|'.join(map(str, (
+        corpus_version, tag, view, model_id, revision, max_len, pooling,
+        prefix))).encode()).hexdigest()
+
+def _emb_cache_load(key, root=os.path.join('..', 'data', 'lm', 'cache')):
+    """Cached chunk vectors (an array) under key, or None."""
+    path = os.path.join(root, f'emb-{key}.npy')
+    return np.load(path) if os.path.exists(path) else None
+
+def _emb_cache_save(key, X, root=os.path.join('..', 'data', 'lm', 'cache')):
+    """Write chunk vectors under key; return the path."""
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, f'emb-{key}.npy')
+    np.save(path + '.tmp.npy', X)
+    os.replace(path + '.tmp.npy', path)
+    return path
+
+_BOOK_QA_LOADS = collections.Counter()  # loads per split in this process
+
+def _book_qa_read(split, root=os.path.join('..', 'data', 'lm')):
+    """The items of one split of the question set, as dicts; a second load
+    of the test split in one process prints a notice.
+
+    Defined in :numref:`sec_lm_rag`"""
+    if split not in ('train', 'dev', 'test'):
+        raise ValueError(f'unknown split {split!r}')
+    _BOOK_QA_LOADS[split] += 1
+    if split == 'test' and _BOOK_QA_LOADS[split] == 2:
+        print('notice: the test split is loaded a second time in this '
+              'process; decisions belong to train and dev')
+    path = d2l.download_keyed('lm-book-qa-v2', root)
+    with zipfile.ZipFile(path) as z:
+        name = next(n for n in z.namelist()
+                    if n.rsplit('/', 1)[-1] == f'qa_{split}.jsonl')
+        lines = z.read(name).decode('utf-8').splitlines()
+    return [json.loads(l) for l in lines if l.strip()]
+
+class BookQA(list):
+    """Items of the book's question set (dicts), from one split."""
+    def __init__(self, items, split):
+        super().__init__(items)
+        self.split = split
+
+    def stats(self):
+        """Items per question type, answerable and book-specific (no
+        general_knowledge flag)."""
+        df = pd.DataFrame([dict(type=q['type'], answerable=q['answerable'],
+                                book_specific='general_knowledge' not in
+                                q.get('flags', ())) for q in self])
+        if df.empty:
+            return df
+        out = df.groupby('type', sort=False).agg(
+            items=('type', 'size'), answerable=('answerable', 'sum'),
+            book_specific=('book_specific', 'sum'))
+        out.loc['total'] = out.sum()
+        return out
+
+    def subset(self, n, seed=0, stratify='type'):
+        """n items drawn without replacement, in proportion to the counts
+        of stratify (largest remainders), kept in their original order."""
+        rng = np.random.default_rng(seed)
+        groups = collections.defaultdict(list)
+        for i, q in enumerate(self):
+            groups[q[stratify] if stratify else None].append(i)
+        keys = sorted(groups, key=str)
+        quota = {g: n * len(groups[g]) / len(self) for g in keys}
+        take = {g: math.floor(quota[g]) for g in keys}
+        for g in sorted(keys, key=lambda g: take[g] - quota[g])[
+                :n - sum(take.values())]:
+            take[g] += 1
+        picked = sorted(i for g in keys for i in rng.choice(
+            groups[g], size=min(take[g], len(groups[g])), replace=False))
+        return BookQA([self[i] for i in picked], self.split)
+
+# The judge's prompt, version 1: frozen before the book's question set was
+# built (its closed-book flags use it); a change is RAG_JUDGE_V2 and a new
+# question-set version
+RAG_JUDGE_V1 = {
+    'system': ('You grade answers to questions about the textbook Dive into '
+               'Deep Learning. Reply with one line of JSON and nothing '
+               'else.'),
+    'correct': ('correct: true if the answer states every key fact (in any '
+                'wording) and says nothing that contradicts the reference '
+                'answer; otherwise false.'),
+    'faithful': ('faithful: true if every factual statement in the answer is '
+                 'supported by the passages given (ignore the reference '
+                 'answer for this); otherwise false.'),
+    'supported': ('supported: true if the cited passages alone support the '
+                  'answer; false if they do not, or if the answer cites '
+                  'nothing.'),
+    'retry': 'Reply with the JSON line only, in exactly the requested form.'}
+
+# The judge of the RAG section: Qwen3.8-27B with thinking on, chosen
+# 2026-11-14 against frontier-model labels (lm-rag-judge-labels-v1) in its
+# FP8 build; since 2026-11-24 RedHat's W4A16 build of the same weights
+# (Apache-2.0; 16.7 GiB per card), one copy per 24 GB GPU served by vLLM,
+# tested again on both calibration sets (lm-rag-judge-v1cal-v1 and
+# lm-rag-judge-labels-v2). Its protocol is that of chapter 20's judge (EDU_LABELLER_LOCAL,
+# the same weights): greedy, seed 0, at most 12,000 new tokens and no
+# separate budget for the reasoning. The context also holds the longest
+# judge prompt (about 7,200 tokens). The same open weights are served in
+# BF16 on OpenRouter (qwen/qwen3.8-27b, deepinfra/bf16)
+RAG_JUDGE_LOCAL = {'model': 'RedHatAI/Qwen3.8-27B-INT4',
+                   'revision': '71dface38d4cbfa34121f1d446d4a0fa1025f13c',
+                   'vllm': '0.33.0', 'thinking': True,
+                   'max_new_tokens': 12_000, 'max_model_len': 20_480}
+
+def rag_judge_servers(gpus=None, vllm=None):
+    """One d2l.LocalChatServer per GPU (default: every visible GPU), each
+    serving the judge (RAG_JUDGE_LOCAL) with vLLM on that GPU alone,
+    offline from the local Hub cache, from the executable vllm (default:
+    the environment variable D2L_VLLM, else `vllm` on the PATH). vLLM lives
+    in an environment of its own, since it pins its own PyTorch. At most 32
+    sequences: the linear-attention layers' state cache holds 54, and at
+    the default of 64 vLLM refuses to start. A server takes 0.95 of an idle
+    card; on a card that already holds memory (this process's own, say) it
+    takes what is free less 1.5 GiB.
+
+    Defined in :numref:`sec_lm_rag`"""
+    import shutil  # not in the d2l library preamble
+    import subprocess
+    exe = vllm or os.environ.get('D2L_VLLM') or shutil.which('vllm')
+    if exe is None:
+        raise RuntimeError('no vLLM: install it in its own environment and '
+                           'set D2L_VLLM to its vllm executable')
+    if gpus is None:
+        vis = os.environ.get('CUDA_VISIBLE_DEVICES')
+        gpus = (vis.split(',') if vis else
+                [str(i) for i in range(torch.cuda.device_count())])
+    servers, j = [], d2l.RAG_JUDGE_LOCAL
+    for g in gpus:  # nvidia-smi reads memory without opening a CUDA context
+        used, total = map(int, subprocess.run(
+            ['nvidia-smi', '-i', str(g), '--query-gpu=memory.used,'
+             'memory.total', '--format=csv,noheader,nounits'], check=True,
+            capture_output=True, text=True).stdout.split(','))
+        frac = 0.95 if used <= 100 else min(0.95, (total - used - 1536)
+                                            / total)
+        servers.append(d2l.LocalChatServer([
+            'env', f'CUDA_VISIBLE_DEVICES={g}', 'HF_HUB_OFFLINE=1', exe,
+            'serve', j['model'], '--revision', j['revision'],
+            '--max-model-len', str(j['max_model_len']), '--max-num-seqs',
+            '32', '--gpu-memory-utilization', f'{frac:.3f}',
+            '--language-model-only', '--limit-mm-per-prompt',
+            '{"image": 0, "video": 0}', '--reasoning-parser', 'qwen3',
+            '--seed', '0', '--host', '127.0.0.1', '--port', '{port}']))
+    return servers
+
+def rag_judge_client(url='http://127.0.0.1/v1', cache=None, mode='replay',
+                     timeout=3600.0):
+    """A d2l.ChatAPI for the judge served at url, thinking on; the request
+    hash keeps the host only, so a recorded cache replays with no server.
+    timeout: the seconds a request may take (a reply of 12,000 tokens takes
+    minutes at the server's full load)."""
+    return d2l.ChatAPI(url, d2l.RAG_JUDGE_LOCAL['model'], cache=cache,
+                       mode=mode, timeout=timeout, default_params={
+                           'extra_body': {'chat_template_kwargs': {
+                               'enable_thinking': True}}})
+
+def _rag_abstained(answer):
+    """Whether an answer abstains: it contains the abstention sentence
+    (case, whitespace, quotes, emphasis and the final period ignored),
+    alone or with an explanation of what the passages lack. Generators
+    asked to reply with the sentence alone often explain first.
+
+    Defined in :numref:`sec_lm_rag`"""
+    norm = lambda s: re.sub(r'[\s"\'*]+', ' ', s).strip().rstrip('.').lower()
+    return norm(d2l.ABSTAIN) in norm(answer)
+
+def _rag_judge_messages(item, answer, context_texts, cited_ids):
+    """The judge's chat messages (RAG_JUDGE_V1) for the verdicts it has to
+    give on one answer: 'correct' always, 'faithful' and 'supported' when
+    there are passages."""
+    p = d2l.RAG_JUDGE_V1
+    facts = '\n'.join(f'- {f}' for f in item['key_facts']) or '- (none)'
+    parts = [f'Question: {item["question"]}',
+             f'Reference answer: {item["reference"]}', f'Key facts:\n{facts}']
+    keys = ['correct']
+    if context_texts:
+        keys += ['faithful', 'supported']
+        parts.append('Passages given to the system:\n' + '\n\n'.join(
+            f'[{n}] {t}' for n, t in enumerate(context_texts, start=1)))
+        parts.append('Cited passages: ' + (', '.join(
+            f'[{n}]' for n in cited_ids) if cited_ids else 'none'))
+    form = json.dumps({k: True for k in keys})
+    parts += [f'Answer to grade: {answer}', 'Decide:\n' + '\n'.join(
+        p[k] for k in keys), f'Reply exactly in this form: {form}']
+    return [{'role': 'system', 'content': p['system']},
+            {'role': 'user', 'content': '\n\n'.join(parts)}]
+
+def _rag_judge_replies(judge, tokenizer, messages, thinking, max_new_tokens,
+                       batch_size):
+    """The judge's replies to a list of chat messages, each the text after
+    its reasoning ('</think>'), None when the reply was cut off at
+    max_new_tokens, or the exception of a request that failed in transport
+    (an endpoint that refused, timed out or answered with an error after
+    the client's retries: no reply, so not a malformed one). judge is a
+    d2l.ChatAPI (greedy, seed 0; batch_size requests in flight) or a
+    Transformers model with its tokenizer."""
+    if hasattr(judge, 'achat'):  # an OpenAI-compatible endpoint
+        import asyncio  # not in the d2l library preamble
+        import concurrent.futures
+        batch = d2l.chat_batch(judge, [dict(
+            messages=m, max_tokens=max_new_tokens, temperature=0, seed=0)
+            for m in messages], concurrency=batch_size)
+        if hasattr(judge, '_run'):  # a d2l.ChatAPI: its private event loop,
+            out = judge._run(batch)  # the same for every batch, so its HTTP
+        else:                        # connections never outlive their loop
+            # A thread of its own: a notebook's kernel already runs an
+            # event loop, in which asyncio.run refuses to start
+            with concurrent.futures.ThreadPoolExecutor(1) as pool:
+                out = pool.submit(asyncio.run, batch).result()
+        return [r if isinstance(r, BaseException)  # no reply at all
+                else None if r.finish_reason == 'length'
+                else (r.text or '').split('</think>')[-1] for r in out]
+    gens = d2l.generate(judge, tokenizer, messages,
+                        max_new_tokens=max_new_tokens, chat=True,
+                        enable_thinking=thinking, batch_size=batch_size)
+    if not thinking:
+        return [g.text for g in gens]
+    return [None if g.finish_reason == 'length' and '</think>' not in g.text
+            else g.text.split('</think>')[-1] for g in gens]
+
+def _rag_parse_json(text, keys):
+    """{key: bool} from the first JSON object in a reply that has every
+    one of keys as a boolean (or 'yes'/'no', 'true'/'false'); None if
+    there is none."""
+    for m in re.finditer(r'\{[^{}]*\}', text):
+        try:
+            obj = json.loads(m.group(0))
+        except ValueError:
+            continue
+        out = {}
+        for k in keys:
+            v = obj.get(k)
+            if isinstance(v, str) and v.strip().lower() in (
+                    'yes', 'no', 'true', 'false'):
+                v = v.strip().lower() in ('yes', 'true')
+            if not isinstance(v, bool):
+                break
+            out[k] = v
+        else:
+            return out
+    return None
+
+def _rag_rewrite_prompt(question):
+    """Chat messages asking for a short search query for a question.
+
+    Defined in :numref:`sec_lm_rag`"""
+    return [{'role': 'system', 'content': (
+                'You turn questions about the textbook Dive into Deep '
+                'Learning into search queries.')},
+            {'role': 'user', 'content': (
+                'Rewrite the question as a search query of at most 15 '
+                'words. Keep its technical terms, names and code '
+                f'identifiers. Reply with the query only.\n\nQuestion: '
+                f'{question}')}]
+
+def _rag_hyde_prompt(question):
+    """Chat messages asking for a hypothetical passage that answers a
+    question (HyDE: the dense side embeds the passage)."""
+    return [{'role': 'user', 'content': (
+        'Write a passage of at most 100 words from a deep learning '
+        'textbook that answers the question. Reply with the passage '
+        f'only.\n\nQuestion: {question}')}]
+
+def _rag_decompose_prompt(question):
+    """Chat messages asking to split a question into at most two
+    self-contained questions, one per line."""
+    return [{'role': 'user', 'content': (
+        'If the question asks about two things, write two self-contained '
+        'questions, one per line; otherwise repeat the question. Reply '
+        f'with the questions only.\n\nQuestion: {question}')}]
+
+def _rag_verify_prompt(sentence, passages):
+    """Chat messages asking whether the passages (chunk dicts) support
+    every fact of one sentence; the answer is read as P(yes)."""
+    text = '\n\n'.join(f'[{n}] {p["text"]}'
+                       for n, p in enumerate(passages, start=1))
+    return [{'role': 'user', 'content': (
+        f'Passages:\n{text}\n\nStatement: {sentence}\n\nDo the passages '
+        'support every fact in the statement? Answer yes or no.')}]
+
+def _rag_fix_prompt(question, hits, variant, abstain=None):
+    """The grounded prompt of rag_prompt changed by one pre-registered fix:
+    'quote' (copy the supporting sentences with their passage numbers,
+    then answer after 'Answer:') or 'rule_after' (the abstention rule
+    after the passages, in the user turn, instead of the system turn)."""
+    abstain = abstain or d2l.ABSTAIN
+    msgs = d2l.rag_prompt(question, hits, abstain)
+    if variant == 'quote':
+        msgs[1]['content'] = msgs[1]['content'].replace(
+            'Answer in at most four sentences.',
+            'First write "Quotes:" and copy the sentences of the passages '
+            'that answer the question, each followed by its passage number '
+            'such as [2]. Then write "Answer:" and answer in at most four '
+            'sentences, citing the passages.')
+    elif variant == 'rule_after':
+        rule = 'If the passages do not contain the answer, reply exactly: '
+        msgs[0]['content'] = msgs[0]['content'].replace(
+            rule + abstain, '').strip()
+        msgs[1]['content'] += f'\n{rule}{abstain}'
+    elif variant != 'fixed':
+        raise ValueError(f'unknown prompt variant {variant!r}')
+    return msgs
+
+def _rag_quoted_answer(text):
+    """The answer part of a 'quote, then answer' reply (all of it when the
+    reply has no 'Answer:')."""
+    head, sep, tail = text.rpartition('Answer:')
+    return tail.strip() if sep else text.strip()
+
+def _rag_records(paths, on=('config', 'qid')):
+    """The records of several JSON-lines run files (missing paths skipped)
+    as one DataFrame; the columns on identify a record and may not
+    repeat."""
+    frames = [d2l.read_jsonl(p) for p in paths if p and os.path.exists(p)]
+    df = (pd.concat(frames, ignore_index=True) if frames
+          else pd.DataFrame(columns=list(on)))
+    dup = df.duplicated(list(on))
+    if dup.any():
+        raise ValueError(f'{dup.sum()} records repeat {on}, e.g. '
+                         f'{df[dup].iloc[0][list(on)].tolist()}')
+    return df
+
+RAG_GENERATOR = 'Qwen/Qwen3.5-9B'  # revision pinned in the notebooks
+RAG_RERANKER = 'Qwen/Qwen3-Reranker-0.6B'
+RAG_ARTIFACTS = {  # name: (registered key, the file a regeneration writes)
+    'rag-gen-base': ('lm-rag-gen-base-v2', 'lm-rag-gen-base.jsonl'),
+    'rag-gen-stages': ('lm-rag-gen-stages-v3', 'lm-rag-gen-stages.jsonl'),
+    'rag-gen-fix': ('lm-rag-gen-fix-v3', 'lm-rag-gen-fix.jsonl'),
+    'rag-judge': ('lm-rag-judge-v8', 'lm-rag-judge.jsonl'),
+    'rag-judge-cache': ('lm-rag-judge-cache-v8', 'lm-rag-judge-cache.zip'),
+    'rag-cards': ('lm-rag-cards-v3', 'lm-rag-cards.jsonl')}
+
+# The baseline: section chunks, hybrid retrieval, the first five chunks in
+# rank order within 3,000 tokens, the fixed prompt, 300 new tokens, batches
+# of eight prompts
+RAG_BASE = dict(chunking='sections', context='retrieved', k=5, budget=3000,
+                order='rank', rewrite=None, rerank_k=None, prompt='fixed',
+                verify=False, abstain_below=None, max_new_tokens=300,
+                batch=8, shuffle=None)
+RAG_CONFIGS = {  # name: what changes against the baseline
+    'closed': dict(RAG_BASE, context='none'),  # no passages: closed book
+    'base': RAG_BASE,
+    'oracle': dict(RAG_BASE, context='gold'),  # the gold chunks only
+    'base-repeat': dict(RAG_BASE, shuffle=1),  # same prompts, other batches
+    'fixed': dict(RAG_BASE, chunking='fixed', k=None, budget='base'),
+    'fixed-over': dict(RAG_BASE, chunking='fixed', k=None, budget='base',
+                       over=255),  # up to a window past the base's tokens
+    'rewrite-rerank': dict(RAG_BASE, rewrite='generator', rerank_k=50),
+    'reverse': dict(RAG_BASE, order='reverse'),
+    'budget-1500': dict(RAG_BASE, k=None, budget=1500),
+    'budget-6000': dict(RAG_BASE, k=None, budget=6000, batch=4)}
+RAG_STAGES = ['fixed', 'rewrite-rerank', 'reverse', 'budget-1500',
+              'budget-6000']
+RAG_CONTROLS = ['fixed-over']  # checks a stage's result; not a candidate
+RAG_FIXES = {  # failure class: its fix, written down before any is counted
+    'not_retrieved': dict(RAG_BASE, rewrite='fuse'),  # the query's ranking
+    'ranked_low': dict(RAG_BASE, rerank_k=100, k=8),
+    'ignored': dict(RAG_BASE, prompt='quote', order='edges',
+                    max_new_tokens=500),
+    'unsupported': dict(RAG_BASE, verify=True),
+    'false_answer': dict(RAG_BASE, abstain_below='train'),  # tuned on train
+    'false_abstain': dict(RAG_BASE, prompt='rule_after')}
+RAG_CONFIGS.update({f'fix-{c}': v for c, v in RAG_FIXES.items()})
+
+_RAG_LOADED = {}  # the generator and its tokenizer while they are loaded
+
+def _rag_rerun():
+    """The RAG runs this run regenerates (d2l.lm_rerun of RAG_ARTIFACTS):
+    regenerating the judge's cache regenerates the judge; the runs must
+    come in their order, each result registered before the next.
+
+    Defined in :numref:`sec_lm_rag`"""
+    rerun = d2l.lm_rerun(d2l.RAG_ARTIFACTS)
+    if 'rag-judge-cache' in rerun:  # the judge's cache is written with it
+        rerun.add('rag-judge')
+    order = ('run order, each result registered before the next: '
+             'rag-gen-base; rag-judge (until every answer is judged); '
+             'rag-cards; rag-gen-stages; rag-judge; rag-gen-fix; rag-judge')
+    assert not ('rag-judge' in rerun and rerun & {'rag-gen-stages',
+                                                  'rag-gen-fix'}), order
+    assert not ('rag-gen-fix' in rerun and rerun & {'rag-gen-base',
+                                                    'rag-gen-stages'}), order
+    return rerun
+
+def _rag_settings(name):
+    """What the answers of configuration name are made with (JSON): its
+    entry of RAG_CONFIGS, the models at their revisions, the corpus, the
+    BM25 parameters, the embedder's task and the question set. Reading the
+    records checks it."""
+    gen, emb, rr = d2l.RAG_GENERATOR, d2l.DEFAULT_EMBEDDER, d2l.RAG_RERANKER
+    rev = {gen: d2l.HF_REVISIONS[gen],
+           **{m: d2l.HF_ENCODER_REVISIONS[m] for m in (emb, rr)}}
+    return json.dumps(dict(
+        d2l.RAG_CONFIGS[name], generator=f'{gen}@{rev[gen]}',
+        corpus=d2l.R3_VERSION, embedder=f'{emb}@{rev[emb]}',
+        reranker=f'{rr}@{rev[rr]}', bm25=d2l.BookRetriever.BM25_PARAMS,
+        task=d2l.BOOK_TASK, qa='lm-book-qa-v2'), sort_keys=True)
+
+def _rag_run_path(name, rerun):
+    """The file of RAG artifact name that this run regenerates (name in
+    rerun), else the registered one, else None (not registered yet)."""
+    key, file = d2l.RAG_ARTIFACTS[name]
+    if name in rerun:
+        return os.path.join('..', 'data', 'lm', 'rerun', file)
+    return d2l.lm_registered(key)
+
+def _rag_generator():
+    """The generator (RAG_GENERATOR) and its tokenizer, loaded on first use,
+    on the first GPU (never split over two visible cards)."""
+    if not d2l._RAG_LOADED:
+        gpu = torch.cuda.is_available()
+        d2l._RAG_LOADED['gen'] = d2l.load_hf(
+            d2l.RAG_GENERATOR, d2l.HF_REVISIONS[d2l.RAG_GENERATOR],
+            dtype=torch.bfloat16 if gpu else torch.float32,
+            device_map={'': 0} if gpu else 'auto')
+    return d2l._RAG_LOADED['gen']
+
+def _rag_free_generator():
+    """Drop the generator and free its memory."""
+    d2l._RAG_LOADED.clear()
+    d2l.lm_free()
+
+def _rag_gold_context(item, corpus):
+    """The chunks of an item's gold spans (not the alternatives), in span
+    order."""
+    ids = [i for s in item['gold_spans'] for i in corpus.span_to_chunk_ids(
+        s['doc_id'], s['char_start'], s['char_end'])]
+    return [corpus[i] for i in dict.fromkeys(ids)]
+
+def _rag_run_config(name, items, retrievers, keep_gen, depth=50,
+                    budgets=None, threshold=None):
+    """Answer records of configuration name (RAG_CONFIGS) on items, in item
+    order. retrievers maps each chunking to its BookRetriever; keep_gen:
+    the generator stays on the card while the retriever works; depth: the
+    ranking kept; budgets (qid: tokens) sets each question's budget for a
+    configuration whose budget is 'base'; threshold: the reranker score
+    below which the pipeline abstains."""
+    c, items = d2l.RAG_CONFIGS[name], list(items)
+    budget = d2l.RAG_BASE['budget']
+    assert (c['budget'] == 'base') == (budgets is not None), name
+    order = list(range(len(items)))
+    if c['shuffle'] is not None:  # other batches for the same prompts
+        random.Random(c['shuffle']).shuffle(order)
+    items = [items[i] for i in order]
+    if not (keep_gen or c['rewrite']):  # retrieval without the generator
+        d2l._rag_free_generator()
+    assert keep_gen or not c['rewrite'], 'the rewriter needs the card too'
+    pipe = d2l.RAGPipeline(  # the generator joins when it is needed
+        retrievers[c['chunking']],
+        *(d2l._rag_generator() if c['rewrite'] else (None, None)),
+        k=c['k'], order=c['order'],
+        budget_tokens=budget if c['budget'] == 'base' else c['budget'],
+        rewrite=c['rewrite'], rerank_k=c['rerank_k'], depth=depth,
+        max_new_tokens=c['max_new_tokens'], prompt=c['prompt'],
+        verify=c['verify'], abstain_below=threshold)
+    if c['context'] == 'none':
+        ctx = [dict(query_used=None, ranked_ids=[], context=None)
+               for _ in items]
+    else:
+        ctx = pipe.prepare(items, None if budgets is None else
+                           [budgets[q['qid']] for q in items])
+    if c['context'] == 'gold':  # unanswerable items keep the retrieved
+        corpus = retrievers['sections'].corpus
+        for p, q in zip(ctx, items):
+            if q['answerable']:
+                p['context'] = d2l.assemble_context(
+                    d2l._rag_gold_context(q, corpus), budget, k=c['k'])[0]
+    pipe.model, pipe.tokenizer = d2l._rag_generator()
+    res = pipe.answer(items, batch_size=c['batch'], contexts=ctx)
+    recs = [dict(config=name, split=q['split'],
+                 settings=d2l._rag_settings(name),
+                 **{k: v for k, v in r._asdict().items() if k != 'question'})
+            for q, r in zip(items, res)]
+    return [r for _, r in sorted(zip(order, recs), key=lambda t: t[0])]
+
+def _rag_run_configs(names, items, *args, **kwargs):
+    """_rag_run_config for each name, printing its minutes and peak
+    memory."""
+    recs = []
+    for name in names:
+        t = time.time()
+        recs += d2l._rag_run_config(name, items, *args, **kwargs)
+        print(f'{name}: {(time.time() - t) / 60:.1f} min, {d2l.lm_peak()}')
+    return recs
+
+def _rag_answer_key(r):
+    """What a verdict depends on: the answer, its context and citations
+    (a regenerated answer needs a new verdict).
+
+    Defined in :numref:`sec_lm_rag`"""
+    return hashlib.sha1(json.dumps([r['answer'], list(r['context_ids']), [
+        int(n) for n in r['cited_ids']]]).encode()).hexdigest()[:16]
+
+def _rag_save_gens(name, recs):
+    """Save the answer records of RAG artifact name, a table keyed by
+    configuration and question."""
+    d2l.lm_save_table(d2l.RAG_ARTIFACTS[name][1], pd.DataFrame(recs),
+                      on=['config', 'qid'], key=d2l.RAG_ARTIFACTS[name][0])
+
+def _rag_load_gens(rerun):
+    """Every answer made so far, one row per (configuration, question),
+    with the answer_sha its verdict must carry; each configuration's
+    settings are checked against _rag_settings."""
+    df = d2l._rag_records([d2l._rag_run_path(n, rerun) for n in (
+        'rag-gen-base', 'rag-gen-stages', 'rag-gen-fix')])
+    for name, s in (df.groupby('config')['settings'] if len(df) else []):
+        assert (s == d2l._rag_settings(name)).all(), f'{name}: other settings'
+    if len(df):  # by the current rule, not the one of the run that wrote it
+        df['abstained'] = [d2l._rag_abstained(a) for a in df.answer]
+    return df.assign(answer_sha=[d2l._rag_answer_key(r)
+                                 for r in df.to_dict('records')])
+
+def _rag_load_judgments(path):
+    """Judgment records, verdicts as True, False or None; judge (model@
+    revision) is None on records from before it was recorded, and
+    max_new_tokens of rows from before the re-judging is 3,000, the first
+    judge's limit."""
+    df = d2l._rag_records([path], on=['config', 'qid', 'concurrency'])
+    for k in ('correct', 'faithful', 'supported'):
+        df[k] = [None if v is None or v != v else bool(v)
+                 for v in df.get(k, [])]
+    for k in ('backend', 'answer_sha', 'judge'):
+        df[k] = [None if v != v else v
+                 for v in df.get(k, [None] * len(df))]
+    df['max_new_tokens'] = [3000 if v is None or v != v else int(v)
+                            for v in df.get('max_new_tokens',
+                                            [None] * len(df))]
+    return df
+
+def _rag_clusters(items, corpus):
+    """The document of each item (qid: doc_id), the unit the bootstrap
+    resamples: that of its first gold span, else of its anchor chunk.
+
+    Defined in :numref:`sec_lm_rag`"""
+    return {q['qid']: (q['gold_spans'] or [{'doc_id': corpus[
+        q['anchor_ids'][0]]['doc_id']}])[0]['doc_id'] for q in items}
+
+def _rag_signflip_p(d, cluster, n=10_000):
+    """Two-sided sign-flip p of the mean of per-document mean
+    differences."""
+    m = np.array([d[cluster == c].mean() for c in np.unique(cluster)])
+    flips = np.random.default_rng(0).choice([-1.0, 1.0], (n, len(m)))
+    return np.mean(np.abs(flips @ m) >= np.abs(m.sum()) - 1e-12)
+
+def _rag_ci(a, b=None, cluster=None):
+    """The bootstrap of the mean of per-question scores a (or of a - b,
+    paired), NaNs dropped, resampling documents when there are 30 or
+    more, else questions: (result or None, by documents, a, b,
+    cluster)."""
+    import warnings  # not in the d2l library preamble
+    a = np.asarray(a, float)
+    b = None if b is None else np.asarray(b, float)
+    keep = ~np.isnan(a) & (True if b is None else ~np.isnan(b))
+    a, cluster = a[keep], np.asarray(cluster)[keep]
+    b = None if b is None else b[keep]
+    by_doc = len(set(cluster)) >= 30
+    if len(a) < 2:
+        return None, by_doc, a, b, cluster
+    with warnings.catch_warnings():  # few items: _rag_boot's * says so
+        warnings.simplefilter('ignore')
+        r = (d2l.bootstrap_ci(a, cluster=cluster if by_doc else None)
+             if b is None else d2l.paired_bootstrap(
+                 a, b, cluster=cluster if by_doc else None))
+    return r, by_doc, a, b, cluster
+
+def _rag_boot(a, b=None, cluster=None):
+    """Mean of per-question scores a (or of a - b, paired), NaNs dropped,
+    with a 95% interval that resamples documents, marked * below 100
+    questions; below 30 documents questions are resampled instead, marked
+    + (and a paired difference gets a document-level sign-flip p)."""
+    r, by_doc, a, b, cluster = d2l._rag_ci(a, b, cluster)
+    if r is None:
+        return 'n/a'
+    f = '.3f' if b is None else '+.3f'
+    out = f'{r.mean:{f}} [{r.ci[0]:{f}}, {r.ci[1]:{f}}]'
+    if by_doc:
+        return out + ('' if len(a) >= 100 else '*')
+    if b is None:
+        return out + '+'
+    p = d2l._rag_signflip_p(a - b, cluster)
+    return out + f'+ (sign-flip p {p:.3f})'
+
+def _rag_paired(a, b, col, mask=None):
+    """Paired difference a - b of score col on the questions both score
+    tables have (mask: a filter of the merged rows)."""
+    m = a.merge(b, on='qid', suffixes=('_a', '_b'))
+    if mask is not None:
+        m = m[mask(m)]
+    return d2l._rag_boot(m[f'{col}_a'], m[f'{col}_b'], m.cluster_a)
+
+def _rag_scores(config, split, gens, jud, retrievers, items, cluster,
+                concurrency=8):
+    """One row per judged answer of a configuration on a split, with
+    per-question scores (NaN where a score does not apply, and accuracy NaN
+    where the judge gave no verdict: an unjudged answer is left out). gens:
+    the answer records (_rag_load_gens); jud: the judgment records, of
+    which those judged at concurrency count; retrievers maps a chunking to
+    its BookRetriever; items: qid to item; cluster: qid to document."""
+    verdicts = ['correct', 'faithful', 'supported']
+    k, budget = d2l.RAG_BASE['k'], d2l.RAG_BASE['budget']
+    g = gens[(gens.config == config) & (gens.split == split)]
+    j = jud[jud.concurrency == concurrency][['config', 'qid', 'answer_sha']
+                                            + verdicts]
+    df = g.merge(j, on=['config', 'qid', 'answer_sha']).sort_values(
+        'qid', ignore_index=True)
+    corpus = retrievers[d2l.RAG_CONFIGS[config]['chunking']].corpus
+    its = [items[q] for q in df.qid]
+    ans = np.array([q['answerable'] for q in its])
+    rel = [d2l.gold_chunk_ids(q, corpus) for q in its]
+    cm = d2l.citation_metrics(df.to_dict('records'), its, corpus)
+    has_ctx = df.context_ids.map(len).to_numpy() > 0
+    answered = has_ctx & ~df.abstained.to_numpy(bool)
+    flag = lambda col: np.array([np.nan if v is None else float(v)
+                                 for v in df[col]])
+    return pd.DataFrame({
+        'qid': df.qid, 'cluster': [cluster[q] for q in df.qid],
+        'answerable': ans, 'type': [q['type'] for q in its],
+        'book_specific': ['general_knowledge' not in q['flags']
+                          for q in its],
+        'accuracy': flag('correct'),  # NaN: unjudged, left out
+        'faithful': np.where(answered, flag('faithful'), np.nan),
+        'supported': np.where(answered, flag('supported'), np.nan),
+        'cite_precision': np.where(ans, cm.precision, np.nan),
+        'cite_recall': np.where(ans, cm.recall, np.nan),
+        'abstained': df.abstained.astype(float),
+        'hit': np.where(ans, [float(bool(r & set(c))) for r, c in zip(
+            rel, df.context_ids)], np.nan),
+        f'recall@{k}': np.where(ans & has_ctx, [float(bool(r & set(x[:k])))
+                                                for r, x in zip(
+                                                    rel, df.ranked_ids)],
+                                np.nan),
+        f'cov@{budget}': np.where(ans & has_ctx, [float(d2l.cov_at_budget(
+            x, q, corpus, budget)) for x, q in zip(df.ranked_ids, its)],
+            np.nan),
+        'answer': df.answer, 'n_prompt_tokens': df.n_prompt_tokens,
+        'n_new_tokens': df.n_new_tokens, 'latency_s': df.latency_s,
+        'record': df.to_dict('records'),
+        'verdicts': df[verdicts].to_dict('records')})
+
+def _rag_ready(configs, split, gens, jud, rerun, concurrency=8):
+    """Whether every answer of each configuration on split carries a
+    verdict on that very answer (answer_sha); says which do not. Partial
+    or stale judgments are never reported: between judging runs a
+    configuration is left out, and a normal run stops on one."""
+    k = jud[jud.concurrency == concurrency]  # not judged: gens may be new
+    j = set(zip(k.config, k.qid, k.answer_sha))
+    missing = {}
+    for c in configs:
+        g = gens[(gens.config == c) & (gens.split == split)]
+        n = sum(x not in j for x in zip(g.config, g.qid, g.answer_sha))
+        if n or not len(g):
+            missing[c] = (f'{n} of {len(g)} answers lack a verdict' if len(g)
+                          else 'no answers')
+    if missing:
+        print(f'not ready on {split}: {missing}')
+        assert rerun or all(m == 'no answers' for m in missing.values()), (
+            'registered answers without verdicts: register the judge run')
+    return not missing
+
+d2l.DATA_HUB['SNLI'] = (
+    'https://nlp.stanford.edu/projects/snli/snli_1.0.zip',
+    '9fcde07509c7e87ec61c640c1b2753d9041758e4')
+
+d2l.DATA_HUB['aclImdb'] = (d2l.DATA_URL + 'aclImdb_v1.tar.gz', 
+                          '01ada507287d82875905620988597833ad4e0903')
+
+d2l.DATA_HUB['glove.6b.50d'] = (d2l.DATA_URL + 'glove.6B.50d.zip',
+                                '0b8703943ccdb6eb788e6f091b8946e82231bc4d')
+
+d2l.DATA_HUB['glove.6b.100d'] = (d2l.DATA_URL + 'glove.6B.100d.zip',
+                                 'cd43bfb07e44e6f27cbcc7bc9ae3d80284fdaf5a')
+
+d2l.DATA_HUB['glove.42b.300d'] = (d2l.DATA_URL + 'glove.42B.300d.zip',
+                                  'b5116e234e9eb9076672cfeabf5469f3eec904fa')
+
+d2l.DATA_HUB['wiki.en'] = (d2l.DATA_URL + 'wiki.en.zip',
+                           'c1816da3821ae9f43899be655002f6c723e91b88')
+
+def cuda_graphed(step, device, warmup=3):
+    """Return a function that calls step(). On a CUDA device it runs step()
+    eagerly for warmup calls on a side stream, then records one call as a
+    CUDA graph and replays it for every later call; elsewhere it calls step()
+    directly. Replay reuses the recorded memory addresses, so the optimizers
+    must keep their state and learning rate on the device (capturable=True,
+    learning rate as a tensor).
+
+    Defined in :numref:`sec_gan_convergence`"""
+    if torch.device(device).type != 'cuda':
+        return step
+    graph, calls = torch.cuda.CUDAGraph(), 0
+    def run():
+        nonlocal calls
+        calls += 1
+        if calls <= warmup:      # allocates optimizer state and workspaces
+            side = torch.cuda.Stream()
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):
+                step()
+            torch.cuda.current_stream().wait_stream(side)
+            return
+        if calls == warmup + 1:  # recording launches nothing
+            with torch.cuda.graph(graph):
+                step()
+        graph.replay()
+    return run
+
+def _warc_chunks(source, n_bytes=None, chunk=1 << 16):
+    """The first n_bytes (None: all) of a local file or URL in chunks of
+    64 KiB: small chunks keep zlib's copy of the unused input short.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    if str(source).startswith(('http://', 'https://')):
+        headers = {} if n_bytes is None else {
+            'Range': f'bytes=0-{n_bytes - 1}'}
+        with requests.get(str(source), headers=headers, stream=True,
+                          timeout=60) as r:
+            r.raise_for_status()
+            if n_bytes is not None and r.status_code != 206:
+                raise RuntimeError(f'{source}: the server ignored the Range')
+            yield from r.iter_content(chunk)
+        return
+    left = float('inf') if n_bytes is None else n_bytes
+    with open(source, 'rb') as f:
+        while left > 0:
+            b = f.read(int(min(chunk, left)))
+            if not b:
+                return
+            left -= len(b)
+            yield b
+
+def _gzip_members(chunks):
+    """(offset, length, data) of each gzip member in a byte stream, offset
+    and length in compressed bytes; a member cut off by the end of the
+    stream comes last, with data None.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import zlib
+    chunks = (c for c in chunks if c)
+    buf, offset = b'', 0
+    while True:
+        if not buf:
+            buf = next(chunks, None)
+            if buf is None:
+                return
+        d, out, used = zlib.decompressobj(31), [], 0
+        while True:
+            out.append(d.decompress(buf))
+            if d.eof:
+                used += len(buf) - len(d.unused_data)
+                buf = d.unused_data
+                break
+            used += len(buf)
+            buf = next(chunks, None)
+            if buf is None:
+                yield offset, used, None
+                return
+        yield offset, used, b''.join(out)
+        offset += used
+
+def _warc_parse(raw, offset, length):
+    """The WarcRecord in the decompressed bytes of one member. headers holds
+    the WARC header fields; for an HTTP request, response or revisit it also
+    holds headers['HTTP'], the HTTP header fields with lower-cased names,
+    and body is the HTTP payload, else the whole content block.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    head, _, rest = raw.partition(b'\r\n\r\n')
+    lines = head.split(b'\r\n')
+    if not lines[0].startswith(b'WARC/'):
+        raise ValueError(f'no WARC record at offset {offset}')
+    headers = {}
+    for line in lines[1:]:
+        k, _, v = line.decode('utf-8', 'replace').partition(':')
+        headers[k.strip()] = v.strip()
+    block = rest[:int(headers.get('Content-Length', len(rest)))]
+    kind = headers.get('WARC-Type')
+    ctype = headers.get('Content-Type', '')
+    status, mime, body = None, ctype.split(';')[0].strip().lower(), block
+    if (kind in ('response', 'request', 'revisit')
+            and ctype.startswith('application/http')):
+        http, _, body = block.partition(b'\r\n\r\n')
+        http = http.decode('iso-8859-1').split('\r\n')
+        fields = {}
+        for line in http[1:]:
+            k, _, v = line.partition(':')
+            k = k.strip().lower()
+            fields[k] = (fields[k] + ', ' if k in fields else '') + v.strip()
+        headers['HTTP'] = fields
+        mime = fields.get('content-type', '').split(';')[0].strip().lower()
+        parts = http[0].split()
+        if kind != 'request' and len(parts) > 1 and parts[1].isdigit():
+            status = int(parts[1])
+    return d2l.WarcRecord(headers.get('WARC-Record-ID'), kind,
+                          headers.get('WARC-Target-URI'),
+                          headers.get('WARC-Date'), status, mime or None,
+                          offset, length, headers, body)
+
+def _sha256_file(path, n_bytes=None):
+    """SHA-256 of the first n_bytes (None: all) of a file.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    h, left = hashlib.sha256(), float('inf') if n_bytes is None else n_bytes
+    with open(path, 'rb') as f:
+        while left > 0:
+            b = f.read(int(min(1 << 24, left)))
+            if not b:
+                break
+            h.update(b)
+            left -= len(b)
+    return h.hexdigest()
+
+def _verified_blocks(path, block_sha256, block, n_blocks):
+    """How many leading blocks of the file match the pinned SHA-256s (up to
+    n_blocks). The file is cut back to them, so a later fetch appends.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    if not path.exists():
+        return 0
+    good = 0
+    with open(path, 'rb') as f:
+        while good < n_blocks:
+            b = f.read(block)
+            if len(b) < block or (hashlib.sha256(b).hexdigest()
+                                  != block_sha256[good]):
+                break
+            good += 1
+    if path.stat().st_size > good * block and good < n_blocks:
+        with open(path, 'r+b') as f:
+            f.truncate(good * block)
+    return good
+
+def _fetch_blocks(warc, path, start, stop):
+    """Append blocks start..stop-1 of the pinned range to path, each one
+    checked against its SHA-256 before it is written.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    block = warc['block_bytes']
+    print(f'fetching bytes {start * block}-{stop * block - 1} of '
+          f'{warc["url"]}')
+    rng = f'bytes={start * block}-{stop * block - 1}'
+    with requests.get(warc['url'], headers={'Range': rng}, stream=True,
+                      timeout=60) as r, open(path, 'ab') as f:
+        r.raise_for_status()
+        if r.status_code != 206:
+            raise RuntimeError(f'{warc["url"]}: the server ignored the Range')
+        k, buf = start, bytearray()
+        for c in r.iter_content(1 << 20):
+            buf += c
+            while len(buf) >= block and k < stop:
+                got = hashlib.sha256(buf[:block]).hexdigest()
+                if got != warc['block_sha256'][k]:
+                    raise RuntimeError(f'block {k} of {warc["url"]}: '
+                                       f'SHA-256 {got}, the pin says '
+                                       f'{warc["block_sha256"][k]}')
+                f.write(buf[:block])
+                del buf[:block]
+                k += 1
+    if k != stop:
+        raise RuntimeError(f'{warc["url"]}: got {k - start} of '
+                           f'{stop - start} blocks')
+
+def _fetch_whole(spec, cache, offline):
+    """A whole file named in the pin, fetched once and checked by SHA-256.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    path = cache / spec['url'].rsplit('/', 1)[1]
+    if path.exists() and d2l._sha256_file(path) == spec['sha256']:
+        return path
+    if offline:
+        raise RuntimeError(f'D2L_OFFLINE=1 and no verified {path}: run once '
+                           f'with network access, or fetch {spec["url"]}')
+    print(f'fetching {spec["url"]}')
+    tmp = path.with_suffix(path.suffix + '.part')
+    with requests.get(spec['url'], stream=True, timeout=60) as r, \
+            open(tmp, 'wb') as f:
+        r.raise_for_status()
+        for c in r.iter_content(1 << 20):
+            f.write(c)
+    got = d2l._sha256_file(tmp)
+    if got != spec['sha256']:
+        tmp.unlink()
+        raise RuntimeError(f'{spec["url"]}: SHA-256 {got}, the pin says '
+                           f'{spec["sha256"]}')
+    tmp.replace(path)
+    return path
+
+_CC_PIN_SOURCE = dict(  # one archive file of the CC-MAIN-2025-05 crawl
+    crawl='CC-MAIN-2025-05',
+    warc_url='https://data.commoncrawl.org/crawl-data/CC-MAIN-2025-05/'
+             'segments/1736703361941.29/warc/'
+             'CC-MAIN-20250126135402-20250126165402-00000.warc.gz',
+    warc_size=1141586184, n_bytes=256 * 2**20, block_bytes=16 * 2**20,
+    wet_url='https://data.commoncrawl.org/crawl-data/CC-MAIN-2025-05/'
+            'segments/1736703361941.29/wet/'
+            'CC-MAIN-20250126135402-20250126165402-00000.warc.wet.gz',
+    wet_size=102325106)
+
+def _cc_pin(warc_path, wet_path, src=None):
+    """The pin of the crawl range from verified local copies: URLs, sizes,
+    the SHA-256 of the range, of each of its blocks and of the WET file.
+    It names Common Crawl bytes; it holds none.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    src = src or d2l._CC_PIN_SOURCE
+    n, block = src['n_bytes'], src['block_bytes']
+    if os.path.getsize(warc_path) < n:
+        raise ValueError(f'{warc_path} holds fewer than {n} bytes')
+    blocks = []
+    with open(warc_path, 'rb') as f:
+        for _ in range(n // block):
+            blocks.append(hashlib.sha256(f.read(block)).hexdigest())
+    if os.path.getsize(wet_path) != src['wet_size']:
+        raise ValueError(f'{wet_path} is not {src["wet_size"]} bytes')
+    _, cc, path = src['warc_url'].partition('commoncrawl.org/')
+    return dict(  # FineWeb's file_path column names the file this way
+        schema='d2l-cc-pin/1', crawl=src['crawl'],
+        fineweb_file_path='s3://commoncrawl/' + path if cc else None,
+        warc=dict(url=src['warc_url'], file_size=src['warc_size'],
+                  range=[0, n - 1], n_bytes=n,
+                  sha256=d2l._sha256_file(warc_path, n), block_bytes=block,
+                  block_sha256=blocks),
+        wet=dict(url=src['wet_url'], file_size=src['wet_size'],
+                 sha256=d2l._sha256_file(wet_path)))
+
+def _cc_pin_bytes(pin):
+    """The pin file's exact bytes: sorted keys, one space indent, newline.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    return (json.dumps(pin, sort_keys=True, indent=1) + '\n').encode('utf-8')
+
+_TLD_EXTRACT = []  # one tldextract instance per process, made on first use
+
+def registered_domain(url):
+    """The registered domain of a URL (example.co.uk for
+    a.b.example.co.uk), from tldextract's bundled public-suffix snapshot
+    (no network); the lower-cased host when there is none (an IP
+    address, localhost).
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import urllib.parse
+    if not d2l._TLD_EXTRACT:
+        import tldextract
+        d2l._TLD_EXTRACT.append(tldextract.TLDExtract(
+            suffix_list_urls=(), cache_dir=None))
+    ext = d2l._TLD_EXTRACT[0](url)
+    dom = ext.top_domain_under_public_suffix
+    return (dom or urllib.parse.urlsplit(url).hostname or '').lower()
+
+_CHARSET_ALIASES = {  # WHATWG: these labels mean windows-1252 in a browser
+    'iso-8859-1': 'cp1252', 'iso8859-1': 'cp1252', 'latin1': 'cp1252',
+    'latin-1': 'cp1252', 'l1': 'cp1252', 'us-ascii': 'cp1252',
+    'ascii': 'cp1252'}
+
+def decode_body(body, headers):
+    """(text, charset, source) of an HTTP payload. The charset comes from
+    the first source that decodes it: the Content-Type header ('header'),
+    a <meta charset> or http-equiv tag in the first 4 KiB ('meta'),
+    charset_normalizer's detector ('detector'), else UTF-8 with
+    replacement characters ('fallback'). A declared charset is accepted if
+    it decodes strictly or with at most 0.1% replacement characters (the
+    U+FFFD count of a page is a symptom of a wrong or mixed encoding).
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import codecs
+
+    def attempt(label):
+        label = label.strip().strip('"\'').lower()
+        try:
+            name = codecs.lookup(d2l._CHARSET_ALIASES.get(label, label)).name
+        except LookupError:
+            return None
+        try:
+            return body.decode(name), name
+        except UnicodeDecodeError:
+            text = body.decode(name, 'replace')
+            return (text, name) if text.count('�') <= 1e-3 * max(
+                len(text), 1) else None
+
+    http = headers.get('HTTP', {}) if headers else {}
+    m = re.search(r'charset\s*=\s*([^\s;,]+)', http.get('content-type', ''),
+                  re.I)
+    if m and (got := attempt(m.group(1))):
+        return got[0], got[1], 'header'
+    m = re.search(rb'<meta[^>]+charset\s*=\s*["\']?([\w.:-]+)', body[:4096],
+                  re.I)
+    if m and (got := attempt(m.group(1).decode('ascii', 'replace'))):
+        return got[0], got[1], 'meta'
+    from charset_normalizer import from_bytes
+    best = from_bytes(body).best()
+    if best is not None:
+        return str(best), codecs.lookup(best.encoding).name, 'detector'
+    return body.decode('utf-8', 'replace'), 'utf-8', 'fallback'
+
+def _ws(s):
+    """Whitespace runs collapsed to one space, ends stripped.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    return ' '.join(s.split())
+
+def _nows(s):
+    """All whitespace removed: inline tags split or join words differently
+    in every extractor, so short strings are compared without it.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    return re.sub(r'\s+', '', s)
+
+_CONTROL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]')
+
+def _lxml_document(html):
+    """The lxml document of a page, or None: an XML declaration (which
+    lxml refuses in a str) and control characters are removed first.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import lxml.etree
+    import lxml.html
+    html = _CONTROL.sub(' ', re.sub(r'^\s*<\?xml[^>]*\?>', '', html))
+    try:
+        return lxml.html.document_fromstring(html)
+    except (ValueError, lxml.etree.ParserError):
+        return None
+
+_MATH_LOADERS = re.compile(r'mathjax|katex', re.I)
+
+_TEX_SPANS = re.compile(r'\\\((.+?)\\\)|\\\[(.+?)\\\]|\$\$(.+?)\$\$', re.S)
+
+def html_structure(html):
+    """The structural content of a page, read from its HTML alone (no
+    extractor involved): code lines of <pre>/<code> blocks with at least 3
+    lines of at least 3 characters; table cells (<td>/<th> without a
+    nested table, 3-200 characters); mathematics (MathML TeX annotations,
+    MathJax <script type="math/tex">, <img> alt text with a backslash, and
+    \\(..\\), \\[..\\], $$..$$ spans when the page loads MathJax or KaTeX);
+    the prose; and the content text behind the precision proxy (<p>,
+    <pre>, <table>, <li>, <h1>-<h6> outside <nav>, <header>, <footer>,
+    <aside> and <form>, a <li> only if under half of its text is link
+    text). Strings are whitespace-free except code lines (whitespace
+    collapsed); text holds the same content elements with whitespace
+    collapsed, one per line, the input of a language identifier that no
+    extractor has touched. classes lists 'code', 'table', 'math' when present, and
+    'prose' for a page with none of them and at least 200 characters of
+    prose. Prose is the text of the <p> elements with at least 100
+    characters outside <nav>, <header>, <footer>, <aside> and <form>:
+    short paragraphs are mostly form messages, banners and captions.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    out = dict(code=[], table=[], math=[], prose='', content='', text='',
+               classes=[])
+    root = _lxml_document(html)
+    if root is None:
+        return out
+    loads_math = any(_MATH_LOADERS.search(s.get('src') or '')
+                     for s in root.iter('script'))
+    for a in root.xpath('//*[local-name()="annotation"]'
+                        '[@encoding="application/x-tex"]'):
+        out['math'].append(_nows(a.text_content()))
+    for s in root.xpath('//script[starts-with(@type, "math/tex")]'):
+        out['math'].append(_nows(s.text_content()))
+    for img in root.iter('img'):
+        if '\\' in (img.get('alt') or ''):
+            out['math'].append(_nows(img.get('alt')))
+    for bad in root.xpath('//script|//style|//noscript|//template'):
+        bad.drop_tree()
+    if loads_math:
+        body = root.find('body')
+        for m in _TEX_SPANS.finditer(body.text_content() if body is not None
+                                     else ''):
+            out['math'].append(_nows(next(g for g in m.groups() if g)))
+    out['math'] = [m for m in out['math'] if len(m) >= 2]
+    for el in root.xpath('//pre|//code[not(ancestor::pre)]'):
+        lines = [_ws(l) for l in el.text_content().splitlines()]
+        lines = [l for l in lines if len(l) >= 3]
+        if len(lines) >= 3:
+            out['code'] += lines
+    for table in root.iter('table'):
+        cells = [_nows(' '.join(c.itertext()))
+                 for c in table.xpath('.//td[not(.//table)]|'
+                                      './/th[not(.//table)]')]
+        cells = [c for c in cells if 3 <= len(c) <= 200]
+        if len(cells) >= 4:
+            out['table'] += cells
+    outside = ('not(ancestor::nav or ancestor::header or ancestor::footer '
+               'or ancestor::aside or ancestor::form)')
+    paras = [_nows(' '.join(p.itertext()))
+             for p in root.xpath(f'//p[{outside}]')]
+    out['prose'] = '\n'.join(p for p in paras if len(p) >= 100)
+    content = []
+    for el in root.xpath(f'//*[self::p or self::pre or self::table or '
+                         f'self::li or self::h1 or self::h2 or self::h3 or '
+                         f'self::h4 or self::h5 or self::h6][{outside}]'):
+        text = _ws(' '.join(el.itertext()))
+        if el.tag == 'li':
+            links = sum(len(_nows(' '.join(a.itertext())))
+                        for a in el.iter('a'))
+            if links > 0.5 * len(_nows(text)):
+                continue
+        content.append(text)
+    out['content'] = '\n'.join(map(_nows, content))
+    out['text'] = '\n'.join(t for t in content if t)
+    out['classes'] = [c for c in ('code', 'table', 'math') if out[c]]
+    if not out['classes'] and len(out['prose']) >= 200:
+        out['classes'] = ['prose']
+    return out
+
+def html_skeleton(html, n=25):
+    """The first n elements of a page's <body> as indented tag names, each
+    text node replaced by its character count: the page's shape without
+    its words (and without attributes).
+
+    Defined in :numref:`sec_lm_crawl`"""
+    root = _lxml_document(html)
+    body = None if root is None else root.find('body')
+    lines = []
+
+    def walk(el, depth):
+        if len(lines) >= n or not isinstance(el.tag, str):
+            return
+        text = len((el.text or '').strip())
+        lines.append('  ' * depth + el.tag + (f'  [text: {text} chars]'
+                                              if text else ''))
+        for child in el:
+            walk(child, depth + 1)
+
+    if body is not None:
+        walk(body, 0)
+    return lines
+
+def char_ngram_f1(a, b, n=5):
+    """(precision, recall, F1) of the character n-grams of text a against
+    those of the reference b, as sets, after collapsing whitespace; 0.0
+    for an empty side.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    A, B = (set(s[i:i + n] for i in range(len(s) - n + 1))
+            for s in (_ws(a or ''), _ws(b or '')))
+    hit = len(A & B)
+    p, r = (hit / len(A) if A else 0.0), (hit / len(B) if B else 0.0)
+    return p, r, (2 * p * r / (p + r) if p + r else 0.0)
+
+_HOST_CLASSES = (  # first matching rule wins; tested on the host name
+    ('edu_gov', r'(\.edu|\.gov|\.mil|\.ac\.[a-z]{2}|\.edu\.[a-z]{2}|'
+                r'\.gov\.[a-z]{2})$'),
+    ('wiki', r'wiki'),
+    ('forum', r'forum|board|community|discuss|answers|stackexchange|'
+              r'stackoverflow|reddit'),
+    ('news', r'news|times|post|herald|tribune|journal|gazette|daily'),
+    ('blog', r'blog|wordpress|medium\.com|substack|tumblr'),
+    ('shop', r'shop|store|market|buy|cart|deals|amazon|ebay|etsy'))
+
+def host_class(url):
+    """A coarse class of the host (edu_gov, wiki, forum, news, blog, shop,
+    other) from the rules in _HOST_CLASSES, matched on the lower-cased
+    host name: a cheap grouping for removal audits, not a site type.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import urllib.parse
+    host = (urllib.parse.urlsplit(url).hostname or '').lower()
+    for name, rule in d2l._HOST_CLASSES:
+        if re.search(rule, host):
+            return name
+    return 'other'
+
+_ISO639_3TO1 = dict(  # CLD2's WET labels (ISO 639-3) to fastText's codes
+    eng='en', deu='de', fra='fr', spa='es', rus='ru', jpn='ja', zho='zh',
+    ita='it', por='pt', pol='pl', nld='nl', tur='tr', ces='cs', vie='vi',
+    ind='id', kor='ko', swe='sv', fas='fa', ara='ar', ukr='uk', hun='hu',
+    ell='el', dan='da', fin='fi', ron='ro', nor='no', nob='no', heb='he',
+    tha='th', hin='hi', bul='bg', slk='sk', cat='ca', hrv='hr', lit='lt',
+    slv='sl', srp='sr', est='et', lav='lv', msa='ms', ben='bn', tam='ta')
+
+def warc_record_at(path, offset, length):
+    """The WarcRecord stored in bytes offset..offset+length-1 of a local
+    WARC file: one gzip member, decompressed on its own.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import zlib
+    with open(path, 'rb') as f:
+        f.seek(offset)
+        raw = f.read(length)
+    d = zlib.decompressobj(31)
+    data = d.decompress(raw)
+    if not d.eof:
+        raise ValueError(f'{path}: no complete gzip member at {offset}')
+    return d2l._warc_parse(data, offset, length)
+
+def _c0_extract_one(record, extractor='trafilatura', lid_min=0.65):
+    """One response record through the c0 stages: status and MIME,
+    decode_body, extract_text, detect_lang, NFC, scrub_pii. Returns a dict
+    with the manifest row (no text), the final text, the extracted text
+    before NFC and PII ('raw'), the decoded HTML, the reason the record
+    was dropped (None if kept, else the first rule that fired: not_200,
+    not_html, empty, not_en, low_score) and the extraction time. The
+    section's extract cell and rebuild_c0 both call it, so a rebuild
+    repeats the build exactly.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import importlib.metadata
+    import time
+    import unicodedata
+    if not isinstance(record, d2l.WarcRecord):  # (path, offset, length)
+        record = d2l.warc_record_at(*record)
+    src = dict(warc=d2l._CC_PIN_SOURCE['warc_url'].partition(
+        'commoncrawl.org/')[2], offset=record.offset, length=record.length)
+    row = dict(id=record.id, url=record.url, date=record.date, src=src,
+               charset=None, charset_source=None, lang=None, lang_score=None,
+               extractor=extractor,
+               extractor_version=(importlib.metadata.version(extractor)
+                                  if extractor != 'naive' else 'd2l'),
+               n_chars=0, text_sha256=None, log=[])
+    out = dict(row=row, text=None, raw=None, html=None, drop=None, secs=0.0,
+               pii={'email': 0, 'ip': 0})
+    if record.status != 200:
+        out['drop'] = 'not_200'
+        return out
+    if record.mime != 'text/html':
+        out['drop'] = 'not_html'
+        return out
+    html, row['charset'], row['charset_source'] = d2l.decode_body(
+        record.body, record.headers)
+    out['html'] = html
+    row['log'].append(f'decode:{row["charset"]}/{row["charset_source"]}')
+    t = time.perf_counter()
+    raw = d2l.extract_text(html, method=extractor, url=record.url)
+    out['secs'] = time.perf_counter() - t
+    out['raw'] = raw
+    row['log'].append(f'extract:{extractor} {row["extractor_version"]}')
+    if not raw:
+        out['drop'] = 'empty'
+        return out
+    lang, score = d2l.detect_lang(raw)[0]
+    row['lang'], row['lang_score'] = lang, round(score, 4)
+    row['log'].append(f'lang:{lang} {row["lang_score"]:.4f}')
+    if lang != 'en':
+        out['drop'] = 'not_en'
+        return out
+    if score < lid_min:
+        out['drop'] = 'low_score'
+        return out
+    text = unicodedata.normalize('NFC', raw)
+    row['log'].append('nfc:' + ('changed' if text != raw else 'unchanged'))
+    text, out['pii'] = d2l.scrub_pii(text)
+    row['log'].append('pii:' + ','.join(f'{k}={v}'
+                                        for k, v in out['pii'].items()))
+    row['n_chars'] = len(text)
+    row['text_sha256'] = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    out['text'] = text
+    return out
+
+def extract_page(job):
+    """The extract cell's worker for one HTML response job = (path, offset,
+    length): the c0 pipeline with trafilatura (_c0_extract_one), the
+    naive and Resiliparse extractions of the same decoded HTML with their
+    times, html_structure, and html_lang, the top (language, score) of
+    detect_lang on the structure's text ((None, 0.0) if it has none): a
+    label that depends on no extractor. The decoded HTML stays in the
+    worker.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    import time
+    c0 = d2l._c0_extract_one(d2l.warc_record_at(*job))
+    html = c0.pop('html') or ''
+    texts, secs = {'trafilatura': c0.pop('raw')}, {'trafilatura': c0['secs']}
+    for m in ('naive', 'resiliparse'):
+        t = time.perf_counter()
+        texts[m] = d2l.extract_text(html, method=m)
+        secs[m] = time.perf_counter() - t
+    row, struct = c0['row'], d2l.html_structure(html)
+    lang, score = (d2l.detect_lang(struct['text'])[0] if struct['text']
+                   else (None, 0.0))
+    return dict(id=row['id'], url=row['url'], offset=job[1],
+                n_html=len(html), charset=row['charset'],
+                charset_source=row['charset_source'], texts=texts, secs=secs,
+                struct=struct, html_lang=(lang, round(score, 4)), c0=c0)
+
+class DocList(list):
+    """A list of Doc with the rows that failed to rebuild in .mismatches.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    mismatches = ()
+
+def _c0_rebuild_one(job):
+    """rebuild_c0's worker: job = (path, manifest row).
+
+    Defined in :numref:`sec_lm_crawl`"""
+    path, row = job
+    src = row['src']
+    out = d2l._c0_extract_one((path, src['offset'], src['length']),
+                              row['extractor'])
+    out.pop('html')
+    return out
+
+def json_agreement(new, old):
+    """How far two JSON-like results agree: the number of leaf values in
+    new, how many equal old's value at the same path, the largest
+    absolute difference between numeric leaves present in both, the paths
+    of unequal non-numeric leaves (strings, booleans, None, or a number
+    against a non-number) and the paths present on one side only.
+
+    Defined in :numref:`sec_lm_crawl`"""
+    def leaves(x, path=()):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                yield from leaves(v, path + (str(k),))
+        elif isinstance(x, (list, tuple)):
+            for i, v in enumerate(x):
+                yield from leaves(v, path + (i,))
+        else:
+            yield path, x
+    def is_num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    a, b = dict(leaves(new)), dict(leaves(old))
+    num = [max(v - b[k], b[k] - v)  # d2l.abs is torch.abs
+           for k, v in a.items() if k in b and is_num(v) and is_num(b[k])]
+    other = [k for k, v in a.items() if k in b and b[k] != v
+             and not (is_num(v) and is_num(b[k]))]
+    return dict(values=len(a), equal=sum(k in b and b[k] == v
+                                         for k, v in a.items()),
+                max_diff=max(num, default=0.0), mismatches=other,
+                missing=sorted(set(a) ^ set(b), key=str))
+
+# Word and punctuation tokens, close to NLTK's English word_tokenize (which
+# datatrove uses): a run of word characters joined by inner apostrophes,
+# hyphens, periods, commas, colons or slashes (don't, 1,000, 3.5, 10:30),
+# or a run of other non-space characters. A run of Han, kana or Thai
+# characters is one "word": the rules see unspaced scripts this way.
+_RULE_WORD = re.compile(r"\w+(?:[.,:/'’-]\w+)*|[^\w\s]+")
+# Terminal punctuation for FineWeb's line rule: the common marks of the
+# scripts in this chapter (datatrove 0.10.1 lists 159 code points)
+_TERMINAL_PUNCT = tuple('.!?。！？．｡؟।॥')
+_C4_POLICY = ('terms of use', 'privacy policy', 'cookie policy',
+              'uses cookies', 'use of cookies', 'use cookies')
+
+def _rule_words(text):
+    """The word and punctuation tokens of text (see _RULE_WORD).
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    return d2l._RULE_WORD.findall(text)
+
+def _rule_is_symbol(word):
+    """True if a token has no letter or digit (punctuation, symbols).
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    return not any(ch.isalnum() for ch in word)
+
+def _rule_dups(items):
+    """(number, characters) of the items that repeat an earlier item.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    seen, n, chars = set(), 0, 0
+    for x in items:
+        if x in seen:
+            n, chars = n + 1, chars + len(x)
+        else:
+            seen.add(x)
+    return n, chars
+
+def _rule_top_ngram(words, n):
+    """Characters covered by the most frequent word n-gram (joined by
+    spaces): its length times its count, as in Gopher's repetition rule.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    grams = collections.Counter(' '.join(words[i:i + n])
+                                for i in range(len(words) - n + 1))
+    if not grams:
+        return 0
+    gram, count = grams.most_common(1)[0]
+    return len(gram) * count
+
+def _rule_dup_ngram(words, n):
+    """Characters in word n-grams (joined without spaces) that repeat an
+    earlier n-gram, skipping past each repeat, as in Gopher's rule.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    seen, chars, i = set(), 0, 0
+    while i < len(words) - n + 1:
+        gram = ''.join(words[i:i + n])
+        if gram in seen:
+            chars, i = chars + len(gram), i + n
+        else:
+            seen.add(gram)
+            i += 1
+    return chars
+
+def _rule_c4(text, c):
+    """True if C4's document rules drop text: 'lorem ipsum' or a curly
+    brace on a line that survives the line rules, or fewer than
+    c['min_sentences'] sentences on those lines. As in FineWeb's run, a
+    line without terminal punctuation is not removed; sentences are split
+    at . ! ? followed by space (NLTK's punkt in datatrove).
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    sentences = 0
+    for line in text.splitlines():
+        line = line.strip()
+        words = line.split()
+        if any(len(w) > c['max_word_len'] for w in words):
+            continue
+        line = re.sub(r'\[\d*\]|\[edit\]|\[citation needed\]', '', line)
+        if len(words) < c['min_line_words']:
+            continue
+        low = line.lower()
+        if 'lorem ipsum' in low:
+            return True
+        if 'javascript' in low:
+            continue
+        if '{' in line:
+            return True
+        if any(p in low for p in d2l._C4_POLICY):
+            continue
+        sentences += len([s for s in re.split(r'(?<=[.!?])\s+', line)
+                          if s.strip()])
+    return sentences < c['min_sentences']
+
+def cohen_kappa(a, b):
+    """Cohen's kappa of two label arrays: agreement beyond what the two
+    marginal distributions give by chance; nan if chance agreement is 1.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    a, b = np.asarray(a), np.asarray(b)
+    labels = np.union1d(a, b)
+    po = np.mean(a == b)
+    pe = sum(np.mean(a == k) * np.mean(b == k) for k in labels)
+    return float((po - pe) / (1 - pe)) if pe < 1 else float('nan')
+
+def quadratic_kappa(a, b, k=6):
+    """Quadratic-weighted kappa of two integer scores in 0..k-1: one minus
+    the observed mean squared disagreement over the one expected from the
+    marginals.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    a, b = np.asarray(a, dtype=int), np.asarray(b, dtype=int)
+    O = np.zeros((k, k))
+    np.add.at(O, (a, b), 1)
+    O /= O.sum()
+    E = np.outer(O.sum(1), O.sum(0))
+    W = (np.arange(k)[:, None] - np.arange(k)[None, :]) ** 2 / (k - 1) ** 2
+    return float(1 - (W * O).sum() / (W * E).sum())
+
+def wilson_ci(k, n, z=1.96):
+    """Wilson score interval for a binomial proportion k / n.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    if n == 0:
+        return float('nan'), float('nan')
+    p, z2 = k / n, z * z
+    mid = (p + z2 / (2 * n)) / (1 + z2 / n)
+    half = z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / (1 + z2 / n)
+    return mid - half, mid + half
+
+def binary_f1(y, pred):
+    """F1 of boolean predictions against boolean labels (0 if none).
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    y, pred = np.asarray(y, dtype=bool), np.asarray(pred, dtype=bool)
+    tp = np.sum(y & pred)
+    return float(2 * tp / (y.sum() + pred.sum())) if tp else 0.0
+
+def rank_auc(y, s):
+    """ROC AUC of scores s for boolean labels y (Mann-Whitney, ties at
+    half).
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    y, s = np.asarray(y, dtype=bool), np.asarray(s, dtype=float)
+    r = pd.Series(s).rank().to_numpy()  # average ranks for ties
+    n1, n0 = y.sum(), (~y).sum()
+    return float((r[y].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
+
+def _edu_batches(lengths, batch_size, max_batch_tokens):
+    """Batches of indices, longest first: at most batch_size rows and at
+    most max_batch_tokens tokens with left padding (rows times the first,
+    longest, row's length); a row longer than the cap is alone.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    order = sorted(range(len(lengths)), key=lambda i: (-lengths[i], i))
+    batches = []
+    for i in order:
+        b = batches[-1] if batches else None
+        if (b is None or len(b) == batch_size or
+                lengths[b[0]] * (len(b) + 1) > max_batch_tokens):
+            batches.append([i])
+        else:
+            b.append(i)
+    return batches
+
+_EDU_ANNOT_ROWS = 467_424  # rows of the eight released files
+_EDU_ANNOT_SPLITS = (18_000, 2_000, 2_000)  # train, val, test
+
+# The rows of the released annotations that the released FineWeb-Edu
+# classifier did not train on (its card's hold-out of 46,867, reproduced
+# from its training code; 46,744 survive in the release):
+# tools/build_lm_edu_holdout.py
+d2l.DATA_HUB['lm-edu-holdout-v1'] = (
+    d2l.LM_DATA_URL + 'lm-edu-holdout-v1.json.gz',
+    'dc1759992f17805864e08da5c5dcce51928e1c03')
+
+def _edu_annot_sample():
+    """The 22,000 annotation rows of lm-edu-annot-22k-v1 before labelling,
+    in the order of p = default_rng(0).permutation(467,424) over the rows
+    of the eight released files read in order: train is p[:18,000]; val and
+    test are the next 2,000 and 2,000 rows of p[18,000:] that lie in the
+    released classifier's hold-out (lm-edu-holdout-v1), so its scores on
+    them are out-of-sample. Columns row, split, text, prompt (the
+    labeller's input as released), llama_score, url, dump; text and prompt
+    as released.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    import huggingface_hub
+    import pyarrow.parquet as pq
+    _, repo, rev, _ = d2l.LM_DATA_SOURCES['edu-annotations']
+    with gzip.open(d2l.download_keyed('lm-edu-holdout-v1'), 'rt') as f:
+        hold = json.load(f)
+    assert hold['release_revision'] == rev, 'another annotation revision'
+    n_train, n_val, n_test = d2l._EDU_ANNOT_SPLITS
+    p = np.random.default_rng(0).permutation(d2l._EDU_ANNOT_ROWS)
+    rest = p[n_train:]
+    rest = rest[np.isin(rest, hold['rows'])][:n_val + n_test]
+    perm = np.concatenate([p[:n_train], rest])
+    split = np.repeat(['train', 'val', 'test'], d2l._EDU_ANNOT_SPLITS)
+    frames, start = [], 0
+    for k in range(8):
+        path = huggingface_hub.hf_hub_download(
+            repo, f'data/train-{k:05d}-of-00008.parquet', revision=rev,
+            repo_type='dataset')
+        f = pq.ParquetFile(path)
+        n = f.metadata.num_rows
+        pos = np.flatnonzero((perm >= start) & (perm < start + n))
+        t = f.read(columns=['text', 'prompt', 'score', 'metadata']).take(
+            perm[pos] - start).to_pandas()
+        frames.append(pd.DataFrame(dict(
+            pos=pos, row=perm[pos], split=split[pos], text=t.text,
+            prompt=t.prompt, llama_score=t.score.astype(int),
+            url=[m['url'] for m in t.metadata],
+            dump=[m['dump'] for m in t.metadata])))
+        start += n
+    assert start == d2l._EDU_ANNOT_ROWS, start
+    df = pd.concat(frames).sort_values('pos', ignore_index=True)
+    return df.drop(columns='pos')
+
+# The quality labeller (from 2026-11-20; Qwen3.5-4B before): Qwen3.8-27B,
+# the judge of :numref:`sec_lm_rag`, in RedHat's W4A16 build (Apache-2.0),
+# one copy per 24 GB GPU served by vLLM, which lives in an environment of
+# its own (D2L_VLLM); 16.7 GiB of weights per card
+EDU_LABELLER_LOCAL = {'model': 'RedHatAI/Qwen3.8-27B-INT4',
+                      'revision': '71dface38d4cbfa34121f1d446d4a0fa1025f13c',
+                      'vllm': '0.33.0'}
+
+def edu_label_servers(gpus=None, vllm=None):
+    """One d2l.LocalChatServer per GPU (default: every visible GPU), each
+    serving EDU_LABELLER_LOCAL with vLLM on that GPU alone, offline from
+    the local Hub cache, from the executable vllm (default: the
+    environment variable D2L_VLLM, else `vllm` on the PATH). At the
+    defaults (0.9 of the memory, 64 sequences) vLLM refuses to start:
+    the linear-attention layers' state cache holds 54 sequences. A server
+    takes 0.95 of an idle card; on a card that already holds memory (this
+    process's own, say) it takes what is free less 1.5 GiB.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    import shutil  # not in the d2l library preamble
+    import subprocess
+    exe = vllm or os.environ.get('D2L_VLLM') or shutil.which('vllm')
+    if exe is None:
+        raise RuntimeError('no vLLM: install it in its own environment and '
+                           'set D2L_VLLM to its vllm executable')
+    if gpus is None:
+        vis = os.environ.get('CUDA_VISIBLE_DEVICES')
+        gpus = (vis.split(',') if vis else
+                [str(i) for i in range(torch.cuda.device_count())])
+    servers, j = [], d2l.EDU_LABELLER_LOCAL
+    for g in gpus:  # nvidia-smi reads memory without opening a CUDA context
+        used, total = map(int, subprocess.run(
+            ['nvidia-smi', '-i', str(g), '--query-gpu=memory.used,'
+             'memory.total', '--format=csv,noheader,nounits'], check=True,
+            capture_output=True, text=True).stdout.split(','))
+        frac = 0.95 if used <= 100 else min(0.95, (total - used - 1536)
+                                            / total)
+        servers.append(d2l.LocalChatServer([
+            'env', f'CUDA_VISIBLE_DEVICES={g}', 'HF_HUB_OFFLINE=1', exe,
+            'serve', j['model'], '--revision', j['revision'],
+            '--max-model-len', '16384', '--max-num-seqs', '32',
+            '--gpu-memory-utilization', f'{frac:.3f}', '--language-model-only',
+            '--limit-mm-per-prompt', '{"image": 0, "video": 0}',
+            '--reasoning-parser', 'qwen3', '--seed', '0', '--host',
+            '127.0.0.1', '--port', '{port}']))
+    return servers
+
+def _vllm_post(url, path, body, timeout=600.0, attempts=3):
+    """The JSON reply of an OpenAI-compatible server to a POST of body at
+    url + path, with up to attempts tries five seconds apart.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    import urllib.request
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(url + path, json.dumps(body).encode(),
+                                 {'Content-Type': 'application/json'})
+    for k in range(attempts):
+        try:
+            with opener.open(req, timeout=timeout) as r:
+                return json.load(r)
+        except OSError:
+            if k == attempts - 1:
+                raise
+            time.sleep(5)
+
+def _edu_label_ids(tokenizer, prompts, prefix, extra_space=False):
+    """The prompts as edu_label_scores scores them: (token ids, the ids of
+    '0' ... '5', the id of one more space or None). Each prompt is a user
+    turn of the chat template (non-thinking) followed by prefix, tokenized
+    as if the digit followed, then cut, so a prefix that ends in spaces
+    splits as in the model's own text.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    digits = [tokenizer.encode(str(d), add_special_tokens=False)
+              for d in range(6)]
+    if any(len(t) != 1 for t in digits):
+        raise ValueError(f'the digits are not single tokens: {digits}')
+    digits = [t[0] for t in digits]
+    ids, space = [], None
+    for p in prompts:
+        chat = tokenizer.apply_chat_template(
+            [{'role': 'user', 'content': p}], tokenize=False,
+            add_generation_prompt=True, enable_thinking=False) + prefix
+        x = tokenizer(chat + '0', add_special_tokens=False)['input_ids']
+        if x[-1] != digits[0]:
+            raise ValueError(f'the digit after {prefix!r} merges with it')
+        ids.append(x[:-1])
+        if extra_space:  # the same text with one more space
+            y = tokenizer(chat + ' 0', add_special_tokens=False)['input_ids']
+            if y[:len(x) - 1] != x[:-1] or len(y) != len(x) + 1:
+                raise ValueError('one more space does not add one token')
+            if space not in (None, y[-2]):
+                raise ValueError('the extra space is not one token id')
+            space = y[-2]
+    return ids, digits, space
+
+def edu_label_scores_served(urls, tokenizer, prompts, *, model=None,
+                            prefix='Educational score: ', extra_space=False,
+                            concurrency=1):
+    """edu_label_scores computed by OpenAI-compatible vLLM servers at urls,
+    each serving model (default EDU_LABELLER_LOCAL's): the same token ids,
+    sent as the prompt of a one-token greedy completion with the top 20
+    log-probabilities; a digit outside them counts as 0. With extra_space,
+    the probability of digit d also counts the answers that write one more
+    space first: p(d) + p(space) p(d | space). Rows are spread over the
+    servers in turn, at most concurrency requests in flight per server;
+    they come back in input order. One at a time (the default), every
+    server returns the same bits for a prompt; a batch of concurrent
+    requests changes them (by up to about 0.08 for Qwen3.8-27B-INT4).
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    import concurrent.futures
+    import threading
+    model = model or d2l.EDU_LABELLER_LOCAL['model']
+    ids, digits, space = d2l._edu_label_ids(tokenizer, prompts, prefix,
+                                            extra_space)
+    want = digits + ([space] if extra_space else [])
+    gates = [threading.Semaphore(concurrency) for _ in urls]
+
+    def top(i, x):
+        k = i % len(urls)
+        with gates[k]:
+            d = d2l._vllm_post(urls[k], '/completions', dict(
+                model=model, prompt=x, max_tokens=1, temperature=0,
+                logprobs=20, return_tokens_as_token_ids=True))
+        lp = d['choices'][0]['logprobs']['top_logprobs'][0]
+        lp = {int(t.rsplit(':', 1)[-1]): v for t, v in lp.items()}
+        return [math.exp(lp[t]) if t in lp else 0.0 for t in want]
+
+    with concurrent.futures.ThreadPoolExecutor(
+            concurrency * len(urls)) as ex:
+        P = np.array(list(ex.map(top, range(len(ids)), ids)))
+        if not extra_space:
+            return P
+        more = np.flatnonzero(P[:, 6] > 0)  # one more space, then a digit
+        Q = np.array(list(ex.map(top, more, [ids[i] + [space]
+                                             for i in more])))
+    out = P[:, :6].copy()
+    if len(more):
+        out[more] += P[more, 6:7] * Q[:, :6]
+    return out
+
+def _stream_half(domain):
+    """The audit stream's half ('A' or 'B') of a registered domain: the
+    parity of the first 32 bits of its SHA-256, so the halves share no
+    domain (the bootstrap's cluster).
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    h = int(hashlib.sha256(domain.encode('utf-8')).hexdigest()[:8], 16)
+    return 'A' if h % 2 == 0 else 'B'
+
+def _cctld(url):
+    """The last label of the host's public suffix with a dot ('.uk' for
+    example.co.uk, '.com'), from the same tldextract snapshot as
+    registered_domain; '' for an IP address.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    d2l.registered_domain('http://example.com')  # makes the extractor
+    suffix = d2l._TLD_EXTRACT[0](url).suffix
+    return '.' + suffix.rsplit('.', 1)[-1].lower() if suffix else ''
+
+def released_edu_scores(texts, batch=64, device=None, dtype=None):
+    """Scores of the released FineWeb-Edu classifier (a regression head on
+    a frozen Snowflake arctic-embed-m encoder; Apache-2.0) at its pinned
+    revision: the first 512 tokens of each text, length-sorted batches,
+    float32 scores in input order. bf16 on a GPU, fp32 on the CPU.
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    import transformers
+    _, repo, rev, _ = d2l.LM_DATA_SOURCES['fineweb-edu-classifier']
+    device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+    dtype = dtype or (torch.bfloat16 if device == 'cuda' else torch.float32)
+    tok = transformers.AutoTokenizer.from_pretrained(repo, revision=rev)
+    model = transformers.AutoModelForSequenceClassification.from_pretrained(
+        repo, revision=rev, dtype=dtype).to(device).eval()
+    ids = tok(list(texts), truncation=True, max_length=512)['input_ids']
+    order = sorted(range(len(ids)), key=lambda i: -len(ids[i]))
+    out = np.empty(len(ids), dtype=np.float32)
+    for j in range(0, len(order), batch):
+        rows = order[j:j + batch]
+        enc = tok.pad({'input_ids': [ids[i] for i in rows]},
+                      return_tensors='pt').to(device)
+        with torch.inference_mode():
+            out[rows] = model(**enc).logits[:, 0].float().cpu().numpy()
+    del model
+    d2l.lm_free()
+    return out
+
+def c0_documents(manifest='lm-c0-docs-v1', cache_dir=None):
+    """The c0 documents: the cached rebuild in cache_dir (default
+    ../data/lm/c0) if its ids and text hashes equal the manifest rows,
+    else rebuild_c0 (which writes that cache).
+
+    Defined in :numref:`sec_lm_quality_filtering`"""
+    import pathlib
+    cache = pathlib.Path(cache_dir or os.path.join('..', 'data', 'lm', 'c0'))
+    path = (d2l.download_keyed(manifest) if manifest in d2l.DATA_HUB
+            else manifest)
+    with gzip.open(path, 'rt', encoding='utf-8') as f:
+        want = {r['id']: r['text_sha256'] for r in map(json.loads, f)}
+    if (cache / 'c0-docs.jsonl.gz').exists():
+        docs = d2l.read_docs(cache / 'c0-docs.jsonl.gz')
+        got = {d.id: hashlib.sha256(d.text.encode('utf-8')).hexdigest()
+               for d in docs}
+        if got == want:
+            return docs
+    docs = d2l.rebuild_c0(manifest, cache_dir=cache)
+    assert not docs.mismatches, f'{len(docs.mismatches)} c0 rows drifted'
+    return docs
+
+_MINHASH_PARAMS = {}  # (k, seed) -> the rows' (a, c), drawn once
+
+def _shingle_hashes(shingle_list):
+    """The 64-bit shingle hashes of the MinHash specification: blake2b with
+    an 8-byte digest of the UTF-8 shingle, read little-endian (uint64).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    digests = b''.join(hashlib.blake2b(s.encode('utf-8'), digest_size=8)
+                       .digest() for s in shingle_list)
+    return np.frombuffer(digests, dtype='<u8').astype(np.uint64)
+
+def _minhash_params(k, seed):
+    """The k rows' coefficients (a, c), each uint64 in [1, p), from
+    numpy.random.default_rng(seed) as the specification draws them.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    if (k, seed) not in d2l._MINHASH_PARAMS:
+        a, c = np.random.default_rng(seed).integers(
+            1, d2l.MINHASH_PRIME, size=(2, k), dtype=np.uint64)
+        d2l._MINHASH_PARAMS[k, seed] = (a, c)
+    return d2l._MINHASH_PARAMS[k, seed]
+
+def _mulmod61(a, x):
+    """(a * x) mod p for p = 2^61 - 1 and uint64 arrays a, x < 2^61
+    (broadcast), exact. The product needs 122 bits, so both factors are
+    split into 32-bit halves, whose partial products fit in 64 bits, and
+    the high bits fold back because 2^61 = 1 (mod p).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    p, m32 = np.uint64(d2l.MINHASH_PRIME), np.uint64(0xFFFFFFFF)
+    a_hi, a_lo = a >> np.uint64(32), a & m32
+    x_hi, x_lo = x >> np.uint64(32), x & m32
+    lo = a_lo * x_lo                     # < 2^64
+    mid = a_hi * x_lo + a_lo * x_hi      # < 2^62, weight 2^32
+    hi = a_hi * x_hi                     # < 2^58, weight 2^64 = 8 (mod p)
+    s = ((lo & p) + (lo >> np.uint64(61))
+         + ((mid & np.uint64((1 << 29) - 1)) << np.uint64(32))
+         + (mid >> np.uint64(29)) + (hi << np.uint64(3)))   # < 2^63
+    s = (s & p) + (s >> np.uint64(61))
+    return np.where(s >= p, s - p, s)
+
+def _minhash_rows(x, a, c, chunk=4096):
+    """min over the hashes x (mod p already) of (a_i x + c_i) mod p for
+    each row i: the signature, computed chunk by chunk of shingles.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    p = np.uint64(d2l.MINHASH_PRIME)
+    sig = np.full(len(a), p, dtype=np.uint64)
+    for j in range(0, len(x), chunk):
+        v = d2l._mulmod61(a[:, None], x[None, j:j + chunk]) + c[:, None]
+        v = np.where(v >= p, v - p, v)
+        sig = np.minimum(sig, v.min(axis=1))
+    return sig
+
+def _minhash_chunk(job):
+    """_minhash_texts' worker: job = (texts, k, seeds, ngram); one list of
+    signatures (None for fewer than ngram words) per seed.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    texts, k, seeds, ngram = job
+    out = {s: [] for s in seeds}
+    for t in texts:
+        sh = d2l.shingles(t, ngram)
+        x = (np.unique(d2l._shingle_hashes(sh)) % np.uint64(
+            d2l.MINHASH_PRIME)) if sh else None
+        for s in seeds:
+            out[s].append(None if x is None else
+                          d2l._minhash_rows(x, *d2l._minhash_params(k, s)))
+    return out
+
+def _minhash_texts(texts, k=128, seeds=(0xD2,), ngram=5, workers=1):
+    """{seed: [signature or None per text]} for many texts, each text
+    shingled and hashed once for all seeds; with workers > 1 in separate
+    processes (chunks of 500 texts, results in input order, so the output
+    does not depend on workers).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    import concurrent.futures
+    import multiprocessing
+    texts = [str(t) for t in texts]
+    jobs = [(texts[i:i + 500], k, tuple(seeds), ngram)
+            for i in range(0, len(texts), 500)]
+    if workers <= 1 or len(jobs) < 2:
+        outs = map(d2l._minhash_chunk, jobs)
+    else:
+        ex = concurrent.futures.ProcessPoolExecutor(
+            workers, mp_context=multiprocessing.get_context('spawn'))
+        with ex:
+            outs = list(ex.map(d2l._minhash_chunk, jobs))
+    res = {s: [] for s in seeds}
+    for out in outs:
+        for s in seeds:
+            res[s] += out[s]
+    return res
+
+def _sig_matrix(sigs, k):
+    """Signatures (a list with None for empty documents) as a (n, k) uint64
+    array and the boolean mask of documents that have one.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    ok = np.array([s is not None for s in sigs])
+    S = np.zeros((len(sigs), k), dtype=np.uint64)
+    if ok.any():
+        S[ok] = np.stack([s for s in sigs if s is not None])
+    return S, ok
+
+def _band_match(SA, SB, b, r):
+    """Per pair, whether the signature rows SA[i] and SB[i] agree in all r
+    rows of at least one of the first b bands: lsh_candidates' decision
+    for one known pair, vectorized (equal up to 8-byte key collisions).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    eq = SA[:, :b * r] == SB[:, :b * r]
+    return eq.reshape(len(SA), b, r).all(axis=2).any(axis=1)
+
+DUP_BOILERPLATE = (  # 40 generic template blocks for the 'boiler' perturbation
+    'We use cookies to improve your experience on our site. By continuing '
+    'to browse you agree to our use of cookies. Learn more in our cookie '
+    'policy.',
+    'Subscribe to our newsletter and get the latest news, offers and '
+    'updates delivered straight to your inbox every week. You can '
+    'unsubscribe at any time.',
+    'Home | About Us | Services | Blog | Contact | Privacy Policy | Terms '
+    'and Conditions | Sitemap',
+    'Share this article: Facebook Twitter LinkedIn Pinterest Email Print',
+    'All rights reserved. No part of this website may be reproduced, '
+    'distributed or transmitted in any form without the prior written '
+    'permission of the publisher.',
+    'This post may contain affiliate links. If you buy something through '
+    'one of these links we may earn a small commission at no extra cost '
+    'to you.',
+    'Leave a Reply. Your email address will not be published. Required '
+    'fields are marked. Name Email Website Comment',
+    'Related posts: you might also like these articles from our archive, '
+    'chosen for readers who enjoyed this one.',
+    'Free shipping on all orders over fifty dollars. Easy returns within '
+    'thirty days. Secure checkout with all major cards.',
+    'Disclaimer: the information on this page is for general purposes only '
+    'and does not constitute professional advice. Consult a qualified '
+    'expert before acting on it.',
+    'Click here to download the free guide. Enter your name and email '
+    'address below and we will send it right away.',
+    'Posted in Uncategorized | Tagged news, updates, tips | Leave a comment',
+    'Previous article Next article Back to top',
+    'Skip to main content Search this site Menu Close menu Log in Register',
+    'Copyright the authors. Content on this site is licensed for personal '
+    'use only; please contact us for permission to republish.',
+    'Follow us on social media for daily updates, behind the scenes photos '
+    'and special announcements from our team.',
+    'Your cart is empty. Continue shopping or sign in to see items you '
+    'saved during an earlier visit.',
+    'This website uses analytics to understand how visitors use it. We do '
+    'not sell your personal data. Read our privacy notice for details.',
+    'Accept all cookies Reject non-essential cookies Manage preferences',
+    'Sign up for a free account to save your favourite pages, comment on '
+    'articles and receive personalised recommendations.',
+    'Advertisement. Continue reading below.',
+    'Was this page helpful? Yes No. Thank you for your feedback.',
+    'Terms of use: by accessing this site you accept these terms in full. '
+    'If you disagree with any part of them you must not use the site.',
+    'Contact us: send us a message using the form below and a member of '
+    'our team will get back to you within two working days.',
+    'Recent Posts Archives Categories Meta Log in Entries feed Comments feed',
+    'Print this page Email this page Bookmark this page',
+    'Last updated on the date shown above. Prices and availability are '
+    'subject to change without notice.',
+    'Join thousands of readers who already get our weekly digest. No spam, '
+    'we promise. Your details are safe with us.',
+    'You are here: Home > Articles > Current page',
+    'Read more Show less Load more comments',
+    'Our support team is available Monday to Friday from nine to five. '
+    'Call us or open a ticket in the help centre.',
+    'Images are for illustration purposes only and may not show the exact '
+    'product described on this page.',
+    'Tags: guide, how to, beginners, tips and tricks, frequently asked '
+    'questions',
+    'Download our app for a faster experience on your phone. Available for '
+    'all major platforms.',
+    'Please enable JavaScript in your browser to view this content and use '
+    'all the features of this site.',
+    'Rate this article: one star two stars three stars four stars five '
+    'stars. Average rating based on reader votes.',
+    'About the author: a writer and editor who covers everyday topics for '
+    'a general audience. Views expressed are their own.',
+    'Back to the list of all articles in this category.',
+    'Sponsored content. This article was produced in partnership with an '
+    'advertiser and reviewed by our editorial team.',
+    'Thank you for visiting. Come back soon for new articles every week.')
+
+def _dup_vocab(texts):
+    """The substitution vocabulary of make_dup_pairs: the sorted distinct
+    lowercased \\w+ words of texts.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    import regex
+    return sorted({w for t in texts for w in regex.findall(r'\w+',
+                                                            t.lower())})
+
+def _dup_perturb(text, op, params, vocab=None):
+    """A perturbed copy of text by op (sub, del, boiler, shuffle, trunc)
+    with params; every random choice comes from default_rng(params['seed']).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    import regex
+    rng = np.random.default_rng(params['seed'])
+    if op in ('sub', 'del'):
+        pat = r'\w+' if op == 'sub' else r'\w+[^\S\n]*'
+        spans = [m.span() for m in regex.finditer(pat, text)]
+        m = max(1, round(params['rate'] * len(spans)))
+        pick = set(rng.choice(len(spans), m, replace=False).tolist())
+        if op == 'sub' and vocab is None:
+            raise ValueError("'sub' needs the substitution vocabulary")
+        out, at = [], 0
+        for i, (s, e) in enumerate(spans):
+            if i in pick:
+                out.append(text[at:s])
+                if op == 'sub':
+                    out.append(vocab[int(rng.integers(len(vocab)))])
+                at = e
+        return ''.join(out) + text[at:]
+    paras = text.split('\n')
+    if op == 'boiler':
+        words = []
+        for j in rng.permutation(len(d2l.DUP_BOILERPLATE)):
+            words += d2l.DUP_BOILERPLATE[j].split()
+            if len(words) >= params['words']:
+                break
+        paras.insert(int(rng.integers(len(paras) + 1)),
+                     ' '.join(words[:params['words']]))
+        return '\n'.join(paras)
+    if op == 'shuffle':
+        return '\n'.join(paras[i] for i in rng.permutation(len(paras)))
+    if op == 'trunc':
+        ends = [m.end() for m in regex.finditer(r'\w+', text)]
+        return text[:ends[max(1, round(params['frac'] * len(ends))) - 1]]
+    raise ValueError(f'unknown op {op!r}')
+
+def _url_host(url):
+    """The lowercased host name of a URL ('' if it has none).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    import urllib.parse
+    return (urllib.parse.urlsplit(url).hostname or '').lower()
+
+def _pb_interval(p, level=0.95):
+    """Central interval (lo, hi) of a Poisson-binomial count, the number of
+    successes of independent trials with probabilities p: lo is the
+    smallest count with P(X <= lo) > (1 - level) / 2 and hi the smallest
+    with P(X <= hi) >= (1 + level) / 2, from the exact distribution.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    p = np.asarray(p, dtype=float)
+    ones, p = int(np.sum(p >= 1.0)), p[(p > 0.0) & (p < 1.0)]
+    pmf = np.ones(1)
+    for q in p:
+        pmf = np.append(pmf * (1 - q), 0.0) + np.append(0.0, pmf * q)
+    cdf = np.cumsum(pmf)
+    alpha = (1 - level) / 2
+    lo = int(np.searchsorted(cdf, alpha, side='right'))
+    hi = int(np.searchsorted(cdf, 1 - alpha - 1e-12))
+    return lo + ones, hi + ones
+
+def benchmark_items():
+    """The test items of GSM8K (1,319), ARC-Challenge (1,172) and MMLU
+    (14,042) at their pinned files: dicts with item_id, benchmark,
+    question, choices (labels and texts, or None), gold (answer label or
+    final number) and text, the indexed form: question and gold answer
+    text.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    items = []
+    gsm = pd.read_parquet(d2l.download_keyed('gsm8k-test'))
+    for i, row in gsm.iterrows():
+        items.append(dict(item_id=f'gsm8k-{i}', benchmark='gsm8k',
+                          question=row.question.strip(), choices=None,
+                          gold=row.answer.split('####')[-1].strip(),
+                          text=row.question.strip() + '\n' + row.answer))
+    arc = pd.read_parquet(d2l.download_keyed('arc-challenge-test'))
+    for _, row in arc.iterrows():
+        labels = [str(x) for x in row.choices['label']]
+        texts = [str(x) for x in row.choices['text']]
+        gold = texts[labels.index(str(row.answerKey))]
+        items.append(dict(item_id=f'arc-{row.id}', benchmark='arc',
+                          question=row.question.strip(),
+                          choices=list(zip(labels, texts)),
+                          gold=str(row.answerKey),
+                          text=row.question.strip() + '\n' + gold))
+    rows = d2l._eval_load_rows(d2l.EVAL_TASKS['mmlu'], 'test')
+    for i, row in enumerate(rows):
+        texts = [str(x) for x in row['choices']]
+        items.append(dict(item_id=f'mmlu-{i}', benchmark='mmlu',
+                          question=row['question'].strip(),
+                          choices=list(zip('ABCD', texts)),
+                          gold='ABCD'[int(row['answer'])],
+                          text=row['question'].strip() + '\n'
+                          + texts[int(row['answer'])]))
+    return items
+
+def _plant_text(item, form):
+    """A benchmark item as a page would show it: the question, the lettered
+    options (ARC, MMLU) and an answer line. form 'reformat' changes it by
+    rule: lower case, one space for every whitespace run, commas and
+    semicolons before a space dropped, a space before '?', the options in
+    reverse order with their letters reassigned.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    choices = item['choices'] or []
+    gold = item['gold']
+    if form == 'reformat' and choices:
+        old = dict(choices)[gold]
+        choices = [(lab, t) for (lab, _), (_, t) in zip(
+            choices, reversed(choices))]
+        gold = next(lab for lab, t in choices if t == old)
+    fmt = '({}) {}' if item['benchmark'] == 'arc' else '{}. {}'
+    lines = [item['question']] + [fmt.format(lab, t) for lab, t in choices]
+    text = '\n'.join(lines + [f'Answer: {gold}'])
+    if form == 'reformat':
+        text = re.sub(r'[,;](?=\s)', '', text.lower())
+        text = re.sub(r'\s+', ' ', text.replace('?', ' ?')).strip()
+    return text
+
+def _sentence_starts(text):
+    """Positions where a sentence or a line starts (plant insertion points),
+    with 0 and len(text).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    import regex
+    pos = {0, len(text)}
+    pos.update(m.end() for m in regex.finditer(r'(?<=[.!?])\s+|\n', text))
+    return sorted(pos)
+
+def make_plants(items, stream, paraphrase, n_per=100, n_controls=1000,
+                seed=0, min_words=13, max_words=180, prompt_sha256=None,
+                model_revision=None):
+    """The planted decontamination test set: n_per items of each benchmark
+    (items whose question has at least min_words words and whose page form
+    at most max_words), each in three forms (verbatim, reformat,
+    paraphrase = paraphrase(list of verbatim texts) -> list of texts),
+    inserted at a sentence start of distinct stream documents (stream: a
+    DataFrame with id and text), plus n_controls untouched documents. One
+    row per document: doc_id, item_id, benchmark, form ('control' for the
+    controls), text (the planted text), char_start, char_end (its span in
+    the planted document), prompt_sha256, model_revision and source_hash
+    (SHA-256 of the document before planting). All choices from
+    default_rng(seed).
+
+    Defined in :numref:`sec_lm_dedup`"""
+    import regex
+    rng = np.random.default_rng(seed)
+    nwords = lambda t: len(regex.findall(r'\w+', t))
+    chosen = []
+    for bench in ('gsm8k', 'arc', 'mmlu'):
+        ok = [it for it in items if it['benchmark'] == bench and
+              nwords(it['question']) >= min_words and
+              nwords(d2l._plant_text(it, 'verbatim')) <= max_words]
+        chosen += [ok[i] for i in rng.choice(len(ok), n_per, replace=False)]
+    verbatim = [d2l._plant_text(it, 'verbatim') for it in chosen]
+    para = list(paraphrase(verbatim))
+    assert len(para) == len(chosen)
+    plants = []
+    for it, v, ph in zip(chosen, verbatim, para):
+        plants += [(it, 'verbatim', v),
+                   (it, 'reformat', d2l._plant_text(it, 'reformat')),
+                   (it, 'paraphrase', ph)]
+    order = rng.permutation(len(stream))
+    assert len(order) >= len(plants) + n_controls
+    rows = []
+    for k, i in enumerate(order[:len(plants) + n_controls]):
+        doc = stream.iloc[int(i)]
+        row = dict(doc_id=doc.id, item_id=None, benchmark=None,
+                   form='control', text=None, char_start=None, char_end=None,
+                   prompt_sha256=None, model_revision=None,
+                   source_hash=hashlib.sha256(doc.text.encode('utf-8'))
+                   .hexdigest())
+        if k < len(plants):
+            it, form, text = plants[k]
+            at = d2l._sentence_starts(doc.text)
+            pos = at[int(rng.integers(len(at)))]
+            row.update(item_id=it['item_id'], benchmark=it['benchmark'],
+                       form=form, text=text, char_start=pos + 1,
+                       char_end=pos + 1 + len(text))
+            if form == 'paraphrase':
+                row.update(prompt_sha256=prompt_sha256,
+                           model_revision=model_revision)
+        rows.append(row)
+    return rows
+
+def contam_documents(plants, stream):
+    """The documents of the planted set, doc_id -> text: each planted text
+    inserted as its own line at char_start - 1 of the stream document
+    (document[:char_start - 1] + newline + text + newline + rest), the
+    controls unchanged; the source document's SHA-256 is checked.
+
+    Defined in :numref:`sec_lm_dedup`"""
+    text = dict(zip(stream.id, stream.text))
+    out = {}
+    for row in plants:
+        t = text[row['doc_id']]
+        got = hashlib.sha256(t.encode('utf-8')).hexdigest()
+        assert got == row['source_hash'], f'{row["doc_id"]} changed'
+        if row['form'] != 'control':
+            at = row['char_start'] - 1
+            t = t[:at] + '\n' + row['text'] + '\n' + t[at:]
+            assert t[row['char_start']:row['char_end']] == row['text']
+        out[row['doc_id']] = t
+    return out
+
+def word_windows(text, size=128, stride=64):
+    """Windows of size whitespace-separated words every stride words, the
+    last one ending at the text's end: [(first word index, text)].
+
+    Defined in :numref:`sec_lm_dedup`"""
+    words = text.split()
+    starts = list(range(0, max(len(words) - size, 0) + 1, stride))
+    if starts[-1] + size < len(words):
+        starts.append(len(words) - size)
+    return [(s, ' '.join(words[s:s + size])) for s in starts]
+
+_FWEDU_FILES = tuple(  # sample/10BT files read, in order; 005, 012, 013 are chapter 21's
+    f'sample/10BT/{k:03d}_00000.parquet' for k in (0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11))
+
+TokenPool = collections.namedtuple('TokenPool', 'ids meta')
+
+def load_pool(path_or_key, name=None):
+    """A token pool: a flat array of token ids (read-only memmap; every
+    document ends in EOS) and its meta dict. path_or_key is a DATA_HUB key
+    (a tar of <name>.bin files and their meta.json), a directory or a .bin
+    file. meta.json describes one pool, or maps each .bin file name to its
+    meta when a directory holds several (then name picks one).
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    import pathlib
+    p = path_or_key
+    if isinstance(p, str) and p in d2l.DATA_HUB:
+        tar = d2l.download_keyed(p)
+        p = pathlib.Path(tar).with_suffix('')
+        if not (p / '.extracted').exists():
+            p.mkdir(exist_ok=True)
+            d2l.extract(tar, str(p))
+            (p / '.extracted').touch()
+    p = pathlib.Path(p)
+    if p.is_dir():
+        bins = sorted(b for b in p.glob('*.bin')
+                      if name is None or b.stem == name)
+        if len(bins) != 1:
+            raise ValueError(f'{p}: {len(bins)} pools match name={name!r} '
+                             f'({[b.stem for b in p.glob("*.bin")]})')
+        p = bins[0]
+    with open(p.parent / 'meta.json') as f:
+        meta = json.load(f)
+    meta = meta.get(p.name, meta)
+    ids = np.memmap(p, dtype=meta.get('dtype', 'uint16'), mode='r')
+    if 'n_tokens' in meta and len(ids) != meta['n_tokens']:
+        raise ValueError(f'{p}: {len(ids)} tokens, meta says '
+                         f'{meta["n_tokens"]}')
+    return d2l.TokenPool(ids, meta)
+
+def token_byte_lengths(tokenizer):
+    """np.ndarray of the UTF-8 bytes each token id stands for (0 for
+    special tokens): the denominator of bits per byte. Takes a Transformers
+    tokenizer, a tokenizers.Tokenizer or a tiktoken encoding.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    if hasattr(tokenizer, 'decode_single_token_bytes'):  # tiktoken
+        n = tokenizer.n_vocab
+        special = set(tokenizer.special_tokens_set)
+        out = np.zeros(n, dtype=np.int64)
+        for i in range(n):
+            try:
+                b = tokenizer.decode_single_token_bytes(i)
+            except KeyError:  # an unused id
+                continue
+            if b.decode('utf-8', 'replace') not in special:
+                out[i] = len(b)
+        return out
+    raw = getattr(tokenizer, 'backend_tokenizer', tokenizer)
+    vocab = raw.get_vocab(with_added_tokens=True)
+    special = {t.content for t in raw.get_added_tokens_decoder().values()
+               if t.special}
+    byte_level = 'ByteLevel' in raw.to_str()  # one character per byte
+    out = np.zeros(max(vocab.values()) + 1, dtype=np.int64)
+    for piece, i in vocab.items():
+        if piece in special:
+            continue
+        if byte_level:
+            out[i] = len(piece)
+        elif re.fullmatch(r'<0x[0-9A-Fa-f]{2}>', piece):  # byte fallback
+            out[i] = 1
+        else:  # SentencePiece-style: U+2581 marks a space
+            out[i] = len(piece.replace('▁', ' ').encode('utf-8'))
+    return out
+
+def _stage_weights(weights, stages, names, steps):
+    """(steps, m) array: the mixture each step samples from. weights maps a
+    domain to its weight from step 0; stages lists (fraction, weights)
+    pairs, each in force from step steps - round((1 - fraction) * steps)
+    on (so a stage at 0.8 starts with the decay of a WSD schedule whose
+    decay_frac is 0.2).
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    def vec(w):
+        v = np.array([float(w.get(d, 0.0)) for d in names])
+        bad = v.min() < 0 or math.fabs(v.sum() - 1) > 1e-9
+        if set(w) - set(names) or bad:
+            raise ValueError(f'weights {w} are not a mixture over {names}')
+        return v
+    out = np.tile(vec(weights), (steps, 1))
+    for frac, w in sorted(stages or []):
+        out[steps - round((1 - frac) * steps):] = vec(w)
+    return out
+
+def _proxy_alloc(step_weights, batch):
+    """Domain of every sequence, in allocation order: sequence s goes to
+    the domain whose count lags its target (the running sum of its
+    weights) the most, ties to the lower index, so after n sequences each
+    domain holds its target count to within one sequence. Also returns
+    each sequence's ordinal among its domain's sequences.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    m = step_weights.shape[1]
+    target, count = [0.0] * m, [0] * m
+    dom, ordinal = [], []
+    for w in step_weights.tolist():
+        for _ in range(batch):
+            for i in range(m):
+                target[i] += w[i]
+            i = max(range(m), key=lambda j: (target[j] - count[j], -j))
+            dom.append(i)
+            ordinal.append(count[i])
+            count[i] += 1
+    return np.array(dom, dtype=np.int64), np.array(ordinal, dtype=np.int64)
+
+class _ProxyStream:
+    """The training stream of a proxy run: the domain and the window of
+    every sequence of every batch. A pool of N tokens has (N - 1) //
+    seq_len windows of seq_len + 1 tokens starting at multiples of
+    seq_len; a domain reads its windows in epochs, each a fresh
+    permutation seeded by (seed, the domain's name, epoch); the sequences
+    of a batch are shuffled by (seed, step). The stream depends only on
+    (seed, weights, stages, tokens) and the pools, and batch(step) keeps no
+    state, so a resumed run reads exactly the batches it would have read.
+    A domain that needs more than max_epochs passes over its pool raises
+    before any batch is drawn.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    def __init__(self, pools, weights, tokens, seq_len, batch, seed=0,
+                 stages=None, max_epochs=1):
+        import zlib
+        self.names = list(pools)
+        self.ids = [getattr(pools[d], 'ids', pools[d]) for d in self.names]
+        self.seq_len, self.batch_size, self.seed = seq_len, batch, seed
+        self.steps = tokens // (batch * seq_len)
+        if self.steps < 1:
+            raise ValueError(f'{tokens} tokens make no batch of {batch} x '
+                             f'{seq_len}')
+        self.windows = [(len(ids) - 1) // seq_len for ids in self.ids]
+        self.weights = _stage_weights(weights, stages, self.names, self.steps)
+        dom, ordinal = _proxy_alloc(self.weights, batch)
+        for k in range(self.steps):  # shuffle the order within each batch
+            sl = slice(k * batch, (k + 1) * batch)
+            perm = np.random.default_rng([seed, 1, k]).permutation(batch)
+            dom[sl], ordinal[sl] = dom[sl][perm], ordinal[sl][perm]
+        self.dom, self.ordinal = dom, ordinal
+        counts = np.bincount(dom, minlength=len(self.names))
+        self.epochs, self.epoch_starts = {}, {}
+        for i, d in enumerate(self.names):
+            W = self.windows[i]
+            if counts[i] and (W == 0 or counts[i] > max_epochs * W):
+                raise ValueError(
+                    f'{d}: the run reads {counts[i]:,} windows, the pool '
+                    f'holds {W:,} (max_epochs={max_epochs}): the pool is '
+                    'smaller than the run needs')
+            self.epochs[d] = counts[i] / W if W else 0.0
+            rows = np.flatnonzero((dom == i) & (ordinal % max(W, 1) == 0))
+            self.epoch_starts[d] = sorted(int(r // batch) for r in rows)
+        self._salt = [zlib.crc32(d.encode()) for d in self.names]
+        self._perms = {}
+
+    def window(self, i, ordinal):
+        """Index of the window that domain i's ordinal-th sequence reads."""
+        epoch, pos = divmod(int(ordinal), self.windows[i])
+        if (i, epoch) not in self._perms:
+            self._perms[i, epoch] = np.random.default_rng(
+                [self.seed, 0, self._salt[i], epoch]).permutation(
+                self.windows[i])
+        return self._perms[i, epoch][pos]
+
+    def batch(self, step):
+        """Token windows of the step's batch, np.int64 (batch, seq_len +
+        1), and the domain index of each row."""
+        sl = slice(step * self.batch_size, (step + 1) * self.batch_size)
+        L, rows = self.seq_len, []
+        for i, o in zip(self.dom[sl], self.ordinal[sl]):
+            j = self.window(i, o)
+            rows.append(self.ids[i][j * L:j * L + L + 1])
+        return np.stack(rows).astype(np.int64), self.dom[sl]
+
+def _lr_at(step, steps, cfg):
+    """Learning-rate factor of a proxy run at step (0-based): a linear
+    warmup over warmup_frac of the steps, then a cosine to final_lr_frac
+    (schedule 'cosine') or a constant rate and a linear decay to
+    final_lr_frac over the last decay_frac of the steps ('wsd').
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    warm = max(1, round(cfg.warmup_frac * steps))
+    if step < warm:
+        return (step + 1) / warm
+    f = cfg.final_lr_frac
+    if cfg.schedule == 'cosine':
+        p = min((step - warm + 1) / max(steps - warm, 1), 1.0)
+        return f + (1 - f) * 0.5 * (1 + math.cos(math.pi * p))
+    if cfg.schedule == 'wsd':
+        start = steps - round(cfg.decay_frac * steps)
+        if step < start:
+            return 1.0
+        return 1 - (1 - f) * min((step - start + 1) / (steps - start), 1.0)
+    raise ValueError(f'unknown schedule {cfg.schedule!r}')
+
+def _proxy_model(cfg, seed=0):
+    """A fresh proxy d2l.GPT of the configuration (RoPE, RMSNorm, SwiGLU,
+    tied embeddings), initialized on the CPU from the seed, so its weights
+    do not depend on the device it then runs on.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    torch.manual_seed(seed)
+    return d2l.GPT(cfg.vocab_size, num_hiddens=cfg.num_hiddens,
+                   num_heads=cfg.num_heads, num_blks=cfg.num_blks,
+                   max_len=cfg.seq_len)
+
+def _proxy_optimizer(model, cfg):
+    """AdamW with the configuration's betas and weight decay on the weight
+    matrices only (not on embeddings, norms or biases), as d2l.LMOptimizer;
+    the learning rate is set before every step.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    named = list(model.named_parameters())
+    decay = [p for n, p in named if p.ndim == 2 and 'emb' not in n]
+    rest = [p for n, p in named if p.ndim != 2 or 'emb' in n]
+    return torch.optim.AdamW([{'params': decay,
+                               'weight_decay': cfg.weight_decay},
+                              {'params': rest, 'weight_decay': 0.0}],
+                             lr=cfg.lr, betas=tuple(cfg.betas))
+
+def _per_token_nll(model, X, cfg):
+    """Negative log-likelihood in nats of every next token of the windows
+    X (batch, seq_len + 1), (batch, seq_len), in float32 (or the float64 of
+    a float64 model); bf16 autocast if the configuration says so.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    with torch.autocast(X.device.type, dtype=torch.bfloat16,
+                        enabled=cfg.dtype == 'bfloat16'):
+        logits = model(X[:, :-1])
+    if logits.dtype != torch.float64:
+        logits = logits.float()
+    return F.cross_entropy(logits.flatten(0, 1), X[:, 1:].flatten(),
+                           reduction='none').view(X.shape[0], -1)
+
+@torch.no_grad()
+def _proxy_eval(model, ids, cfg, byte_lengths, n_windows=None, device=None):
+    """Summed NLL (nats), scored tokens, the UTF-8 bytes they stand for and
+    bits per byte of model on the windows of a validation pool (all of
+    them, or the first n_windows).
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    device = device or next(model.parameters()).device
+    L = cfg.seq_len
+    n = (len(ids) - 1) // L
+    n = n if n_windows is None else min(n, n_windows)
+    nll, n_bytes, was_training = 0.0, 0, model.training
+    model.eval()
+    for a in range(0, n, cfg.micro_batch):
+        X = np.stack([ids[j * L:j * L + L + 1]
+                      for j in range(a, min(n, a + cfg.micro_batch))])
+        X = X.astype(np.int64)
+        n_bytes += int(byte_lengths[X[:, 1:]].sum())
+        nll += _per_token_nll(model, torch.from_numpy(X).to(device),
+                              cfg).double().sum().item()
+    model.train(was_training)
+    return dict(nll=nll, n_tokens=n * L, n_bytes=n_bytes,
+                bpb=d2l.bpb_from_nll(nll, n_bytes))
+
+def _proxy_fingerprint(weights, stages, tokens, seed, cfg):
+    """SHA-256 of what determines a proxy run, so a checkpoint is never
+    resumed into another run.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    spec = dict(weights=weights, stages=stages, tokens=tokens, seed=seed,
+                cfg=cfg._asdict())
+    return hashlib.sha256(json.dumps(spec, sort_keys=True,
+                                     default=list).encode()).hexdigest()
+
+def _proxy_save(path, model, opt, step, out, fingerprint):
+    """Write a checkpoint atomically (a temporary file, then a rename): the
+    model, the optimizer, the next step, the results so far and the RNG
+    states. The data stream needs no cursor: batch(step) is stateless.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    tmp = f'{path}.tmp'
+    torch.save(dict(model=model.state_dict(), opt=opt.state_dict(),
+                    step=step, out=out, fingerprint=fingerprint,
+                    rng=torch.get_rng_state(),
+                    cuda_rng=(torch.cuda.get_rng_state_all()
+                              if torch.cuda.is_available() else None)), tmp)
+    os.replace(tmp, path)
+
+def _proxy_load(path, model, opt, fingerprint):
+    """Restore a checkpoint into model and opt; returns (step, out).
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    ck = torch.load(path, map_location='cpu', weights_only=False)
+    if ck['fingerprint'] != fingerprint:
+        raise ValueError(f'{path} belongs to another run')
+    model.load_state_dict(ck['model'])
+    opt.load_state_dict(ck['opt'])
+    torch.set_rng_state(ck['rng'])
+    if ck['cuda_rng'] is not None and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(ck['cuda_rng'])
+    return ck['step'], ck['out']
+
+def proxy_flops(cfg, tokens, n_params):
+    """Training FLOP of a proxy run: 6 N D for the parameters plus
+    12 L d T D for attention (the non-causal convention, which counts the
+    masked half of the score matrix too).
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    return (6 * n_params * tokens
+            + 12 * cfg.num_blks * cfg.num_hiddens * cfg.seq_len * tokens)
+
+def _doremi_step(alpha, excess, eta, smooth):
+    """DoReMi's domain-weight update: alpha_i exp(eta excess_i),
+    normalized (the maximizer of <alpha, excess> - KL(alpha || alpha_t) /
+    eta on the simplex), then mixed with the uniform weights.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    a = np.log(np.asarray(alpha, float)) + eta * np.asarray(excess, float)
+    a = np.exp(a - a.max())
+    a = a / a.sum()
+    return (1 - smooth) * a + smooth / len(a)
+
+def _doremi_excess(nll_proxy, nll_ref):
+    """Per-domain excess loss of DoReMi: the mean over a domain's tokens of
+    max(loss of the proxy - loss of the reference, 0), clipped per token.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    return torch.clamp(nll_proxy - nll_ref, min=0).mean().item()
+
+def barycentric(W):
+    """2-D coordinates of three-domain mixtures (n, 3) in the triangle with
+    the first domain at (0, 0), the second at (1, 0) and the third at the
+    top.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    W = np.asarray(W, float)
+    return np.stack([W[:, 1] + 0.5 * W[:, 2], math.sqrt(3) / 2 * W[:, 2]], 1)
+
+def mix_run_specs(c):
+    """The run design of a MIX_CONFIGS entry c, in launch order: the
+    learning-rate runs, the pure-domain runs, the training mixtures (the
+    Dirichlet draws, then the fixed edges), the held-out mixtures, the
+    uniform seeds (cosine and WSD), the DoReMi proxy and the arms. Each
+    spec is a dict(run_id, arm, weights, stages, seed, schedule, tokens,
+    eval_at, depends); weights of None are resolved when the run starts
+    (the regression's choice, DoReMi's weights). Optional entries of c add
+    runs: pure_seeds (more seeds of the pure-domain runs), lr_check (the
+    mixtures of lr_check['mixtures'] at the rate lr_check['lr'], which the
+    spec's lr overrides), anneal (the staged arm decays on these fixed
+    weights, and a recency arm returns to uniform at recency_frac) and
+    horizon (uniform runs on both schedules at factor times the tokens,
+    reading each pool up to max_epochs times). Without anneal the staged
+    arm decays on the regression's choice.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    import itertools
+    D = c['domains']
+    uniform = [1 / len(D)] * len(D)
+    def spec(run_id, arm, weights, seed=0, schedule='cosine', stages=None,
+             tokens=c['tokens'], eval_at=c['eval_at'], depends=(), **extra):
+        return dict(run_id=run_id, arm=arm, weights=weights, stages=stages,
+                    seed=seed, schedule=schedule, tokens=tokens,
+                    eval_at=list(eval_at), depends=list(depends), **extra)
+    lr_ids = [f'lr-{lr:.0e}' for lr in c['lr_grid']]
+    runs = [spec(i, 'lr', uniform, tokens=c['lr_tokens'], eval_at=(1.0,))
+            for i in lr_ids]
+    after_lr = dict(depends=lr_ids)
+    runs += [spec(f'pure-{d}', 'pure', list(np.eye(len(D))[k]), **after_lr)
+             for k, d in enumerate(D)]
+    runs += [spec(f'pure-{d}-s{s}', 'pure-seed', list(np.eye(len(D))[k]),
+                  seed=s, **after_lr)
+             for s in c.get('pure_seeds', ()) for k, d in enumerate(D)]
+    train = []
+    for conc, n in c['train']:
+        W = d2l.sample_mixtures(n, D, conc, c['design_seeds'][0],
+                                c['max_weight'])
+        train += [spec(f'train-a{conc:g}-{k:02d}'.replace('.', ''),
+                       'train', list(w), **after_lr)
+                  for k, w in enumerate(W)]
+    train += [spec(f'train-edge-{k:02d}', 'train', [float(x) for x in w],
+                   **after_lr) for k, w in enumerate(c.get('edges', ()))]
+    runs += train
+    W = d2l.sample_mixtures(c['held'], D, 1.0, c['design_seeds'][1],
+                            c['max_weight'])
+    runs += [spec(f'held-{k:02d}', 'held', list(w), **after_lr)
+             for k, w in enumerate(W)]
+    runs += [spec(f'uniform-cos-s{s}', 'uniform-cos', uniform, seed=s,
+                  **after_lr) for s in c['cos_seeds']]
+    arm = dict(schedule='wsd', eval_at=c['arm_eval_at'])
+    runs += [spec(f'uniform-wsd-s{s}', 'uniform', uniform, seed=s, **arm,
+                  **after_lr) for s in c['arm_seeds']]
+    runs.append(spec('doremi-proxy', 'doremi-weights', uniform,
+                     depends=lr_ids + ['uniform-wsd-s0']))
+    picked = lr_ids + [r['run_id'] for r in train]
+    anneal = c.get('anneal')
+    for s in c['arm_seeds']:
+        runs.append(spec(f'regsel-s{s}', 'regsel', None, seed=s, **arm,
+                         depends=picked))
+        runs.append(spec(f'doremi-s{s}', 'doremi', None, seed=s, **arm,
+                         depends=lr_ids + ['doremi-proxy']))
+        if anneal is None:  # decay on the regression's choice
+            runs.append(spec(f'staged-s{s}', 'staged', uniform, seed=s,
+                             **arm, stages=None, depends=picked))
+            continue
+        a = [float(x) for x in anneal['weights']]
+        runs.append(spec(f'anneal-s{s}', 'anneal', uniform, seed=s, **arm,
+                         stages=[[c['stage_frac'], a]], **after_lr))
+        runs.append(spec(f'recency-s{s}', 'recency', uniform, seed=s, **arm,
+                         stages=[[c['stage_frac'], a],
+                                 [anneal['recency_frac'], uniform]],
+                         **after_lr))
+    check = c.get('lr_check')
+    for name, w in (check or {}).get('mixtures', {}).items():
+        runs += [spec(f'lrcheck-{name}-s{s}', 'lr-check',
+                      [float(x) for x in w], seed=s, lr=check['lr'],
+                      **after_lr) for s in check['seeds']]
+    h = c.get('horizon')
+    for sched, s in itertools.product(('cosine', 'wsd'),
+                                      (h or {}).get('seeds', ())):
+        runs.append(spec(f'horizon-{sched[:3]}-s{s}', 'horizon', uniform,
+                         seed=s, schedule=sched,
+                         tokens=h['factor'] * c['tokens'],
+                         max_epochs=h['max_epochs'], **after_lr))
+    return runs
+
+def mix_pools(c, root=os.path.join('..', 'data', 'lm', 'mix')):
+    """(pools, val), each {domain: TokenPool}, of a MIX_CONFIGS entry c:
+    the files tools/build_mix_pools.py wrote under root/<name>/ where they
+    exist, else the registered keys of c['keys']. A domain with neither is
+    left out.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    out = ({}, {})
+    for k, size in enumerate((c['pool'], 'val-' + c['val'])):
+        for d in c['domains']:
+            name = f'{d}-{size}'
+            local = os.path.join(root, c['name'], name + '.bin')
+            if os.path.exists(local):
+                out[k][d] = d2l.load_pool(local)
+            elif c['keys'].get(name) in d2l.DATA_HUB:
+                out[k][d] = d2l.load_pool(c['keys'][name], name)
+    return out
+
+def campaign_record(spec, result, cfg):
+    """The JSON record a finished proxy run leaves in a campaign file: its
+    spec, its learning rate and train_proxy_lm's results, every array
+    turned into a list.
+
+    Defined in :numref:`sec_lm_data_mixtures`"""
+    rec = dict(spec, lr=cfg.lr, **result)
+    return json.loads(json.dumps(rec, default=lambda x: (
+        x.tolist() if hasattr(x, 'tolist') else float(x))))
+
+R2_SPECIALS = (['<|endoftext|>', '<|pad|>', '<|im_start|>', '<|im_end|>']
+               + [f'<|reserved_{i}|>' for i in range(4, 32)])
+
+def _r2_from_file(path, raw=False, sha256=None):
+    """A reference-format tokenizer.json, its bytes checked against sha256
+    (if given): the Transformers wrapper (EOS id 0, pad id 1, no BOS,
+    special strings in text kept as text), or with raw=True the
+    tokenizers.Tokenizer. A fresh object on every call.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    with open(path, 'rb') as f:
+        data = f.read()
+    if sha256 is not None and hashlib.sha256(data).hexdigest() != sha256:
+        raise ValueError(f'{path}: SHA-256 {hashlib.sha256(data).hexdigest()}'
+                         f', expected {sha256}')
+    from tokenizers import Tokenizer
+    tok = Tokenizer.from_str(data.decode('utf-8'))
+    tok.encode_special_tokens = True
+    if raw:
+        return tok
+    import transformers
+    return transformers.PreTrainedTokenizerFast(
+        tokenizer_object=tok, eos_token='<|endoftext|>', pad_token='<|pad|>',
+        split_special_tokens=True, model_max_length=4096)
+
+def _tok_info(tokenizer):
+    """(vocabulary size, <|endoftext|> id or None, ids of special tokens)
+    of a Transformers tokenizer, a tokenizers.Tokenizer or a tiktoken
+    encoding.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    if hasattr(tokenizer, 'encode_ordinary'):  # tiktoken
+        return (tokenizer.n_vocab, d2l._lm_boundary_id(tokenizer),
+                {tokenizer.encode_single_token(s)
+                 for s in tokenizer.special_tokens_set})
+    if hasattr(tokenizer, 'all_special_ids'):  # Transformers
+        special = set(tokenizer.all_special_ids) | {
+            i for i, t in tokenizer.added_tokens_decoder.items() if t.special}
+        return len(tokenizer), d2l._lm_boundary_id(tokenizer), special
+    special = {i for i, t in tokenizer.get_added_tokens_decoder().items()
+               if t.special}
+    return (tokenizer.get_vocab_size(with_added_tokens=True),
+            tokenizer.token_to_id('<|endoftext|>'), special)
+
+def _doc_token_ids(tokenizer, texts):
+    """Token ids of each document text, no special tokens added, and a
+    special-token string inside a text (a page about <|endoftext|>)
+    encoded as ordinary text, for a Transformers tokenizer, a
+    tokenizers.Tokenizer or a tiktoken encoding.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    texts = [str(t) for t in texts]
+    if not texts:
+        return []
+    if hasattr(tokenizer, 'encode_ordinary_batch'):  # tiktoken
+        return tokenizer.encode_ordinary_batch(texts)
+    if hasattr(tokenizer, 'all_special_ids'):  # Transformers
+        return tokenizer(texts, add_special_tokens=False,
+                         split_special_tokens=True,  # no warning about
+                         verbose=False)['input_ids']  # long documents
+    old = tokenizer.encode_special_tokens
+    tokenizer.encode_special_tokens = True
+    try:
+        return [e.ids for e in tokenizer.encode_batch(
+            texts, add_special_tokens=False)]
+    finally:
+        tokenizer.encode_special_tokens = old
+
+_SHARD_EXT = {'bin': '.bin', 'idx': '.idx', 'meta': '.meta.parquet'}
+
+FWEDU_META_COLUMNS = (  # (name, arrow type) of the FineWeb-Edu meta columns
+    ('url', 'string'), ('dump', 'string'), ('bucket', 'int16'),
+    ('edu_score', 'float32'), ('int_score', 'int8'), ('gpt2_tokens', 'int32'),
+    ('src_file', 'string'), ('src_row', 'int64'))
+
+def _meta_table(rows):
+    """The meta rows of one shard as a pyarrow Table: doc_id and n_tokens
+    first, then the FineWeb-Edu columns present, in their fixed order and
+    types, then any other column in order of first appearance.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    import pyarrow as pa
+    known = dict([('doc_id', 'string'), ('n_tokens', 'int32')]
+                 + list(d2l.FWEDU_META_COLUMNS))
+    seen = dict.fromkeys(k for r in rows for k in r)
+    cols = [c for c in known if c in seen] + [c for c in seen
+                                              if c not in known]
+    return pa.table({c: pa.array([r.get(c) for r in rows],
+                                  type=getattr(pa, known[c])()
+                                  if c in known else None) for c in cols})
+
+class _ShardWriter:
+    """One shard being written: ids appended to name.bin as they come,
+    offsets and meta rows kept until close() writes name.idx and
+    name.meta.parquet and returns the shard's manifest entry.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    def __init__(self, out_dir, name, dtype):
+        self.out_dir, self.name = out_dir, name
+        self.dtype = np.dtype(dtype).newbyteorder('<')
+        self.f = open(os.path.join(out_dir, name + '.bin'), 'wb')
+        self.offsets, self.rows, self.n_tokens = [0], [], 0
+
+    def add(self, doc_id, ids, extra):
+        self.f.write(np.asarray(ids, dtype=self.dtype).tobytes())
+        self.n_tokens += len(ids)
+        if self.n_tokens >= 2**32:
+            raise ValueError(f'{self.name}: offsets overflow uint32')
+        self.offsets.append(self.n_tokens)
+        self.rows.append(dict(doc_id=str(doc_id), n_tokens=len(ids),
+                              **(extra or {})))
+
+    def close(self):
+        import pyarrow.parquet as pq
+        self.f.close()
+        base = os.path.join(self.out_dir, self.name)
+        np.asarray(self.offsets, dtype='<u4').tofile(base + '.idx')
+        pq.write_table(d2l._meta_table(self.rows), base + '.meta.parquet',
+                       compression='zstd', compression_level=3,
+                       row_group_size=65536)
+        files = {k: base + e for k, e in d2l._SHARD_EXT.items()}
+        return dict(file=self.name, n_tokens=self.n_tokens,
+                    n_docs=len(self.rows),
+                    sha256={k: d2l._sha256_file(p) for k, p in files.items()},
+                    bytes={k: os.path.getsize(p) for k, p in files.items()})
+
+def _fetch_shard_file(shard, ext, path):
+    """Download one file of a shard from the manifest's url, checking its
+    sha1 and SHA-256 before it is moved into place. The partial file is
+    named per process, so ranks that fetch the same file at once never
+    write into each other's download.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    tmp = f'{path}.{os.getpid()}.part'
+    sha1, sha256 = hashlib.sha1(), hashlib.sha256()
+    with requests.get(shard['url'][ext], stream=True, timeout=60) as r, \
+            open(tmp, 'wb') as f:
+        r.raise_for_status()
+        for c in r.iter_content(1 << 20):
+            f.write(c)
+            sha1.update(c)
+            sha256.update(c)
+    if (sha1.hexdigest(), sha256.hexdigest()) != (shard['sha1'][ext],
+                                                  shard['sha256'][ext]):
+        os.remove(tmp)
+        raise ValueError(f'{shard["url"][ext]}: hash differs from the '
+                         'manifest')
+    os.replace(tmp, path)
+
+def normalize_url(url):
+    """A URL in the form the validation split deduplicates on: scheme and
+    host lower-cased, a leading www. removed, the fragment dropped, a
+    trailing / of the path removed, the query kept.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    import urllib.parse
+    p = urllib.parse.urlsplit(url.strip())
+    host = p.netloc.lower()
+    if host.startswith('www.'):
+        host = host[4:]
+    return urllib.parse.urlunsplit((p.scheme.lower(), host,
+                                    p.path.rstrip('/'), p.query, ''))
+
+def _byte_level_decoder():
+    """GPT-2's byte-level alphabet inverted: the printable character that
+    stands for each byte -> the byte (the alphabet of byte-level BPE).
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    bs = (list(range(33, 127)) + list(range(161, 173))
+          + list(range(174, 256)))
+    cs, n = bs[:], 0
+    for b in range(256):
+        if b not in bs:
+            bs.append(b)
+            cs.append(256 + n)
+            n += 1
+    return {chr(c): b for b, c in zip(bs, cs)}
+
+def _vocab_bytes(tokenizer):
+    """The UTF-8 bytes behind every token id (None for special and unused
+    ids) of a tiktoken encoding, a Transformers tokenizer, a
+    tokenizers.Tokenizer or a SentencePieceProcessor.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    if hasattr(tokenizer, 'decode_single_token_bytes'):  # tiktoken
+        out = [None] * tokenizer.n_vocab
+        special = set(tokenizer.special_tokens_set)
+        for i in range(tokenizer.n_vocab):
+            try:
+                b = tokenizer.decode_single_token_bytes(i)
+            except KeyError:
+                continue
+            if b.decode('utf-8', 'replace') not in special:
+                out[i] = b
+        return out
+    if hasattr(tokenizer, 'id_to_piece'):  # SentencePiece
+        out = []
+        for i in range(tokenizer.get_piece_size()):
+            piece = tokenizer.id_to_piece(i)
+            if tokenizer.is_byte(i):
+                out.append(bytes([int(piece[3:5], 16)]))
+            elif tokenizer.is_control(i) or tokenizer.is_unknown(i):
+                out.append(None)
+            else:
+                out.append(piece.replace('▁', ' ').encode('utf-8'))
+        return out
+    raw = getattr(tokenizer, 'backend_tokenizer', tokenizer)
+    vocab = raw.get_vocab(with_added_tokens=True)
+    special = {t.content for t in raw.get_added_tokens_decoder().values()
+               if t.special}
+    added = {t.content for t in raw.get_added_tokens_decoder().values()}
+    byte_level, dec = 'ByteLevel' in raw.to_str(), _byte_level_decoder()
+    out = [None] * (max(vocab.values()) + 1)
+    for piece, i in vocab.items():
+        if piece in special:
+            continue
+        if byte_level and piece not in added:
+            out[i] = bytes(dec[c] for c in piece)
+        else:
+            out[i] = piece.replace('▁', ' ').encode('utf-8')
+    return out
+
+def _fallback_ids(tokenizer):
+    """Ids that spell a character byte by byte: SentencePiece's byte pieces
+    and, in a byte-level vocabulary, the single bytes that are no
+    character on their own (0x80 and above).
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    if hasattr(tokenizer, 'is_byte'):
+        return {i for i in range(tokenizer.get_piece_size())
+                if tokenizer.is_byte(i)}
+    return {i for i, b in enumerate(_vocab_bytes(tokenizer))
+            if b is not None and len(b) == 1 and b[0] >= 0x80}
+
+def _bpe_prefix(tok, V):
+    """The byte-level BPE `tok` (a tokenizers.Tokenizer) cut to its first
+    V ids: the vocabulary entries below V and the merges that make them.
+    Encoding with it is encoding with the merges learned first (the prefix
+    property of BPE).
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    from tokenizers import Tokenizer
+    spec = json.loads(tok.to_str())
+    vocab = spec['model']['vocab']
+    spec['model']['vocab'] = {p: i for p, i in vocab.items() if i < V}
+    spec['model']['merges'] = [m for m in spec['model']['merges']
+                               if vocab[''.join(m)] < V]
+    spec['added_tokens'] = [t for t in spec['added_tokens'] if t['id'] < V]
+    out = Tokenizer.from_str(json.dumps(spec))
+    out.encode_special_tokens = True
+    return out
+
+def sp_train(texts, model_type, vocab_size, **kw):
+    """A SentencePiece model trained on texts (one input line per line of
+    text) through a temporary file, as a SentencePieceProcessor. Defaults:
+    no normalization (the text is NFC already), whitespace kept as is,
+    byte fallback instead of <unk>, digits split, character_coverage
+    0.9995, 16 threads (the pieces depend on the thread count).
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    import io
+    import tempfile
+    import sentencepiece as spm
+    args = dict(model_type=model_type, vocab_size=vocab_size,
+                normalization_rule_name='identity',
+                remove_extra_whitespaces=False, byte_fallback=True,
+                split_digits=True, character_coverage=0.9995,
+                num_threads=16, max_sentence_length=1 << 16,
+                minloglevel=2)
+    args.update(kw)
+    model = io.BytesIO()
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, 'input.txt')
+        with open(path, 'w', encoding='utf-8') as f:
+            for t in texts:
+                f.writelines(line + '\n' for line in t.split('\n')
+                             if line.strip())
+        spm.SentencePieceTrainer.train(input=path, model_writer=model,
+                                       **args)
+    return spm.SentencePieceProcessor(model_proto=model.getvalue())
+
+def _sp_fingerprint(sp):
+    """SHA-256 of a SentencePiece model's pieces and scores in id order
+    (the serialized model also records the training file's path).
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    rows = [(sp.id_to_piece(i), round(sp.get_score(i), 6))
+            for i in range(sp.get_piece_size())]
+    return hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode(
+        'utf-8')).hexdigest()
+
+def _sp_pieces_scores(sp):
+    """A unigram SentencePiece model as viterbi_segment's input: the
+    log-probabilities of its ordinary pieces, and the score SentencePiece
+    gives a character that is no piece (the lowest score minus 10).
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    logp = {sp.id_to_piece(i): sp.get_score(i)
+            for i in range(sp.get_piece_size())
+            if not (sp.is_byte(i) or sp.is_control(i) or sp.is_unknown(i))}
+    return logp, min(logp.values()) - 10.0
+
+def _logaddexp(a, b):
+    """log(exp(a) + exp(b)) for Python floats, -inf allowed.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    if a == -math.inf:
+        return b
+    if b == -math.inf:
+        return a
+    m = max(a, b)
+    return m + math.log1p(math.exp(-math.fabs(a - b)))
+
+def _rolling_ngram_hashes(ids, n, eos=None):
+    """64-bit polynomial hashes of every window of n consecutive token ids
+    (Horner's rule, arithmetic mod 2^64, vectorized over the windows); a
+    window that contains eos gets no hash (its slot is masked). Returns
+    (hashes, valid), both of length len(ids) - n + 1. Equal windows hash
+    equally; a match is confirmed on the ids themselves.
+
+    Defined in :numref:`sec_lm_tokenizers`"""
+    x = np.asarray(ids).astype(np.uint64) + np.uint64(1)
+    m = len(x) - n + 1
+    if m <= 0:
+        return np.zeros(0, np.uint64), np.zeros(0, bool)
+    h = np.zeros(m, dtype=np.uint64)
+    base = np.uint64(0x9E3779B97F4A7C15)
+    for k in range(n):
+        h *= base
+        h += x[k:k + m]
+    valid = np.ones(m, dtype=bool)
+    if eos is not None:
+        c = np.concatenate([[0], np.cumsum(np.asarray(ids) == eos)])
+        valid = c[n:n + m] == c[:m]
+    return h, valid
+
+
+ones_like = torch.ones_like
+ones = torch.ones
+zeros_like = torch.zeros_like
+zeros = torch.zeros
+tensor = torch.tensor
+arange = torch.arange
+sin = torch.sin
+sinh = torch.sinh
+cos = torch.cos
+cosh = torch.cosh
+tanh = torch.tanh
+linspace = torch.linspace
+exp = torch.exp
+log = torch.log
+normal = torch.normal
+rand = torch.rand
+randn = torch.randn
+matmul = torch.matmul
+int32 = torch.int32
+int64 = torch.int64
+float32 = torch.float32
+concat = torch.cat
+stack = torch.stack
+abs = torch.abs
+eye = torch.eye
+sigmoid = torch.sigmoid
+batch_matmul = torch.bmm
+numpy = lambda x, *args, **kwargs: x.detach().cpu().numpy(*args, **kwargs)
+size = lambda x, *args, **kwargs: x.numel(*args, **kwargs)
+reshape = lambda x, *args, **kwargs: x.reshape(*args, **kwargs)
+to = lambda x, *args, **kwargs: x.to(*args, **kwargs)
+reduce_sum = lambda x, *args, **kwargs: x.sum(*args, **kwargs)
+argmax = lambda x, *args, **kwargs: x.argmax(*args, **kwargs)
+astype = lambda x, *args, **kwargs: x.type(*args, **kwargs)
+transpose = lambda x, *args, **kwargs: x.t(*args, **kwargs)
+reduce_mean = lambda x, *args, **kwargs: x.mean(*args, **kwargs)
+expand_dims = lambda x, *args, **kwargs: x.unsqueeze(*args, **kwargs)
+swapaxes = lambda x, *args, **kwargs: x.swapaxes(*args, **kwargs)
+repeat = lambda x, *args, **kwargs: x.repeat(*args, **kwargs)
+nn_Module = nn.Module
+meshgrid = lambda *args, **kwargs: torch.meshgrid(*args, **{'indexing': 'ij', **kwargs})
