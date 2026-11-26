@@ -1,0 +1,99 @@
+# Dive into Deep Learning (D2L), 2nd edition
+
+Study material for [Dive into Deep Learning](https://d2l.ai/). Since 2026-11 both
+d2l.ai and d2l.smola.org serve the 2nd edition. The 1st-edition work is in
+[`../archived/d2l/`](../archived/d2l/).
+
+The 2nd edition is still in development: the published notebook bundle lacks
+several Language Models chapters that already exist as source upstream.
+
+## Layout
+
+```
+d2l/
+├── d2l-neu/              # git submodule: smolix/d2l-neu (book source and build tree)
+├── d2l-pytorch.zip       # bundle as downloaded, kept to compare with later downloads
+└── pytorch/
+    ├── pyproject.toml    # the env definition (pins, editable d2l)
+    ├── uv.lock
+    ├── .venv/            # not tracked
+    ├── bundle/           # the unpacked zip; pristine, never edited
+    └── work/             # your copies of the notebooks
+        └── img -> ../bundle/img
+```
+
+| Path | What it is |
+|---|---|
+| `d2l-neu/` | Read-only reference. It has no `.ipynb` files (sources are `.md`) and is ahead of the published bundle. |
+| `d2l-pytorch.zip` | From <https://d2l.ai/notebooks/d2l-pytorch.zip>, downloaded 2026-11-26. md5 `bcfa9216b837f707c0b2792d4f83fe49`. |
+| `pytorch/bundle/` | The unzipped bundle: executed notebooks with outputs, the `d2l` library source, `img/`, and the book's own `pyproject.toml` and `pylock.*.toml`. |
+| `pytorch/work/` | Where you work. Chapter directories must sit directly under `work/` so the notebooks' `../img/...` and `../data/...` paths resolve (through the `img` symlink and `work/data/`); their names don't matter, so number prefixes for ordering are fine (e.g. `work/02_preliminaries/01_ndarray.ipynb`). Datasets download to `work/data/`, which is gitignored. Markdown links to other chapters (`../chapter_...`) won't resolve in copies. |
+
+## Cloning
+
+`d2l-neu/` is a submodule, so a plain `git clone` leaves it empty. It is large
+(about 480 MB of history, 958 MB checked out) and you only need it to read the source.
+
+    git submodule update --init d2l/d2l-neu      # in an existing clone
+    git clone --recurse-submodules <url>         # or at clone time
+
+The zip and `pytorch/` are regular files and need nothing extra.
+
+## Environment
+
+`pytorch/pyproject.toml` defines its own uv project, separate from the root `mlgym`
+env. It mirrors the book's pins for macOS (`torch==2.11.0`, `torchvision==0.26.0`, the
+versions the book's saved outputs were captured under) and installs the `d2l` library
+editable from `bundle/`, so `from d2l import torch as d2l` works from any notebook.
+The book's own `pylock.*.toml` files are not used: they disagree with the bundle's
+`pyproject.toml` (e.g. matplotlib 3.10.8 vs the pinned 3.11.2). Python must be 3.12.
+
+Set up, from `d2l/pytorch/`:
+
+    uv sync
+    uv run python -m ipykernel install --sys-prefix --name d2l-pytorch
+
+The second command registers a Jupyter kernel named `d2l-pytorch`, the name stored in
+the notebooks' metadata, inside `.venv`. Redo it if the venv is recreated or the repo
+is moved (the kernel records an absolute path).
+
+Always run from `d2l/pytorch/`. From elsewhere, `uv run` may find the root
+`mlgym/pyproject.toml` and use the wrong environment.
+
+    cd d2l/pytorch
+    uv run jupyter lab
+
+Check the install: `uv run python -c "import d2l, torch; print(d2l.__file__, torch.__version__)"`
+should print a path into `bundle/d2l/` and `2.11.0`.
+
+Notes:
+- PyTorch's MPS backend is available on Apple Silicon, but the d2l library only knows
+  CUDA: `d2l.try_gpu()` returns the CPU here. Pass an explicit `torch.device('mps')` in
+  your own copies if you want it. The early chapters run fine on CPU.
+- Checked 2026-11-26: the `chapter_preliminaries` and `chapter_linear-regression`
+  notebooks (13 notebooks, 198 code cells) execute without errors under this env.
+  Numeric outputs differ from the saved ones where the book does not fix seeds.
+- The `chapter_lm-*` notebooks need extra packages (transformers, accelerate, faiss,
+  and others; see `bundle/pyproject.toml`, extra `lm`). They are not set up yet; use a
+  separate environment for them.
+
+## Working through a chapter
+
+Copy the notebook into a chapter directory directly under `work/` (number prefixes
+keep chapters and notebooks in book order), then open it from JupyterLab:
+
+    mkdir -p work/02_preliminaries
+    cp bundle/chapter_preliminaries/ndarray.ipynb work/02_preliminaries/01_ndarray.ipynb
+
+Leave `bundle/` alone so it stays a clean copy of upstream.
+
+## Checking for upstream changes
+
+- Submodule: `git -C d2l-neu fetch && git -C d2l-neu log HEAD..origin/main --oneline`,
+  then `git submodule update --remote d2l/d2l-neu` and commit the new SHA to adopt it.
+- Bundle: download <https://d2l.ai/notebooks/d2l-pytorch.zip> into a scratch directory
+  (not here) and compare its md5 with the value above. To update, unzip it over
+  `pytorch/bundle/`, replace `d2l-pytorch.zip` and the md5, and review what changed with
+  `git diff --stat` (requires `bundle/` to be tracked).
+- After a bundle update, diff `bundle/pyproject.toml` against `pytorch/pyproject.toml`
+  and carry over any changed pins, then `uv sync`.
