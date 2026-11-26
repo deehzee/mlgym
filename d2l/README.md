@@ -27,7 +27,7 @@ d2l/
 | `d2l-neu/` | Read-only reference. It has no `.ipynb` files (sources are `.md`) and is ahead of the published bundle. |
 | `d2l-pytorch.zip` | From <https://d2l.ai/notebooks/d2l-pytorch.zip>, downloaded 2026-11-26. md5 `bcfa9216b837f707c0b2792d4f83fe49`. |
 | `pytorch/bundle/` | The unzipped bundle: executed notebooks with outputs, the `d2l` library source, `img/`, and the book's own `pyproject.toml` and `pylock.*.toml`. |
-| `pytorch/work/` | Where you work. Chapter directories must sit directly under `work/` so the notebooks' `../img/...` and `../data/...` paths resolve (through the `img` symlink and `work/data/`); their names don't matter, so number prefixes for ordering are fine (e.g. `work/02_preliminaries/01_ndarray.ipynb`). Datasets download to `work/data/`, which is gitignored. Markdown links to other chapters (`../chapter_...`) won't resolve in copies. |
+| `pytorch/work/` | Where you work. Chapter directories must sit directly under `work/` so the notebooks' `../img/...` and `../data/...` paths resolve (through the `img` symlink and `work/data/`); their names don't matter, so number prefixes for ordering are fine (e.g. `work/01_preliminaries/01_ndarray.ipynb`). Datasets download to `work/data/`, which is gitignored. Markdown links to other chapters (`../chapter_...`) won't resolve in copies. |
 
 ## Cloning
 
@@ -82,8 +82,8 @@ Notes:
 Copy the notebook into a chapter directory directly under `work/` (number prefixes
 keep chapters and notebooks in book order), then open it from JupyterLab:
 
-    mkdir -p work/02_preliminaries
-    cp bundle/chapter_preliminaries/ndarray.ipynb work/02_preliminaries/01_ndarray.ipynb
+    mkdir -p work/01_preliminaries
+    cp bundle/chapter_preliminaries/ndarray.ipynb work/01_preliminaries/01_ndarray.ipynb
 
 Leave `bundle/` alone so it stays a clean copy of upstream.
 
