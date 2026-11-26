@@ -1,0 +1,25 @@
+[project]
+name = "d2l-study"
+version = "0.1.0"
+description = "Environment for working through Dive into Deep Learning (2nd ed, PyTorch)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # The book's d2l library, installed editable from the unpacked bundle (see
+    # [tool.uv.sources]). Its own metadata brings numpy, matplotlib (==3.11.2),
+    # matplotlib-inline, requests, tiktoken, pandas, scipy, pillow and ipython.
+    "d2l",
+    # Mirrors the Darwin entries of the `pytorch` and `run` extras in
+    # bundle/pyproject.toml. When the bundle is updated, diff its pyproject.toml
+    # against these pins. torch/torchvision are the versions the book's saved
+    # notebook outputs were captured under.
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+    "gymnasium[toy-text,classic-control]",
+    "jupyter",
+    "nbconvert",
+    "ipykernel",
+    "safetensors",
+]
+
+[tool.uv.sources]
+d2l = { path = "bundle", editable = true }
